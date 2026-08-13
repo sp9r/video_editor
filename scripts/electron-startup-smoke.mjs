@@ -52,7 +52,7 @@ const reportLine = output.join('').split(/\r?\n/u).find((line) => line.startsWit
 if (!reportLine) throw new Error(`Electron startup report was not emitted.\n${output.join('')}`)
 const report = JSON.parse(reportLine.slice('SPECTRA_STARTUP_REPORT '.length))
 if (exitCode !== 0 || report.error) throw new Error(`Electron renderer startup failed.\n${JSON.stringify(report)}\n${output.join('')}`)
-if (!report.didFinishLoad || !report.rendererProcessAlive || report.rootChildCount <= 0 || !report.appShellPresent || !report.preloadApiPresent || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone) {
+if (!report.didFinishLoad || !report.rendererProcessAlive || report.rootChildCount <= 0 || !report.appShellPresent || !report.preloadApiPresent || !report.playheadDragChanged || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone) {
   throw new Error(`Electron renderer DOM startup gate failed.\n${JSON.stringify(report)}`)
 }
 console.log(JSON.stringify({

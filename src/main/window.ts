@@ -18,6 +18,7 @@ export interface RendererStartupReport {
   rootChildCount: number
   appShellPresent: boolean
   preloadApiPresent: boolean
+  playheadDragChanged: boolean
   consoleErrors: string[]
   loadFailure: string | null
   renderProcessGone: string | null
@@ -83,10 +84,24 @@ export const waitForRendererStartup = async (window: BrowserWindow, timeoutMs = 
     if (dom.rootChildCount > 0 && dom.appShellPresent && dom.preloadApiPresent) break
     await delay(50)
   }
+  const initialPlayhead = await window.webContents.executeJavaScript(`document.querySelector('.playhead-hit-area')?.getAttribute('aria-label') ?? ''`)
+  const playheadDragChanged = await window.webContents.executeJavaScript(`(async () => {
+    const handle = document.querySelector('.playhead-hit-area')
+    if (!(handle instanceof HTMLElement)) return false
+    const before = handle.getAttribute('aria-label')
+    const rect = handle.getBoundingClientRect()
+    const pointerId = 77
+    handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 1, clientX: rect.left + 2, clientY: rect.top + 20 }))
+    handle.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 1, clientX: rect.left + 102, clientY: rect.top + 20 }))
+    handle.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 0, clientX: rect.left + 102, clientY: rect.top + 20 }))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    return before !== handle.getAttribute('aria-label')
+  })()`)
   const report: RendererStartupReport = {
     didFinishLoad,
     rendererProcessAlive: !window.webContents.isDestroyed(),
     ...dom,
+    playheadDragChanged: Boolean(initialPlayhead && playheadDragChanged),
     consoleErrors: [...diagnostics.consoleErrors],
     loadFailure: diagnostics.loadFailure,
     renderProcessGone: diagnostics.renderProcessGone

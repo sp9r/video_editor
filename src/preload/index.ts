@@ -15,6 +15,7 @@ const api: DesktopApi = {
   importSubtitles: () => ipcRenderer.invoke(IPC.subtitlesImport),
   mediaUrl: (filePath: string) => `spectra-media://local/${encodeURIComponent(filePath)}`,
   getWaveformPeaks: (request: WaveformRequest) => ipcRenderer.invoke(IPC.waveformPeaks, request),
+  listFontFamilies: () => ipcRenderer.invoke(IPC.fontFamilies),
   createPreviewPlan: (project: ProjectFile) => ipcRenderer.invoke(IPC.previewPlan, project),
   detectEncoders: (force = false) => ipcRenderer.invoke(IPC.encodersDetect, force),
   chooseExportPath: (defaultName: string) => ipcRenderer.invoke(IPC.exportChoosePath, defaultName),

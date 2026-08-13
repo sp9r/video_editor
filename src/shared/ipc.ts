@@ -10,6 +10,7 @@ export const IPC = {
   recoveryLoad: 'recovery:load',
   mediaRelink: 'media:relink',
   waveformPeaks: 'waveform:peaks',
+  fontFamilies: 'fonts:families',
   previewPlan: 'preview:plan',
   subtitlesImport: 'subtitles:import',
   encodersDetect: 'encoders:detect',

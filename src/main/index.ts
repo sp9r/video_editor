@@ -7,6 +7,7 @@ import { createMainWindow, installMediaProtocol, isTrustedIpcUrl, registerPrivil
 import { IPC } from '../shared/ipc'
 import { validateProject } from '../shared/project'
 import type { ExportSettings, ProjectFile } from '../shared/types'
+import { enumerateFontFamilies } from './fonts'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
@@ -129,6 +130,11 @@ const registerIpcHandlers = (): void => {
   ipcMain.handle(IPC.waveformPeaks, async (event, request) => {
     assertTrustedSender(event)
     return await requireService().getWaveformPeaks(request)
+  })
+
+  ipcMain.handle(IPC.fontFamilies, async (event) => {
+    assertTrustedSender(event)
+    return enumerateFontFamilies()
   })
 
   ipcMain.handle(IPC.subtitlesImport, async (event) => {

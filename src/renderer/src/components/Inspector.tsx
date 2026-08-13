@@ -1,4 +1,5 @@
-﻿import { Captions, Image as ImageIcon, SlidersHorizontal, Volume2 } from 'lucide-react'
+﻿import { useEffect, useState } from 'react'
+import { Captions, Image as ImageIcon, SlidersHorizontal, Volume2 } from 'lucide-react'
 import type { AudioSettings, SubtitleClip, SubtitleStyle, TimelineClip, TransformSettings } from '../../../shared/types'
 import { findClip, useEditorStore } from '../store'
 import { Button, EmptyState, Field, NumberField, Section, SelectField } from './Controls'
@@ -7,6 +8,8 @@ const numberValue = (value: string, fallback = 0): number => {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
 }
+
+const FALLBACK_FONTS = ['Noto Sans JP', 'Yu Gothic UI', 'Meiryo', 'Arial', 'sans-serif']
 
 const hasTransform = (clip: TimelineClip): clip is Extract<TimelineClip, { kind: 'video' | 'image' }> =>
   clip.kind === 'video' || clip.kind === 'image'
@@ -83,6 +86,13 @@ function AudioEditor({ clip }: { clip: Extract<TimelineClip, { kind: 'video' | '
 function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
   const patchClip = useEditorStore((state) => state.patchClip)
   const transaction = useEditTransaction()
+  const [fontFamilies, setFontFamilies] = useState(FALLBACK_FONTS)
+  useEffect(() => {
+    if (!window.spectra) return
+    void window.spectra.listFontFamilies().then((families) => {
+      if (families.length) setFontFamilies([...new Set([...families, clip.style.fontFamily])])
+    }).catch(() => undefined)
+  }, [clip.style.fontFamily])
   const patchStyle = (values: Partial<SubtitleStyle>): void =>
     patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, style: { ...current.style, ...values } } : current)
   return (
@@ -95,7 +105,7 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
       <Section title="文字スタイル">
         <Field label="フォント">
           <input {...transaction} list="subtitle-font-options" value={clip.style.fontFamily} onChange={(event) => patchStyle({ fontFamily: event.target.value })} />
-          <datalist id="subtitle-font-options"><option value="Noto Sans JP" /><option value="Yu Gothic UI" /><option value="Meiryo" /><option value="Arial" /></datalist>
+          <datalist id="subtitle-font-options">{fontFamilies.map((family) => <option key={family} value={family} />)}</datalist>
         </Field>
         <div className="field-grid">
           <NumberField {...transaction} label="サイズ" suffix="px" min={8} max={240} value={clip.style.fontSize} onChange={(event) => patchStyle({ fontSize: numberValue(event.target.value, 54) })} />
