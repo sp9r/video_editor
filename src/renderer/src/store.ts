@@ -4,6 +4,7 @@ import {
   addMediaAssets,
   createClipForAsset,
   createSubtitleClip,
+  makeId,
   projectDurationUs,
   relinkMediaAsset,
   replaceTrack,
@@ -11,7 +12,7 @@ import {
 } from '../../shared/project'
 import { deleteLinkedClips, EditingOperationError, moveLinkedClip, splitLinkedClip, splitSelectedRoots, trimLinkedClip } from '../../shared/editing/operations'
 import { linkedClipIds } from '../../shared/editing/links'
-import type { MediaAsset, ProjectFile, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
+import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
 import { createDemoProject } from './demo'
 
 type EditTool = 'select' | 'razor'
@@ -34,6 +35,7 @@ interface EditorState {
   notice: Notice | null
   savedFingerprint: string
   transactionBase: ProjectFile | null
+  clipboard: ClipboardItem[]
   applyProject(project: ProjectFile, options?: { selectClipId?: string; preserveHistory?: boolean }): void
   loadProject(project: ProjectFile): void
   markSaved(project?: ProjectFile): void
@@ -57,11 +59,20 @@ interface EditorState {
   trim(clipId: string, edge: 'start' | 'end', atUs: TimeUs): void
   splitSelected(): void
   deleteSelected(ripple?: boolean): void
+  copySelected(): void
+  pasteClipboard(atUs?: TimeUs): void
+  duplicateSelected(): void
+  applySubtitleStyleToAll(clipId: string): void
   patchTrack(track: TimelineTrack): void
   undo(): void
   redo(): void
   showNotice(message: string, tone?: Notice['tone']): void
   clearNotice(): void
+}
+
+interface ClipboardItem {
+  trackId: string
+  clip: TimelineClip
 }
 
 const HISTORY_LIMIT = 80
@@ -95,6 +106,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   lastSavedAt: null,
   savedFingerprint: projectFingerprint(initialProject),
   transactionBase: null,
+  clipboard: [],
   notice: null,
   applyProject: (project, options = {}) => {
     const current = get().project
@@ -206,6 +218,67 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (error instanceof EditingOperationError) get().showNotice(error.message, 'warning')
       else throw error
     }
+  },
+  copySelected: () => {
+    const { project, selectedClipIds } = get()
+    const selected = new Set<string>()
+    for (const id of selectedClipIds) for (const linkedId of linkedClipIds(project, id)) selected.add(linkedId)
+    const clipboard = project.tracks.flatMap((track) => track.clips
+      .filter((clip) => selected.has(clip.id))
+      .map((clip) => ({ trackId: track.id, clip: structuredClone(clip) })))
+    set({ clipboard })
+    if (clipboard.length) get().showNotice(`${clipboard.length}件をコピーしました。`, 'success')
+  },
+  pasteClipboard: (atUs) => {
+    const { project, clipboard } = get()
+    if (!clipboard.length) return get().showNotice('コピーしたクリップがありません。', 'warning')
+    const baseUs = Math.min(...clipboard.map(({ clip }) => clip.startUs))
+    const groupIds = new Map<string, string>()
+    const next = cloneProject(project)
+    const pastedIds: string[] = []
+    for (const item of clipboard) {
+      const track = next.tracks.find((candidate) => candidate.id === item.trackId)
+      if (!track || track.locked) {
+        get().showNotice('貼り付け先トラックがロックされています。', 'warning')
+        return
+      }
+      const linkGroupId = item.clip.linkGroupId
+        ? (groupIds.get(item.clip.linkGroupId) ?? (() => {
+          const id = makeId('link')
+          groupIds.set(item.clip.linkGroupId!, id)
+          return id
+        })())
+        : undefined
+      const clip = structuredClone(item.clip)
+      clip.id = makeId('clip')
+      clip.startUs = Math.max(0, (atUs ?? get().playheadUs) + item.clip.startUs - baseUs)
+      if (linkGroupId) clip.linkGroupId = linkGroupId
+      track.clips.push(clip)
+      pastedIds.push(clip.id)
+    }
+    for (const track of next.tracks) track.clips.sort((left, right) => left.startUs - right.startUs)
+    next.updatedAt = new Date().toISOString()
+    get().applyProject(next)
+    set({ selectedClipIds: pastedIds })
+  },
+  duplicateSelected: () => {
+    if (!get().selectedClipIds.length) return
+    get().copySelected()
+    get().pasteClipboard()
+  },
+  applySubtitleStyleToAll: (clipId) => {
+    const { project } = get()
+    const source = project.tracks.flatMap((track) => track.clips).find((clip): clip is Extract<TimelineClip, { kind: 'subtitle' }> => clip.id === clipId && clip.kind === 'subtitle')
+    if (!source) return
+    const style: SubtitleStyle = structuredClone(source.style)
+    const next = cloneProject(project)
+    for (const track of next.tracks) {
+      for (const clip of track.clips) {
+        if (clip.kind === 'subtitle') clip.style = structuredClone(style)
+      }
+    }
+    next.updatedAt = new Date().toISOString()
+    get().applyProject(next)
   },
   patchTrack: (track) => get().applyProject(replaceTrack(get().project, track)),
   undo: () => {

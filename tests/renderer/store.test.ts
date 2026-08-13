@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { addClipToTrack, createClipForAsset, createEmptyProject } from '../../src/shared/project'
-import type { MediaAsset, ProjectFile } from '../../src/shared/types'
+import { DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile } from '../../src/shared/types'
 import { useEditorStore } from '../../src/renderer/src/store'
 
 const asset: MediaAsset = {
@@ -62,5 +62,42 @@ describe('editor history and linked selection', () => {
     useEditorStore.getState().undo()
     useEditorStore.getState().patchClip('video', (clip) => clip.kind === 'video' ? { ...clip, enabled: true } : clip)
     expect(useEditorStore.getState().future).toHaveLength(0)
+  })
+
+  it('copies and pastes linked A/V as one unit with fresh IDs and link group', () => {
+    const project = fixture()
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('video')
+    useEditorStore.getState().copySelected()
+    useEditorStore.getState().pasteClipboard(6_000_000)
+    const clips = useEditorStore.getState().project.tracks.flatMap((track) => track.clips)
+    const pasted = clips.filter((clip) => clip.startUs === 6_000_000)
+    expect(pasted).toHaveLength(2)
+    expect(pasted.map((clip) => clip.id)).not.toEqual(['video', 'audio'])
+    expect(new Set(pasted.map((clip) => clip.linkGroupId)).size).toBe(1)
+    expect(useEditorStore.getState().past).toHaveLength(1)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips)).toHaveLength(2)
+  })
+
+  it('applies subtitle style to every caption as one undoable operation', () => {
+    const project = fixture()
+    const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle')!
+    subtitleTrack.clips.push({
+      id: 'caption-1', name: '字幕1', kind: 'subtitle', startUs: 1_000_000, durationUs: 1_000_000, sourceInUs: 0,
+      enabled: true, text: '一つ目', style: structuredClone(DEFAULT_SUBTITLE_STYLE)
+    })
+    subtitleTrack.clips.push({
+      id: 'caption-2', name: '字幕2', kind: 'subtitle', startUs: 5_000_000, durationUs: 1_000_000, sourceInUs: 0,
+      enabled: true, text: '二つ目', style: structuredClone(DEFAULT_SUBTITLE_STYLE)
+    })
+    const caption = subtitleTrack.clips[0]
+    if (!caption || caption.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().patchClip(caption.id, (clip) => clip.kind === 'subtitle' ? { ...clip, style: { ...clip.style, fontFamily: 'Custom Font', maxWidthPercent: 85 } } : clip)
+    useEditorStore.getState().applySubtitleStyleToAll(caption.id)
+    const subtitles = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'subtitle')
+    expect(subtitles).toHaveLength(2)
+    expect(subtitles.every((clip) => clip.kind === 'subtitle' && clip.style.fontFamily === 'Custom Font' && clip.style.maxWidthPercent === 85)).toBe(true)
   })
 })

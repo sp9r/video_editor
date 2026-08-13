@@ -20,6 +20,7 @@ import { formatTimecode, makeId } from '../../../shared/project'
 import { DEFAULT_SUBTITLE_STYLE, type ImportedSubtitleCue, type TimelineClip, type TimelineTrack } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
 import { Button, IconButton } from './Controls'
+import { Waveform } from './Waveform'
 
 const seconds = (timeUs: number): number => timeUs / 1_000_000
 
@@ -86,17 +87,44 @@ export default function Timeline(): React.JSX.Element {
     moveSelected,
     trim,
     showNotice,
-    applyProject
+    applyProject,
+    copySelected,
+    pasteClipboard,
+    duplicateSelected
   } = state
   const viewportRef = useRef<HTMLDivElement>(null)
   const [pointerEdit, setPointerEdit] = useState<PointerEdit | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; clipId: string } | null>(null)
   const durationUs = editorDurationUs(project)
   const timelineWidth = Math.max(900, seconds(durationUs) * zoomPxPerSecond)
   const ticks = useMemo(() => ticksFor(durationUs, zoomPxPerSecond), [durationUs, zoomPxPerSecond])
 
   const timeFromPointer = (clientX: number, lane: HTMLElement): number => {
     const bounds = lane.getBoundingClientRect()
-    return Math.max(0, ((clientX - bounds.left) / zoomPxPerSecond) * 1_000_000)
+    const scrollOffset = lane.classList.contains('timeline-viewport') ? lane.scrollLeft : 0
+    return Math.max(0, ((clientX - bounds.left + scrollOffset) / zoomPxPerSecond) * 1_000_000)
+  }
+
+  const beginPlayheadDrag = (event: React.PointerEvent): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    const move = (pointerEvent: PointerEvent): void => {
+      const viewport = viewportRef.current
+      if (viewport) setPlayhead(timeFromPointer(pointerEvent.clientX, viewport))
+    }
+    const up = (): void => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  const showContextMenu = (event: React.MouseEvent, clip: TimelineClip): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!selectedClipIds.includes(clip.id)) selectClip(clip.id)
+    setContextMenu({ x: event.clientX, y: event.clientY, clipId: clip.id })
   }
 
   const beginPointerEdit = (event: React.PointerEvent, clip: TimelineClip, mode: PointerEdit['mode'], trackId: string): void => {
@@ -198,7 +226,18 @@ export default function Timeline(): React.JSX.Element {
           <div className="ruler-corner"><Plus size={14} /><span>トラック</span></div>
           {project.tracks.map((track) => <TrackControls key={track.id} track={track} />)}
         </div>
-        <div className="timeline-viewport" ref={viewportRef}>
+        <div
+          className="timeline-viewport"
+          ref={viewportRef}
+          onWheel={(event) => {
+            if (event.ctrlKey || event.metaKey) {
+              event.preventDefault()
+              setZoom(zoomPxPerSecond + (event.deltaY < 0 ? 8 : -8))
+              return
+            }
+            event.currentTarget.scrollLeft += event.deltaX + event.deltaY
+          }}
+        >
           <div className="timeline-content" style={{ width: timelineWidth }}>
             <div
               className="time-ruler"
@@ -238,21 +277,32 @@ export default function Timeline(): React.JSX.Element {
                       className={`timeline-clip clip-${clip.kind} ${selectedClipIds.includes(clip.id) ? 'is-selected' : ''} ${!clip.enabled ? 'is-disabled' : ''} ${edit ? 'is-dragging' : ''}`}
                       style={{ left: Math.max(0, visualLeft), width: Math.max(8, visualWidth) }}
                       onPointerDown={(event) => beginPointerEdit(event, clip, 'move', track.id)}
-                      title={`${clip.name}\n${seconds(clip.durationUs).toFixed(2)} 秒`}
+                      onContextMenu={(event) => showContextMenu(event, clip)}
+                      title={`${clip.name}\n${seconds(clip.durationUs).toFixed(2)} 秒\n右クリックで編集操作`}
                     >
                       <button type="button" className="trim-handle trim-start" aria-label="開始位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-start', track.id)} />
                       <span className="clip-content">{clipGlyph(clip)}{clip.linkGroupId ? <Link2 size={12} aria-label="リンクされたクリップ" /> : null}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
-                      {clip.kind === 'audio' || clip.kind === 'video' ? <span className="waveform" aria-hidden="true" /> : null}
+                      {clip.kind === 'audio' || clip.kind === 'video' ? <Waveform asset={project.media.find((asset) => asset.id === clip.assetId)} clip={clip} /> : null}
                       <button type="button" className="trim-handle trim-end" aria-label="終了位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-end', track.id)} />
                     </div>
                   )
                 })}
               </div>
             ))}
-            <div className="playhead" style={{ left: playheadUs / 1_000_000 * zoomPxPerSecond }} aria-label={`再生位置 ${formatTimecode(playheadUs, project)}`}><i /></div>
+            <div className="playhead" style={{ left: playheadUs / 1_000_000 * zoomPxPerSecond }} onPointerDown={beginPlayheadDrag} aria-label={`再生位置 ${formatTimecode(playheadUs, project)}`}><i /></div>
           </div>
         </div>
       </div>
+      {contextMenu && (
+        <div className="timeline-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+          <button type="button" onClick={() => { setPlayhead(timeFromPointer(contextMenu.x, viewportRef.current!)); splitSelected(); setContextMenu(null) }}>再生位置で分割</button>
+          <button type="button" onClick={() => { deleteSelected(false); setContextMenu(null) }}>削除</button>
+          <button type="button" onClick={() => { deleteSelected(true); setContextMenu(null) }}>リップル削除</button>
+          <button type="button" onClick={() => { copySelected(); setContextMenu(null) }}>コピー</button>
+          <button type="button" onClick={() => { pasteClipboard(); setContextMenu(null) }}>貼り付け</button>
+          <button type="button" onClick={() => { duplicateSelected(); setContextMenu(null) }}>複製</button>
+        </div>
+      )}
       <footer className="timeline-footer">
         <span><i className="status-dot" />自動保存オン</span>
         <span>選択: {selectedClipIds.length} クリップ</span>

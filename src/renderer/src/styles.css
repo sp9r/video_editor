@@ -537,6 +537,11 @@ select {
 .viewer-quality i { width: 5px; height: 5px; background: var(--mint); border-radius: 50%; }
 .viewer-stage { display: flex; align-items: center; justify-content: center; min-height: 0; padding: 12px 24px 8px; background: radial-gradient(ellipse at center, #242a31, #101318 67%); }
 .viewer-canvas { position: relative; height: 100%; max-height: 100%; aspect-ratio: 16 / 9; max-width: 100%; overflow: hidden; box-shadow: 0 8px 25px rgb(0 0 0 / 0.55); }
+.preview-scene { position: absolute; top: 50%; left: 50%; overflow: hidden; transform-origin: center; background: transparent; }
+.preview-visual { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; padding: 0; background: transparent; border: 0; cursor: default; transform-origin: center; }
+.preview-media { display: block; width: 100%; height: 100%; object-fit: contain; background: transparent; }
+.preview-visual-placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: rgb(255 255 255 / .5); font-size: 18px; background: rgb(255 255 255 / .03); }
+.preview-audio-pool { display: none; }
 .composite-frame { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; background-size: cover; border: 0; cursor: default; transform-origin: center; }
 .frame-skyline { position: absolute; right: 0; bottom: 0; left: 0; height: 55%; opacity: 0.5; }
 .frame-skyline i { position: absolute; bottom: 0; width: 16%; background: #182326; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05); }
@@ -550,7 +555,7 @@ select {
 .safe-guides i { position: absolute; inset: 6%; border: 1px dashed rgb(255 255 255 / 0.12); }
 .viewer-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim); background: #090b0e; }
 .viewer-placeholder span { font-size: 10px; }
-.preview-subtitle { position: absolute; z-index: 5; max-width: 88%; padding: 3px 8px; color: white; text-align: center; white-space: pre-wrap; border: 0; border-radius: 3px; transform: translate(-50%, -50%); cursor: pointer; }
+.preview-subtitle { position: absolute; z-index: 5; box-sizing: border-box; padding: 3px 8px; color: white; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; border: 0; border-radius: 3px; transform: translate(-50%, -50%); cursor: pointer; }
 .subtitle-fade { animation: subtitle-fade 650ms both; }
 .subtitle-pop { animation: subtitle-pop 420ms cubic-bezier(.18,.86,.35,1.35) both; }
 .subtitle-slide-up { animation: subtitle-slide 550ms ease-out both; }
@@ -648,13 +653,17 @@ select {
 .clip-content { position: relative; z-index: 2; display: flex; align-items: center; gap: 5px; padding: 4px 7px; pointer-events: none; }
 .clip-content strong { overflow: hidden; font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .film-glyph { font-size: 10px; }
-.waveform { position: absolute; right: 4px; bottom: 3px; left: 4px; height: 32%; opacity: .35; background: repeating-linear-gradient(90deg, transparent 0 2px, currentColor 2px 3px, transparent 3px 5px); clip-path: polygon(0 40%, 4% 20%, 8% 60%, 12% 35%, 16% 75%, 20% 20%, 24% 50%, 28% 10%, 32% 70%, 36% 45%, 40% 80%, 44% 30%, 48% 60%, 52% 25%, 56% 72%, 60% 35%, 64% 90%, 68% 30%, 72% 65%, 76% 15%, 80% 55%, 84% 30%, 88% 75%, 92% 25%, 96% 55%, 100% 40%, 100% 100%, 0 100%); }
+.waveform { position: absolute; right: 4px; bottom: 3px; left: 4px; display: flex; align-items: center; height: 32%; gap: 1px; opacity: .55; pointer-events: none; }
+.waveform i { flex: 1 1 0; min-width: 1px; background: currentColor; border-radius: 1px; }
 .trim-handle { position: absolute; top: 0; bottom: 0; z-index: 5; width: 6px; padding: 0; background: transparent; border: 0; cursor: ew-resize; }
 .trim-handle:hover { background: rgb(255 255 255 / .32); }
 .trim-start { left: 0; }
 .trim-end { right: 0; }
-.playhead { position: absolute; z-index: 12; top: 0; bottom: 0; width: 1px; background: #f3d269; pointer-events: none; box-shadow: 0 0 4px rgb(243 210 105 / .4); }
+.playhead { position: absolute; z-index: 12; top: 0; bottom: 0; width: 1px; background: #f3d269; cursor: ew-resize; pointer-events: auto; box-shadow: 0 0 4px rgb(243 210 105 / .4); }
 .playhead i { position: absolute; top: 0; left: -5px; width: 11px; height: 9px; background: #f3d269; clip-path: polygon(0 0, 100% 0, 75% 70%, 50% 100%, 25% 70%); }
+.timeline-context-menu { position: fixed; z-index: 50; display: grid; min-width: 168px; padding: 4px; background: #1b2128; border: 1px solid #4a5662; border-radius: 5px; box-shadow: 0 8px 24px rgb(0 0 0 / .45); }
+.timeline-context-menu button { padding: 7px 9px; color: var(--text-muted); text-align: left; background: transparent; border: 0; border-radius: 3px; cursor: pointer; }
+.timeline-context-menu button:hover { color: var(--text); background: #29323b; }
 .timeline-footer { display: flex; align-items: center; gap: 17px; padding: 0 9px; color: var(--text-dim); font-size: 8px; background: #14181d; border-top: 1px solid var(--line-soft); }
 .timeline-footer span { display: flex; align-items: center; gap: 5px; }
 .timeline-footer code { margin-left: auto; color: var(--text-muted); font: 8px ui-monospace, monospace; }
