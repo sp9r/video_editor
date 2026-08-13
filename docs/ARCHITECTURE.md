@@ -26,6 +26,7 @@ flowchart LR
 3. 編集操作、AI操作、読み込み、書き出しを疎結合にし、増改築しやすくすること。
 4. プロジェクトを非破壊で保存し、別PCで素材を再リンクできること。
 5. RendererへNode.jsや任意コマンド実行能力を渡さないこと。
+6. Production Electron rendererは`file://`で開くため、Vite outputのasset URLはfile-relativeでなければならない。startup smokeはHTML asset、DOM、preload、renderer diagnosticsを確認する。
 
 ## 全体構成
 

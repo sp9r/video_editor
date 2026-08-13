@@ -17,6 +17,7 @@
     "postinstall": "node node_modules/electron/install.js && electron-builder install-app-deps",
     "dev": "node scripts/dev.mjs",
     "build": "npm run typecheck && node scripts/build.mjs",
+    "smoke:electron": "node scripts/electron-startup-smoke.mjs",
     "preview": "npm run build && electron .",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run --configLoader runner",

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { createFfmpegService, createPreviewPlan, parseSrt, parseVtt, type FfmpegService } from './ffmpeg/index'
 import { loadRecovery, openProject, saveProject, writeRecovery } from './project-service'
-import { createMainWindow, installMediaProtocol, isTrustedIpcUrl, registerPrivilegedSchemes } from './window'
+import { createMainWindow, installMediaProtocol, isTrustedIpcUrl, registerPrivilegedSchemes, waitForRendererStartup } from './window'
 import { IPC } from '../shared/ipc'
 import { validateProject } from '../shared/project'
 import type { ExportSettings, ProjectFile } from '../shared/types'
@@ -198,6 +198,17 @@ const start = async (): Promise<void> => {
   })
   registerIpcHandlers()
   mainWindow = createMainWindow()
+  if (process.env.SPECTRA_STARTUP_SMOKE === '1') {
+    try {
+      const report = await waitForRendererStartup(mainWindow)
+      console.log(`SPECTRA_STARTUP_REPORT ${JSON.stringify(report)}`)
+      app.exit(0)
+    } catch (error) {
+      console.error(`SPECTRA_STARTUP_REPORT ${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}`)
+      app.exit(1)
+    }
+    return
+  }
   void ffmpegService.detectEncoders(false).catch(() => undefined)
 }
 

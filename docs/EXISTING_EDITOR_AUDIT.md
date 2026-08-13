@@ -109,3 +109,10 @@ edit_project.json
 - contractを開いた状態の保存は既存の`projectFormat === edit_project_v1`分岐によりSave Asへ進み、元JSONを上書きしない。linkGroupId、sourceAudioEnabled、clip IDs、時刻、transform、audio、captionは`.spectra`へ保持する。
 
 Phase 4で再利用した既存コードも完成品とは扱わず、domain tests、loader/render regression、Store history testsで確認できた範囲だけを保証する。Electron画面の実操作による視覚的manual acceptanceは、GUI環境での別受入として未実施の場合は未実施と記録する。
+
+## Phase 4.5 renderer startup compliance
+
+- 原因: `scripts/build.mjs`のVite buildに`base`指定がなく、`out/renderer/index.html`が`/assets/...`を生成して`file://`のElectronからrenderer assetsを解決できなかった。
+- 修正: Viteへ`base: './'`を指定し、HTMLが`./assets/...`を参照するようにした。`src/renderer/dist/`はruntimeから参照されないtracked stale generated outputだったため削除し、`.gitignore`へ追加した。runtimeのsource of truthは`src/renderer`とbuild後の`out/renderer`である。
+- `scripts/electron-startup-smoke.mjs`を追加。asset referenceと実ファイルを検査し、Electronの`did-finish-load`、renderer process、DOM `#root` child、`.app-shell`、preload `window.spectra`、console error、`did-fail-load`、`render-process-gone`をgateする。
+- 短時間の`npm.cmd run preview`起動も確認した。GUI視覚確認はこの自動操作環境では未実施とし、DOM startup smokeの結果だけを受入結果とする。
