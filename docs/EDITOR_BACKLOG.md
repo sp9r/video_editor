@@ -1,5 +1,15 @@
 # Editor Backlog
 
+## Phase 4.11 subtitle visual parity stabilization
+
+- Canonical shadow offset is `(0px, 2px)` in `SubtitleRenderSpec`; blur controls softness only and no longer changes the shadow position.
+- ASS applies the mapped blur only to the duplicate shadow event. The main glyph never receives `\\blur`.
+- ASS background is a separate BorderStyle 3 event rendered before shadow and main glyph, so background cannot cover the shadow.
+- Preview uses an outer max-width layout container and an inner text-sized background box. `maxWidth` is a wrapping limit, not an always-painted background rectangle.
+- `npm.cmd run subtitle:parity` runs the exact 1920x1080 fixture through Electron Preview screenshot capture and FFmpeg/libass final frame generation. It reports normalized white glyph geometry, red shadow presence, and background geometry.
+
+Remaining accepted differences are CSS/libass antialiasing, exact Gaussian blur shape, small background padding, and line-height metrics.
+
 ## Phase 4.10 subtitle Final style parity
 
 Phase 4.10 fixes the major Final subtitle style regressions:

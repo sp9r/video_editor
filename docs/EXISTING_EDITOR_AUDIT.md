@@ -123,3 +123,10 @@ Phase 4で再利用した既存コードも完成品とは扱わず、domain tes
 - Final ASSはmain glyph、shadow、backgroundを分離した。shadowはduplicate eventによるbounded offset近似とし、main eventへ`\\blur`を付与しない。main text、font、size、position、wrap、color、outlineはstyle変更から独立して保持する。
 - Render Planはsubtitle cue count／IDを持ち、字幕付き`burnSubtitles=true`ではASS filterの存在を検査する。`SPECTRA_KEEP_EXPORT_DEBUG=1`ではproject snapshot、ASS、filtergraph、export settingsを保持する。
 - Electron startup smokeはrenderer内のsynthetic pointer dragで停止することがあったため、startup gateではplayhead DOM要素の存在を確認し、実操作は既存の編集テスト／manual acceptanceの対象として分離した。load、DOM、preload、renderer diagnosticsは維持する。
+
+## Phase 4.11 subtitle visual parity stabilization
+
+- `SubtitleRenderSpec`へcanonical shadow offset `(0px, 2px)`を追加。CSS shadow blurはoffsetを変更せず、ASSでは`assShadowBlurFromCss()`でshadow duplicate eventだけへ近似適用する。main glyphの`\\blur`は禁止。
+- ASSはbackground専用BorderStyle 3 event、shadow event、main glyph eventの順で描画する。backgroundがshadowを覆わないようにし、Previewはmax-width outer layoutとtext-sized inner backgroundへ分離した。
+- `npm.cmd run subtitle:parity`を追加。exact user fixture（1920x1080、字幕を入力、Noto Sans JP、123px、outline 14、red shadow 24、background 0.15）からElectron screenshotとFFmpeg/libass frameを生成し、white glyph center、readability、red shadow、background geometryを比較する。
+- 実測結果: Preview/Final white glyph center差は約11.6px、両方でred shadow regionとbackground regionを検出。CSS/libassのantialiasing・blur shape・font rasterization差は許容範囲として残す。
