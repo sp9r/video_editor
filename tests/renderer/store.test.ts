@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addClipToTrack, createClipForAsset, createEmptyProject } from '../../src/shared/project'
+import { addClipToTrack, createClipForAsset, createEmptyProject, createTrack } from '../../src/shared/project'
 import { DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile } from '../../src/shared/types'
 import { useEditorStore } from '../../src/renderer/src/store'
 
@@ -11,10 +11,11 @@ const asset: MediaAsset = {
 
 const fixture = (): ProjectFile => {
   let project = { ...createEmptyProject('history'), media: [asset] }
+  project = { ...project, tracks: [...project.tracks, createTrack('media', 2)] }
   const video = { ...createClipForAsset(asset, 0, 4_000_000), id: 'video', linkGroupId: 'linked' }
   const audio = { ...createClipForAsset(asset, 0, 4_000_000), id: 'audio', kind: 'audio' as const, linkGroupId: 'linked', audio: { volumeDb: 0, pan: 0, fadeInUs: 0, fadeOutUs: 0 } }
-  project = addClipToTrack(project, project.tracks.find((track) => track.kind === 'video')!.id, video)
-  return addClipToTrack(project, project.tracks.find((track) => track.kind === 'audio')!.id, audio)
+  project = addClipToTrack(project, project.tracks.find((track) => track.kind === 'media')!.id, video)
+  return addClipToTrack(project, project.tracks.filter((track) => track.kind === 'media')[1]!.id, audio)
 }
 
 describe('editor history and linked selection', () => {
@@ -99,5 +100,20 @@ describe('editor history and linked selection', () => {
     const subtitles = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'subtitle')
     expect(subtitles).toHaveLength(2)
     expect(subtitles.every((clip) => clip.kind === 'subtitle' && clip.style.fontFamily === 'Custom Font' && clip.style.maxWidthPercent === 85)).toBe(true)
+  })
+
+  it('adds, renames, reorders, and undoes empty track operations', () => {
+    const project = createEmptyProject('tracks')
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().addMediaTrack()
+    expect(useEditorStore.getState().project.tracks.filter((track) => track.kind === 'media')).toHaveLength(2)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().project.tracks.filter((track) => track.kind === 'media')).toHaveLength(1)
+    useEditorStore.getState().redo()
+    const extra = useEditorStore.getState().project.tracks.find((track) => track.kind === 'media' && track.name === 'V2')!
+    useEditorStore.getState().renameTrack(extra.id, 'Overlay')
+    expect(useEditorStore.getState().project.tracks.find((track) => track.id === extra.id)?.name).toBe('Overlay')
+    useEditorStore.getState().deleteTrack(extra.id)
+    expect(useEditorStore.getState().project.tracks.some((track) => track.id === extra.id)).toBe(false)
   })
 })

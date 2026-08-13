@@ -15,7 +15,7 @@ export interface VisualLayerItem {
 export const visualLayerOrder = (project: ProjectFile): VisualLayerItem[] =>
   project.tracks.flatMap((track, trackIndex) => {
     // Track mute controls audio contributions. It must not hide visual layers.
-    if (track.kind !== 'video' || track.hidden) return []
+    if (!['media', 'video'].includes(track.kind) || track.hidden) return []
     return track.clips.flatMap((clip) =>
       clip.enabled && (clip.kind === 'video' || clip.kind === 'image')
         ? [{ trackIndex, clip }]

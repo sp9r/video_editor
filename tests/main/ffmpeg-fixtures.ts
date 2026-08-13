@@ -120,6 +120,7 @@ export const makeProject = (): ProjectFile => ({
         style: {
           ...structuredClone(DEFAULT_SUBTITLE_STYLE),
           animation: 'pop',
+          animationDurationUs: 180_000,
           positionX: 48,
           positionY: 84
         }

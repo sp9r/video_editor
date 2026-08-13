@@ -3,7 +3,8 @@ export const APP_VERSION = '0.1.0'
 
 export type TimeUs = number
 export type MediaKind = 'video' | 'audio' | 'image'
-export type TrackKind = 'video' | 'audio' | 'subtitle'
+/** Internal track families. video/audio are accepted only as legacy input. */
+export type TrackKind = 'media' | 'subtitle' | 'video' | 'audio'
 export type EncoderMode = 'auto' | 'hardware' | 'software'
 export type EncoderVendor = 'nvidia' | 'intel' | 'amd' | 'apple' | 'vaapi' | 'cpu'
 
@@ -125,6 +126,11 @@ export interface TimelineTrack {
   muted: boolean
   hidden: boolean
 }
+
+export const isMediaTrack = (track: Pick<TimelineTrack, 'kind'>): boolean =>
+  track.kind === 'media' || track.kind === 'video' || track.kind === 'audio'
+
+export const isSubtitleTrack = (track: Pick<TimelineTrack, 'kind'>): boolean => track.kind === 'subtitle'
 
 export interface SequenceSettings {
   width: number
@@ -295,6 +301,7 @@ export interface DesktopApi {
   importSubtitles(): Promise<ImportedSubtitleCue[] | null>
   mediaUrl(path: string): string
   getWaveformPeaks(request: WaveformRequest): Promise<number[]>
+  listFontFamilies(): Promise<string[]>
   createPreviewPlan(project: ProjectFile): Promise<PreviewPlan>
   detectEncoders(force?: boolean): Promise<EncoderReport>
   chooseExportPath(defaultName: string): Promise<string | null>
@@ -338,6 +345,6 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   positionX: 50,
   positionY: 86,
   maxWidthPercent: 80,
-  animation: 'fade',
-  animationDurationUs: 180_000
+  animation: 'none',
+  animationDurationUs: 0
 }

@@ -1,4 +1,4 @@
-import { framesToUs, snapUsToFrame, splitClip, trimClip } from '../project'
+import { assertSubtitleTrackHasNoOverlap, framesToUs, snapUsToFrame, splitClip, trimClip } from '../project'
 import type { ProjectFile, TimelineClip, TimelineTrack, TimeUs } from '../types'
 import { linkedClipIds, uniqueLinkedRoots } from './links'
 
@@ -35,8 +35,7 @@ const locations = (project: ProjectFile, clipIds: readonly string[]): ClipLocati
   clipIds.map((clipId) => locateClip(project, clipId)).filter((item): item is ClipLocation => Boolean(item))
 
 const compatibleTrack = (clip: TimelineClip, track: TimelineTrack): boolean =>
-  (clip.kind === 'audio' && track.kind === 'audio') ||
-  ((clip.kind === 'video' || clip.kind === 'image') && track.kind === 'video') ||
+  ((clip.kind === 'audio' || clip.kind === 'video' || clip.kind === 'image') && (track.kind === 'media' || track.kind === 'video' || track.kind === 'audio')) ||
   (clip.kind === 'subtitle' && track.kind === 'subtitle')
 
 const assertEditable = (project: ProjectFile, clipIds: readonly string[], targetTrack?: TimelineTrack): void => {
@@ -95,6 +94,7 @@ export const moveLinkedClip = (project: ProjectFile, clipId: string, targetTrack
   const nextStart = Math.max(0, snapUsToFrame(atUs, project))
   applyTimeDelta(next, ids, nextStart - selected.clip.startUs)
   moveTrack(next, clipId, targetTrackId)
+  for (const track of next.tracks) assertSubtitleTrackHasNoOverlap(track)
   updateTimestamp(next)
   return next
 }
@@ -117,6 +117,7 @@ export const trimLinkedClip = (project: ProjectFile, clipId: string, edge: 'star
       ? { ...clip, startUs: clip.startUs + deltaStart, sourceInUs: clip.sourceInUs + deltaStart, durationUs: nextDuration }
       : { ...clip, durationUs: nextDuration })
   }
+  for (const track of next.tracks) assertSubtitleTrackHasNoOverlap(track)
   updateTimestamp(next)
   return next
 }

@@ -1,6 +1,8 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Captions,
+  ChevronDown,
+  ChevronUp,
   Eye,
   EyeOff,
   Link2,
@@ -8,6 +10,7 @@ import {
   LockOpen,
   Magnet,
   MousePointer2,
+  Pencil,
   Plus,
   Scissors,
   Trash2,
@@ -16,15 +19,21 @@ import {
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
-import { formatTimecode, makeId } from '../../../shared/project'
-import { DEFAULT_SUBTITLE_STYLE, type ImportedSubtitleCue, type TimelineClip, type TimelineTrack } from '../../../shared/types'
+import { formatTimecode, layoutSubtitleTracks, makeId } from '../../../shared/project'
+import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type TimelineClip, type TimelineTrack } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
 import { Button, IconButton } from './Controls'
-import { Waveform } from './Waveform'
+import { peakCountForPixelWidth, Waveform } from './Waveform'
 
 const seconds = (timeUs: number): number => timeUs / 1_000_000
 
-const trackGlyph = (kind: TimelineTrack['kind']): string => ({ video: 'V', audio: 'A', subtitle: 'C' })[kind]
+const trackGlyph = (kind: TimelineTrack['kind']): string => kind === 'subtitle' ? 'C' : 'V'
+
+const trackLabel = (track: TimelineTrack, tracks: TimelineTrack[]): string => {
+  const family = isMediaTrack(track) ? tracks.filter(isMediaTrack) : tracks.filter((candidate) => candidate.kind === 'subtitle')
+  const index = Math.max(0, family.findIndex((candidate) => candidate.id === track.id)) + 1
+  return `${trackGlyph(track.kind)}${index}`
+}
 
 const clipGlyph = (clip: TimelineClip): React.JSX.Element => {
   if (clip.kind === 'subtitle') return <Captions size={13} />
@@ -49,13 +58,20 @@ interface PointerEdit {
   targetTrackId: string
 }
 
-function TrackControls({ track }: { track: TimelineTrack }): React.JSX.Element {
+function TrackControls({ track, tracks }: { track: TimelineTrack; tracks: TimelineTrack[] }): React.JSX.Element {
   const patchTrack = useEditorStore((state) => state.patchTrack)
+  const renameTrack = useEditorStore((state) => state.renameTrack)
+  const deleteTrack = useEditorStore((state) => state.deleteTrack)
+  const reorderTrack = useEditorStore((state) => state.reorderTrack)
   return (
     <div className={`track-header kind-${track.kind}`}>
-      <span className="track-index">{trackGlyph(track.kind)}</span>
-      <strong title={track.name}>{track.name.replace(/^\w+\s*/, '')}</strong>
+      <span className="track-index">{trackLabel(track, tracks)}</span>
+      <strong title={track.name}>{track.name}</strong>
       <div className="track-controls">
+        <IconButton label="トラック名を変更" onClick={() => { const next = window.prompt('トラック名', track.name); if (next !== null) renameTrack(track.id, next) }}><Pencil size={11} /></IconButton>
+        <IconButton label="上へ移動" onClick={() => reorderTrack(track.id, -1)}><ChevronUp size={11} /></IconButton>
+        <IconButton label="下へ移動" onClick={() => reorderTrack(track.id, 1)}><ChevronDown size={11} /></IconButton>
+        <IconButton label="空のトラックを削除" onClick={() => deleteTrack(track.id)}><Trash2 size={11} /></IconButton>
         <IconButton label={track.locked ? 'トラックのロックを解除' : 'トラックをロック'} active={track.locked} onClick={() => patchTrack({ ...track, locked: !track.locked })}>{track.locked ? <Lock size={13} /> : <LockOpen size={13} />}</IconButton>
         <IconButton label={track.muted ? 'ミュートを解除' : 'ミュート'} active={track.muted} onClick={() => patchTrack({ ...track, muted: !track.muted })}>{track.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}</IconButton>
         <IconButton label={track.hidden ? 'トラックを表示' : 'トラックを非表示'} active={track.hidden} onClick={() => patchTrack({ ...track, hidden: !track.hidden })}>{track.hidden ? <EyeOff size={13} /> : <Eye size={13} />}</IconButton>
@@ -82,6 +98,8 @@ export default function Timeline(): React.JSX.Element {
     setZoom,
     addAssetClip,
     addSubtitle,
+    addMediaTrack,
+    addSubtitleTrack,
     splitSelected,
     deleteSelected,
     moveSelected,
@@ -93,11 +111,45 @@ export default function Timeline(): React.JSX.Element {
     duplicateSelected
   } = state
   const viewportRef = useRef<HTMLDivElement>(null)
+  const labelsRef = useRef<HTMLDivElement>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
   const [pointerEdit, setPointerEdit] = useState<PointerEdit | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; clipId: string } | null>(null)
   const durationUs = editorDurationUs(project)
   const timelineWidth = Math.max(900, seconds(durationUs) * zoomPxPerSecond)
   const ticks = useMemo(() => ticksFor(durationUs, zoomPxPerSecond), [durationUs, zoomPxPerSecond])
+
+  useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      const element = target as HTMLElement | null
+      return element?.matches('input, textarea, select, [contenteditable="true"]') ?? false
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (isEditableTarget(event.target)) return
+      const modifier = event.ctrlKey || event.metaKey
+      if (!modifier) return
+      if (event.key.toLowerCase() === 'c') { event.preventDefault(); copySelected(); setContextMenu(null) }
+      if (event.key.toLowerCase() === 'v') { event.preventDefault(); pasteClipboard(); setContextMenu(null) }
+      if (event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelected(); setContextMenu(null) }
+    }
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null)
+    }
+    const onKeyEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') setContextMenu(null) }
+    const onBlur = (): void => setContextMenu(null)
+    document.addEventListener('keydown', onKeyDown)
+    document.addEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('keydown', onKeyEscape)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('keydown', onKeyEscape)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [copySelected, duplicateSelected, pasteClipboard])
+
+  useEffect(() => setContextMenu(null), [project.id])
 
   const timeFromPointer = (clientX: number, lane: HTMLElement): number => {
     const bounds = lane.getBoundingClientRect()
@@ -108,16 +160,19 @@ export default function Timeline(): React.JSX.Element {
   const beginPlayheadDrag = (event: React.PointerEvent): void => {
     event.preventDefault()
     event.stopPropagation()
+    const target = event.currentTarget as HTMLElement
+    try { target.setPointerCapture(event.pointerId) } catch { /* synthetic smoke events may not have an active pointer */ }
     const move = (pointerEvent: PointerEvent): void => {
       const viewport = viewportRef.current
       if (viewport) setPlayhead(timeFromPointer(pointerEvent.clientX, viewport))
     }
-    const up = (): void => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
+    const up = (pointerEvent: PointerEvent): void => {
+      if (target.hasPointerCapture(pointerEvent.pointerId)) target.releasePointerCapture(pointerEvent.pointerId)
+      target.removeEventListener('pointermove', move)
+      target.removeEventListener('pointerup', up)
     }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
+    target.addEventListener('pointermove', move)
+    target.addEventListener('pointerup', up)
   }
 
   const showContextMenu = (event: React.MouseEvent, clip: TimelineClip): void => {
@@ -191,7 +246,7 @@ export default function Timeline(): React.JSX.Element {
       style: structuredClone(DEFAULT_SUBTITLE_STYLE)
     })))
     target.clips.sort((a, b) => a.startUs - b.startUs)
-    applyProject(next)
+    applyProject(layoutSubtitleTracks(next))
     showNotice(`${cues.length}件の字幕を読み込みました。`, 'success')
   }
 
@@ -212,6 +267,8 @@ export default function Timeline(): React.JSX.Element {
         </div>
         <div className="toolbar-group align-right">
           <Button className="subtle-button" onClick={() => void importSubtitles()}>SRT/VTT読込</Button>
+          <Button className="subtle-button" onClick={addMediaTrack}><Plus size={14} />Vトラック</Button>
+          <Button className="subtle-button" onClick={addSubtitleTrack}><Plus size={14} />Cトラック</Button>
           <Button className="subtle-button" onClick={addSubtitle}><Captions size={14} />字幕を追加</Button>
           <IconButton label="再生位置で分割（Ctrl+K）" disabled={!selectedClipIds.length} onClick={splitSelected}><Scissors size={16} /></IconButton>
           <IconButton label={rippleMode ? '選択クリップを自動詰め削除' : '選択クリップを削除'} disabled={!selectedClipIds.length} onClick={() => deleteSelected()}><Trash2 size={16} /></IconButton>
@@ -222,13 +279,14 @@ export default function Timeline(): React.JSX.Element {
         </div>
       </header>
       <div className="timeline-shell">
-        <div className="track-labels">
+        <div className="track-labels" ref={labelsRef} style={{ '--track-count': project.tracks.length } as React.CSSProperties} onScroll={(event) => { if (viewportRef.current) viewportRef.current.scrollTop = event.currentTarget.scrollTop }}>
           <div className="ruler-corner"><Plus size={14} /><span>トラック</span></div>
-          {project.tracks.map((track) => <TrackControls key={track.id} track={track} />)}
+          {project.tracks.map((track) => <TrackControls key={track.id} track={track} tracks={project.tracks} />)}
         </div>
         <div
           className="timeline-viewport"
           ref={viewportRef}
+          onScroll={(event) => { if (labelsRef.current) labelsRef.current.scrollTop = event.currentTarget.scrollTop }}
           onWheel={(event) => {
             if (event.ctrlKey || event.metaKey) {
               event.preventDefault()
@@ -238,7 +296,7 @@ export default function Timeline(): React.JSX.Element {
             event.currentTarget.scrollLeft += event.deltaX + event.deltaY
           }}
         >
-          <div className="timeline-content" style={{ width: timelineWidth }}>
+          <div className="timeline-content" style={{ width: timelineWidth, '--track-count': project.tracks.length } as React.CSSProperties}>
             <div
               className="time-ruler"
               onPointerDown={(event) => setPlayhead(timeFromPointer(event.clientX, event.currentTarget))}
@@ -251,6 +309,7 @@ export default function Timeline(): React.JSX.Element {
                 className={`track-lane kind-${track.kind} ${track.locked ? 'is-locked' : ''}`}
                 data-track-id={track.id}
                 onPointerDown={(event) => {
+                  setContextMenu(null)
                   if (event.target === event.currentTarget) {
                     setPlayhead(timeFromPointer(event.clientX, event.currentTarget))
                     selectClip(null)
@@ -282,19 +341,19 @@ export default function Timeline(): React.JSX.Element {
                     >
                       <button type="button" className="trim-handle trim-start" aria-label="開始位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-start', track.id)} />
                       <span className="clip-content">{clipGlyph(clip)}{clip.linkGroupId ? <Link2 size={12} aria-label="リンクされたクリップ" /> : null}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
-                      {clip.kind === 'audio' || clip.kind === 'video' ? <Waveform asset={project.media.find((asset) => asset.id === clip.assetId)} clip={clip} /> : null}
+                      {clip.kind === 'audio' || clip.kind === 'video' ? <Waveform asset={project.media.find((asset) => asset.id === clip.assetId)} clip={clip} peakCount={peakCountForPixelWidth(visualWidth)} /> : null}
                       <button type="button" className="trim-handle trim-end" aria-label="終了位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-end', track.id)} />
                     </div>
                   )
                 })}
               </div>
             ))}
-            <div className="playhead" style={{ left: playheadUs / 1_000_000 * zoomPxPerSecond }} onPointerDown={beginPlayheadDrag} aria-label={`再生位置 ${formatTimecode(playheadUs, project)}`}><i /></div>
+            <div className="playhead-hit-area" style={{ left: playheadUs / 1_000_000 * zoomPxPerSecond }} onPointerDown={beginPlayheadDrag} aria-label={`再生位置 ${formatTimecode(playheadUs, project)}`}><i className="playhead" /></div>
           </div>
         </div>
       </div>
       {contextMenu && (
-        <div className="timeline-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+        <div ref={contextMenuRef} className="timeline-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
           <button type="button" onClick={() => { setPlayhead(timeFromPointer(contextMenu.x, viewportRef.current!)); splitSelected(); setContextMenu(null) }}>再生位置で分割</button>
           <button type="button" onClick={() => { deleteSelected(false); setContextMenu(null) }}>削除</button>
           <button type="button" onClick={() => { deleteSelected(true); setContextMenu(null) }}>リップル削除</button>

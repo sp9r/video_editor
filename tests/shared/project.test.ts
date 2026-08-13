@@ -5,6 +5,7 @@ import {
   createEmptyProject,
   deleteClips,
   framesToUs,
+  layoutSubtitleTracks,
   projectDurationUs,
   relinkMediaAsset,
   splitClip,
@@ -12,7 +13,7 @@ import {
   usToFrames,
   validateProject
 } from '../../src/shared/project'
-import type { MediaAsset } from '../../src/shared/types'
+import { DEFAULT_SUBTITLE_STYLE, type MediaAsset } from '../../src/shared/types'
 
 const asset: MediaAsset = {
   id: 'asset-1',
@@ -87,6 +88,26 @@ describe('project validation', () => {
     const valid = createEmptyProject('Valid')
     expect(validateProject(valid).name).toBe('Valid')
     expect(() => validateProject({ ...valid, schemaVersion: 999 })).toThrow(/未対応/)
+  })
+
+  it('starts with exactly one media track and one subtitle track', () => {
+    const project = createEmptyProject('new')
+    expect(project.tracks.map((track) => [track.kind, track.name])).toEqual([['media', 'V1'], ['subtitle', 'C1']])
+    expect(DEFAULT_SUBTITLE_STYLE.animation).toBe('none')
+    expect(DEFAULT_SUBTITLE_STYLE.animationDurationUs).toBe(0)
+  })
+
+  it('rejects overlapping captions on one track and accepts them after partitioning', () => {
+    const project = createEmptyProject('captions')
+    const track = project.tracks.find((candidate) => candidate.kind === 'subtitle')!
+    const first = { id: 'caption-a', name: 'A', kind: 'subtitle' as const, startUs: 0, durationUs: 2_000_000, sourceInUs: 0, enabled: true, text: 'A', style: structuredClone(DEFAULT_SUBTITLE_STYLE) }
+    const second = { ...first, id: 'caption-b', startUs: 1_000_000 }
+    expect(() => addClipToTrack(project, track.id, first)).not.toThrow()
+    expect(() => addClipToTrack(addClipToTrack(project, track.id, first), track.id, second)).toThrow(/重な/u)
+    const partitioned = layoutSubtitleTracks(addClipToTrack(project, track.id, first))
+    partitioned.tracks.find((candidate) => candidate.kind === 'subtitle')!.clips.push(second)
+    const laidOut = layoutSubtitleTracks(partitioned)
+    expect(laidOut.tracks.filter((candidate) => candidate.kind === 'subtitle')).toHaveLength(2)
   })
 })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addClipToTrack, createClipForAsset, createEmptyProject } from '../../src/shared/project'
+import { addClipToTrack, createClipForAsset, createEmptyProject, createTrack } from '../../src/shared/project'
 import { visualLayerOrder } from '../../src/shared/render-order'
 import type { MediaAsset } from '../../src/shared/types'
 
@@ -10,8 +10,8 @@ const video: MediaAsset = {
 
 describe('shared visual layer order', () => {
   it('returns lower tracks first and the top track last for Preview and Final', () => {
-    let project = { ...createEmptyProject(), media: [video] }
-    const [foreground, background] = project.tracks.filter((track) => track.kind === 'video')
+    let project = { ...createEmptyProject(), media: [video], tracks: [...createEmptyProject().tracks, createTrack('media', 2)] }
+    const [foreground, background] = project.tracks.filter((track) => track.kind === 'media')
     if (!foreground || !background) throw new Error('video tracks missing')
     project = addClipToTrack(project, foreground.id, { ...createClipForAsset(video, 0, 2_000_000), id: 'foreground' })
     project = addClipToTrack(project, background.id, { ...createClipForAsset(video, 0, 2_000_000), id: 'background' })
@@ -20,7 +20,7 @@ describe('shared visual layer order', () => {
 
   it('does not include hidden or disabled visual clips, while mute remains audio-only', () => {
     let project = { ...createEmptyProject(), media: [video] }
-    const track = project.tracks.find((candidate) => candidate.kind === 'video')!
+    const track = project.tracks.find((candidate) => candidate.kind === 'media')!
     project = addClipToTrack(project, track.id, { ...createClipForAsset(video, 0, 2_000_000), id: 'visible' })
     project = addClipToTrack(project, track.id, { ...createClipForAsset(video, 0, 2_000_000), id: 'disabled', enabled: false })
     project = { ...project, tracks: project.tracks.map((candidate) => candidate.id === track.id ? { ...candidate, muted: true } : candidate) }

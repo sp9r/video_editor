@@ -1,4 +1,4 @@
-import { createClipForAsset, createEmptyProject, makeId } from '../../shared/project'
+import { createClipForAsset, createEmptyProject, createTrack, makeId } from '../../shared/project'
 import { DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile, type SubtitleClip } from '../../shared/types'
 
 const now = new Date().toISOString()
@@ -76,10 +76,11 @@ const assets: MediaAsset[] = [
 
 export const createDemoProject = (): ProjectFile => {
   const project = createEmptyProject('東京モーニング Vlog')
+  project.tracks.splice(1, 0, createTrack('media', 2), createTrack('media', 3))
   project.media = assets
   const videoTrack = project.tracks.find((track) => track.name.startsWith('V1'))
   const overlayTrack = project.tracks.find((track) => track.name.startsWith('V2'))
-  const audioTrack = project.tracks.find((track) => track.name.startsWith('A2'))
+  const audioTrack = project.tracks.find((track) => track.name.startsWith('V3'))
   const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle')
 
   if (videoTrack) {

@@ -15,7 +15,7 @@ import {
   type TimelineTrack,
   type VideoClip
 } from '../../shared/types.js'
-import { validateProject } from '../../shared/project.js'
+import { layoutSubtitleTracks, validateProject } from '../../shared/project.js'
 import { inferLinkedAudioPairs } from '../../shared/editing/links.js'
 
 export const EDIT_PROJECT_SCHEMA_VERSION = 'edit_project.v1' as const
@@ -465,7 +465,7 @@ const buildProjectModel = async (
   const tracks: TimelineTrack[] = document.tracks.map((track): TimelineTrack => ({
     id: track.id,
     name: track.name ?? track.id,
-    kind: track.kind === 'caption' || track.kind === 'text' ? 'subtitle' : track.kind,
+    kind: track.kind === 'caption' || track.kind === 'text' ? 'subtitle' : 'media',
     clips: track.clips.map((clip): TimelineClip => {
       const common = {
         id: clip.id,
@@ -522,7 +522,7 @@ const buildProjectModel = async (
     const destination = tracks.find((track) => track.id === (caption.track_id ?? targetCaptionTrack.id)) ?? targetCaptionTrack
     destination.clips.push(subtitle)
   }
-  return validateProject({
+  return validateProject(layoutSubtitleTracks({
     schemaVersion: PROJECT_SCHEMA_VERSION,
     appVersion: APP_VERSION,
     id: document.project.id,
@@ -540,7 +540,7 @@ const buildProjectModel = async (
     },
     media,
     tracks
-  })
+  }))
 }
 
 export const loadEditProject = async (projectPathInput: string, options: { verifyHashes?: boolean } = {}): Promise<LoadedEditProject> => {

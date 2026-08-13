@@ -33,7 +33,7 @@ describe('manual project persistence boundary', () => {
       const asset = sourceAsset(sourcePath)
       project = { ...project, projectPath: contractPath, projectFormat: 'edit_project_v1', media: [asset] }
       const clip = { ...createClipForAsset(asset, 0, 2_000_000), id: 'video', linkGroupId: 'link:video:audio', sourceAudioEnabled: false }
-      project = addClipToTrack(project, project.tracks.find((track) => track.kind === 'video')!.id, clip)
+      project = addClipToTrack(project, project.tracks.find((track) => track.kind === 'media')!.id, clip)
       const result = await saveProject(project)
       expect(result.cancelled).toBe(false)
       expect(result.projectPath).toBe(outputPath)

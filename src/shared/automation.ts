@@ -6,6 +6,7 @@ import {
   type TimelineTrack,
   type TransformSettings
 } from './types.js'
+import { isMediaTrack } from './types.js'
 
 /**
  * The automation boundary is deliberately narrower than ProjectFile. Providers
@@ -531,8 +532,7 @@ const assertUnlocked = (track: TimelineTrack): void => {
 }
 
 const trackAcceptsClip = (track: TimelineTrack, clip: TimelineClip): boolean =>
-  (track.kind === 'video' && (clip.kind === 'video' || clip.kind === 'image')) ||
-  (track.kind === 'audio' && clip.kind === 'audio') ||
+  (isMediaTrack(track) && clip.kind !== 'subtitle') ||
   (track.kind === 'subtitle' && clip.kind === 'subtitle')
 
 const ensureNoClipId = (project: ProjectFile, clipId: string): void => {

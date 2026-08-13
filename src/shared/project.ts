@@ -14,8 +14,67 @@ import {
   type TimeUs,
   type VideoClip
 } from './types'
+import { isSubtitleTrack } from './types'
 
 const clone = <T>(value: T): T => structuredClone(value)
+
+export class SubtitleCollisionError extends Error {
+  readonly trackId: string
+  readonly clipId: string
+  constructor(trackId: string, clipId: string) {
+    super(`字幕クリップ ${clipId} が同じ字幕トラック上の別クリップと重なっています。`)
+    this.name = 'SubtitleCollisionError'
+    this.trackId = trackId
+    this.clipId = clipId
+  }
+}
+
+export const subtitleOverlaps = (left: SubtitleClip, right: SubtitleClip): boolean =>
+  left.startUs < right.startUs + right.durationUs && right.startUs < left.startUs + left.durationUs
+
+export const assertSubtitleTrackHasNoOverlap = (track: TimelineTrack): void => {
+  if (!isSubtitleTrack(track)) return
+  const captions = track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle')
+    .sort((left, right) => left.startUs - right.startUs || left.id.localeCompare(right.id))
+  for (let index = 1; index < captions.length; index += 1) {
+    const previous = captions[index - 1]
+    const current = captions[index]
+    if (previous && current && subtitleOverlaps(previous, current)) throw new SubtitleCollisionError(track.id, current.id)
+  }
+}
+
+export const createTrack = (kind: 'media' | 'subtitle', index: number): TimelineTrack => ({
+  id: makeId('track'),
+  name: `${kind === 'media' ? 'V' : 'C'}${index}`,
+  kind,
+  clips: [],
+  locked: false,
+  muted: false,
+  hidden: false
+})
+
+/** Places all captions into the minimum number of non-overlapping subtitle tracks. */
+export const layoutSubtitleTracks = (project: ProjectFile): ProjectFile => {
+  const next = clone(project)
+  const subtitleTracks = next.tracks.filter(isSubtitleTrack)
+  const captions = subtitleTracks.flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle'))
+    .sort((left, right) => left.startUs - right.startUs || left.id.localeCompare(right.id))
+  for (const track of subtitleTracks) track.clips = []
+  for (const caption of captions) {
+    const target = subtitleTracks.find((track) => {
+      const last = track.clips.at(-1)
+      return !last || !subtitleOverlaps(last as SubtitleClip, caption)
+    }) ?? (() => {
+      const created = createTrack('subtitle', subtitleTracks.length + 1)
+      subtitleTracks.push(created)
+      next.tracks.push(created)
+      return created
+    })()
+    target.clips.push(caption)
+  }
+  next.updatedAt = new Date().toISOString()
+  return next
+}
 
 export const makeId = (prefix: string): string => {
   const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
@@ -39,13 +98,7 @@ export const createEmptyProject = (name = '無題のプロジェクト'): Projec
       backgroundColor: '#000000'
     },
     media: [],
-    tracks: [
-      { id: makeId('track'), name: 'V2 オーバーレイ', kind: 'video', clips: [], locked: false, muted: false, hidden: false },
-      { id: makeId('track'), name: 'V1 メイン映像', kind: 'video', clips: [], locked: false, muted: false, hidden: false },
-      { id: makeId('track'), name: 'C1 字幕', kind: 'subtitle', clips: [], locked: false, muted: false, hidden: false },
-      { id: makeId('track'), name: 'A1 音声', kind: 'audio', clips: [], locked: false, muted: false, hidden: false },
-      { id: makeId('track'), name: 'A2 BGM', kind: 'audio', clips: [], locked: false, muted: false, hidden: false }
-    ]
+    tracks: [createTrack('media', 1), createTrack('subtitle', 1)]
   }
 }
 
@@ -141,6 +194,7 @@ export const addClipToTrack = (project: ProjectFile, trackId: string, clip: Time
   if (!track || track.locked) return project
   track.clips.push(clip)
   track.clips.sort((a, b) => a.startUs - b.startUs)
+  assertSubtitleTrackHasNoOverlap(track)
   next.updatedAt = new Date().toISOString()
   return next
 }
@@ -257,7 +311,7 @@ export const replaceTrack = (project: ProjectFile, nextTrack: TimelineTrack): Pr
 
 export const validateProject = (input: unknown): ProjectFile => {
   if (!input || typeof input !== 'object') throw new Error('プロジェクトJSONがオブジェクトではありません。')
-  const project = input as Partial<ProjectFile>
+  const project = clone(input as Partial<ProjectFile>)
   if (project.schemaVersion !== PROJECT_SCHEMA_VERSION) {
     throw new Error(`未対応のプロジェクト形式です: ${String(project.schemaVersion)}`)
   }
@@ -272,7 +326,9 @@ export const validateProject = (input: unknown): ProjectFile => {
     throw new Error('シーケンスの時間設定が不正です。')
   }
   for (const track of project.tracks) {
+    if (track.kind === 'video' || track.kind === 'audio') track.kind = 'media'
     if (!track.id || !Array.isArray(track.clips)) throw new Error('トラック形式が不正です。')
+    assertSubtitleTrackHasNoOverlap(track)
     for (const clip of track.clips) {
       if (!clip.id || !Number.isFinite(clip.startUs) || !Number.isFinite(clip.durationUs) || !Number.isFinite(clip.sourceInUs) || clip.startUs < 0 || clip.durationUs <= 0 || clip.sourceInUs < 0) {
         throw new Error(`クリップ形式が不正です: ${clip.id ?? 'unknown'}`)

@@ -92,6 +92,8 @@ describe('standalone edit_project.v1 loader', () => {
 
       expect(loaded.resolvedSourceMedia.get('media_main')).toBe(join(root, 'media', 'source.mp4'))
       expect(loaded.project.projectFormat).toBe('edit_project_v1')
+      expect(loaded.project.tracks.find((track) => track.id === 'V1')?.kind).toBe('media')
+      expect(loaded.project.tracks.find((track) => track.id === 'A1')?.kind).toBe('media')
       expect(loaded.project.tracks.find((track) => track.id === 'V1')?.clips.map((clip) => [clip.startUs, clip.sourceInUs])).toEqual([[0, 0], [1_000_000, 2_000_000]])
       expect(loaded.project.tracks.find((track) => track.id === 'A1')?.clips).toHaveLength(2)
       expect(loaded.project.tracks.find((track) => track.id === 'V1')?.clips[0]?.linkGroupId)

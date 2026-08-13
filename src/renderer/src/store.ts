@@ -4,14 +4,18 @@ import {
   addMediaAssets,
   createClipForAsset,
   createSubtitleClip,
+  createTrack,
   makeId,
+  subtitleOverlaps,
   projectDurationUs,
   relinkMediaAsset,
   replaceTrack,
+  validateProject,
   updateClip
 } from '../../shared/project'
 import { deleteLinkedClips, EditingOperationError, moveLinkedClip, splitLinkedClip, splitSelectedRoots, trimLinkedClip } from '../../shared/editing/operations'
 import { linkedClipIds } from '../../shared/editing/links'
+import { isMediaTrack } from '../../shared/types'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
 import { createDemoProject } from './demo'
 
@@ -64,6 +68,11 @@ interface EditorState {
   duplicateSelected(): void
   applySubtitleStyleToAll(clipId: string): void
   patchTrack(track: TimelineTrack): void
+  addMediaTrack(): void
+  addSubtitleTrack(): void
+  deleteTrack(trackId: string): void
+  renameTrack(trackId: string, name: string): void
+  reorderTrack(trackId: string, direction: -1 | 1): void
   undo(): void
   redo(): void
   showNotice(message: string, tone?: Notice['tone']): void
@@ -85,9 +94,8 @@ const projectFingerprint = (project: ProjectFile): string => {
 }
 const initialProject = createDemoProject()
 
-const compatibleTrack = (asset: MediaAsset, track: TimelineTrack): boolean => {
-  if (asset.kind === 'audio') return track.kind === 'audio'
-  return track.kind === 'video'
+const compatibleTrack = (_asset: MediaAsset, track: TimelineTrack): boolean => {
+  return isMediaTrack(track)
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -119,9 +127,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       dirty: projectFingerprint(project) !== state.savedFingerprint
     }))
   },
-  loadProject: (project) =>
+  loadProject: (project) => {
+    const normalized = validateProject(project)
     set({
-      project: cloneProject(project),
+      project: normalized,
       past: [],
       future: [],
       selectedClipIds: [],
@@ -130,9 +139,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       playing: false,
       dirty: false,
       lastSavedAt: new Date(),
-      savedFingerprint: projectFingerprint(project),
+      savedFingerprint: projectFingerprint(normalized),
       transactionBase: null
-    }),
+    })
+  },
   markSaved: (project) => {
     const saved = project ? cloneProject(project) : get().project
     set({ project: saved, dirty: false, lastSavedAt: new Date(), savedFingerprint: projectFingerprint(saved), transactionBase: null })
@@ -187,10 +197,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   addSubtitle: () => {
     const { project, playheadUs } = get()
-    const track = project.tracks.find((item) => item.kind === 'subtitle')
-    if (!track) return get().showNotice('字幕トラックがありません。', 'error')
     const clip = createSubtitleClip(playheadUs)
-    get().applyProject(addClipToTrack(project, track.id, clip), { selectClipId: clip.id })
+    const next = cloneProject(project)
+    let track = next.tracks.find((item) => item.kind === 'subtitle' && !item.locked && item.clips.every((item) => item.kind !== 'subtitle' || !subtitleOverlaps(item, clip)))
+    if (!track) {
+      track = createTrack('subtitle', next.tracks.filter((item) => item.kind === 'subtitle').length + 1)
+      next.tracks.push(track)
+    }
+    track.clips.push(clip)
+    track.clips.sort((left, right) => left.startUs - right.startUs)
+    get().applyProject(validateProject(next), { selectClipId: clip.id })
   },
   patchClip: (clipId, patcher) => get().applyProject(updateClip(get().project, clipId, patcher)),
   moveSelected: (clipId, trackId, atUs) => {
@@ -258,7 +274,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
     for (const track of next.tracks) track.clips.sort((left, right) => left.startUs - right.startUs)
     next.updatedAt = new Date().toISOString()
-    get().applyProject(next)
+    try {
+      get().applyProject(validateProject(next))
+    } catch (error) {
+      get().showNotice(error instanceof Error ? error.message : '貼り付け先に字幕が重なっています。', 'warning')
+      return
+    }
     set({ selectedClipIds: pastedIds })
   },
   duplicateSelected: () => {
@@ -281,6 +302,45 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     get().applyProject(next)
   },
   patchTrack: (track) => get().applyProject(replaceTrack(get().project, track)),
+  addMediaTrack: () => {
+    const project = cloneProject(get().project)
+    project.tracks.push(createTrack('media', project.tracks.filter((track) => isMediaTrack(track)).length + 1))
+    get().applyProject(project)
+  },
+  addSubtitleTrack: () => {
+    const project = cloneProject(get().project)
+    project.tracks.push(createTrack('subtitle', project.tracks.filter((track) => track.kind === 'subtitle').length + 1))
+    get().applyProject(project)
+  },
+  deleteTrack: (trackId) => {
+    const project = cloneProject(get().project)
+    const track = project.tracks.find((candidate) => candidate.id === trackId)
+    if (!track) return
+    if (track.clips.length) return get().showNotice('クリップがあるトラックは削除できません。', 'warning')
+    if (project.tracks.filter((candidate) => isMediaTrack(candidate)).length <= 1 && isMediaTrack(track)) return get().showNotice('最後のメディアトラックは削除できません。', 'warning')
+    if (project.tracks.filter((candidate) => candidate.kind === 'subtitle').length <= 1 && track.kind === 'subtitle') return get().showNotice('最後の字幕トラックは削除できません。', 'warning')
+    project.tracks = project.tracks.filter((candidate) => candidate.id !== trackId)
+    get().applyProject(project)
+  },
+  renameTrack: (trackId, name) => {
+    const project = cloneProject(get().project)
+    const track = project.tracks.find((candidate) => candidate.id === trackId)
+    if (!track) return
+    track.name = name.trim().slice(0, 80) || track.name
+    get().applyProject(project)
+  },
+  reorderTrack: (trackId, direction) => {
+    const project = cloneProject(get().project)
+    const index = project.tracks.findIndex((track) => track.id === trackId)
+    const target = index + direction
+    if (index < 0 || target < 0 || target >= project.tracks.length) return
+    const current = project.tracks[index]
+    const adjacent = project.tracks[target]
+    if (!current || !adjacent || isMediaTrack(current) !== isMediaTrack(adjacent)) return
+    project.tracks[index] = adjacent
+    project.tracks[target] = current
+    get().applyProject(project)
+  },
   undo: () => {
     if (get().transactionBase) get().commitEditTransaction()
     const { past, project } = get()
