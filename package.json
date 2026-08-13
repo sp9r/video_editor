@@ -18,6 +18,7 @@
     "dev": "node scripts/dev.mjs",
     "build": "npm run typecheck && node scripts/build.mjs",
     "smoke:electron": "node scripts/electron-startup-smoke.mjs",
+    "subtitle:parity": "npm run build && node scripts/subtitle-parity-harness.mjs",
     "preview": "npm run build && electron .",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run --configLoader runner",

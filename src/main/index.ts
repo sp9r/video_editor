@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { createFfmpegService, createPreviewPlan, parseSrt, parseVtt, type FfmpegService } from './ffmpeg/index'
 import { loadRecovery, openProject, saveProject, writeRecovery } from './project-service'
@@ -8,6 +8,9 @@ import { IPC } from '../shared/ipc'
 import { validateProject } from '../shared/project'
 import type { ExportSettings, ProjectFile } from '../shared/types'
 import { enumerateFontFamilies } from './fonts'
+import { generateAss } from './ffmpeg/subtitles'
+import { buildSubtitleRenderSpec, subtitleAnchorTransform } from '../shared/subtitle-render'
+import { createSubtitleParityFixture } from '../shared/subtitle-parity-fixture'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
@@ -202,6 +205,54 @@ const registerIpcHandlers = (): void => {
   })
 }
 
+const runSubtitleParitySmoke = async (window: BrowserWindow): Promise<void> => {
+  const fixture = createSubtitleParityFixture()
+  const subtitle = fixture.tracks[0]?.clips[0]
+  if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('Subtitle parity fixture is invalid')
+  const spec = buildSubtitleRenderSpec(subtitle, fixture.sequence)
+  const previewPath = path.resolve(process.env.SPECTRA_PARITY_PREVIEW_PATH ?? path.join(app.getPath('temp'), 'spectra-subtitle-preview.png'))
+  const assPath = path.resolve(process.env.SPECTRA_PARITY_ASS_PATH ?? path.join(app.getPath('temp'), 'spectra-subtitle-captions.ass'))
+  const injectedSpec = JSON.stringify(spec)
+  const domReport = await window.webContents.executeJavaScript(`(() => {
+    const spec = ${injectedSpec}
+    const scene = document.querySelector('.preview-scene')
+    if (!(scene instanceof HTMLElement)) throw new Error('Preview scene is missing')
+    for (const child of Array.from(scene.children)) child.style.visibility = 'hidden'
+    scene.style.background = '#242a31'
+    const outer = document.createElement('div')
+    outer.className = 'preview-subtitle subtitle-none anchor-bottom parity-probe'
+    Object.assign(outer.style, {
+      left: spec.xPx + 'px', top: spec.yPx + 'px', width: spec.maxWidthPx + 'px',
+      transform: '${subtitleAnchorTransform(spec.anchor)}', animation: 'none', visibility: 'visible'
+    })
+    const inner = document.createElement('span')
+    inner.className = 'preview-subtitle-text'
+    inner.textContent = spec.wrappedText
+    Object.assign(inner.style, {
+      color: spec.color, fontFamily: spec.fontFamily, fontSize: spec.fontSizePx + 'px',
+      fontWeight: spec.bold ? '700' : '400', fontStyle: spec.italic ? 'italic' : 'normal',
+      letterSpacing: spec.letterSpacingPx + 'px', lineHeight: String(spec.lineHeight),
+      WebkitTextStroke: spec.outlineWidthPx + 'px ' + spec.outlineColor, paintOrder: 'stroke fill',
+      textShadow: spec.shadowOffsetXPx + 'px ' + spec.shadowOffsetYPx + 'px ' + spec.shadowBlurPx + 'px ' + spec.shadowColor,
+      background: 'color-mix(in srgb, ' + spec.backgroundColor + ' ' + (spec.backgroundOpacity * 100) + '%, transparent)'
+    })
+    outer.append(inner)
+    scene.append(outer)
+    const rect = (value) => ({ x: value.x, y: value.y, width: value.width, height: value.height, top: value.top, left: value.left, right: value.right, bottom: value.bottom })
+    return { viewport: { width: window.innerWidth, height: window.innerHeight }, sceneRect: rect(scene.getBoundingClientRect()), outerRect: rect(outer.getBoundingClientRect()), textRect: rect(inner.getBoundingClientRect()) }
+  })()`)
+  const screenshot = await window.webContents.capturePage()
+  await writeFile(previewPath, screenshot.toPNG())
+  await writeFile(assPath, generateAss(fixture), 'utf8')
+  console.log(`SPECTRA_SUBTITLE_PARITY_REPORT ${JSON.stringify({
+    previewPath,
+    assPath,
+    sequence: fixture.sequence,
+    spec,
+    ...domReport
+  })}`)
+}
+
 const start = async (): Promise<void> => {
   installMediaProtocol()
   ffmpegService = await createFfmpegService({
@@ -209,6 +260,17 @@ const start = async (): Promise<void> => {
   })
   registerIpcHandlers()
   mainWindow = createMainWindow()
+  if (process.env.SPECTRA_SUBTITLE_PARITY_SMOKE === '1') {
+    try {
+      await waitForRendererStartup(mainWindow)
+      await runSubtitleParitySmoke(mainWindow)
+      app.exit(0)
+    } catch (error) {
+      console.error(`SPECTRA_SUBTITLE_PARITY_REPORT ${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}`)
+      app.exit(1)
+    }
+    return
+  }
   if (process.env.SPECTRA_STARTUP_SMOKE === '1') {
     try {
       const report = await waitForRendererStartup(mainWindow)
