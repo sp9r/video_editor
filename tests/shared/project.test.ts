@@ -6,6 +6,7 @@ import {
   deleteClips,
   framesToUs,
   layoutSubtitleTracks,
+  moveClip,
   projectDurationUs,
   relinkMediaAsset,
   splitClip,
@@ -108,6 +109,17 @@ describe('project validation', () => {
     partitioned.tracks.find((candidate) => candidate.kind === 'subtitle')!.clips.push(second)
     const laidOut = layoutSubtitleTracks(partitioned)
     expect(laidOut.tracks.filter((candidate) => candidate.kind === 'subtitle')).toHaveLength(2)
+  })
+
+  it('rejects subtitle move and trim operations that create overlap', () => {
+    let project = createEmptyProject('caption-edit')
+    const track = project.tracks.find((candidate) => candidate.kind === 'subtitle')!
+    const first = { id: 'caption-first', name: 'first', kind: 'subtitle' as const, startUs: 0, durationUs: 2_000_000, sourceInUs: 0, enabled: true, text: 'first', style: structuredClone(DEFAULT_SUBTITLE_STYLE) }
+    const second = { ...first, id: 'caption-second', startUs: 4_000_000, sourceInUs: 3_000_000, text: 'second' }
+    project = addClipToTrack(project, track.id, first)
+    project = addClipToTrack(project, track.id, second)
+    expect(() => moveClip(project, second.id, 1_000_000)).toThrow(/重な/u)
+    expect(() => trimClip(project, second.id, 'start', 1_000_000)).toThrow(/重な/u)
   })
 })
 
