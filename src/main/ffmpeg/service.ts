@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import type {
   EncoderReport,
+  AccuratePreviewFrameResult,
   ExportProgress,
   ExportSettings,
   ProbeResult,
@@ -20,6 +21,7 @@ import { defaultProcessExecutor, ProcessCancelledError, type ProcessExecutor } f
 import { probeMediaFile, probeMediaFileSafe, validateRenderedOutput } from './probe.js'
 import {
   buildRenderCommandArgs,
+  buildAccurateFrameFilterGraph,
   buildRenderFilterGraph,
   createRenderPlan,
   ffmpegSupportsFileBackedOptions,
@@ -28,6 +30,7 @@ import {
 import { generateSrt } from './subtitles.js'
 import { WaveformExtractor } from './waveform.js'
 import type { WaveformRequest } from '../../shared/types.js'
+import { frameIndexForTime, timeUsForFrameIndex } from '../../shared/frame-time.js'
 
 export interface FfmpegServiceOptions {
   ffmpegPath?: string | null
@@ -49,6 +52,12 @@ export interface ExportResult {
   outputPath: string
   encoderId: H264EncoderId
   fallbackReason?: string
+}
+
+export interface AccurateFrameOptions {
+  width?: number
+  height?: number
+  signal?: AbortSignal
 }
 
 export interface ExportJob {
@@ -155,6 +164,21 @@ const assertSubtitleBurnInGraph = (plan: RenderPlan, graph: string): void => {
   }
 }
 
+const projectFingerprint = (project: ProjectFile): string =>
+  createHash('sha256').update(JSON.stringify(project)).digest('hex')
+
+const mediaFingerprint = async (project: ProjectFile): Promise<string> => {
+  const entries = await Promise.all(project.media.map(async (asset) => {
+    try {
+      const metadata = await stat(asset.path)
+      return [asset.id, asset.path, metadata.size, metadata.mtimeMs] as const
+    } catch {
+      return [asset.id, asset.path, 'missing'] as const
+    }
+  }))
+  return createHash('sha256').update(JSON.stringify(entries)).digest('hex')
+}
+
 const tryStatSameFile = async (left: string, right: string): Promise<boolean> => {
   if (resolve(left).toLowerCase() === resolve(right).toLowerCase()) return true
   try {
@@ -173,6 +197,7 @@ export class FfmpegService {
   readonly workspaceRoot: string
   readonly vaapiDevice?: string
   readonly #jobs = new Map<string, ActiveJob>()
+  readonly #accurateFrames = new Map<string, Promise<AccuratePreviewFrameResult> | AccuratePreviewFrameResult>()
 
   constructor(paths: FfmpegPaths, options: Omit<FfmpegServiceOptions, 'paths' | 'ffmpegPath' | 'ffprobePath'> = {}) {
     this.paths = paths
@@ -201,6 +226,127 @@ export class FfmpegService {
 
   async getWaveformPeaks(request: WaveformRequest): Promise<number[]> {
     return await this.waveform.getPeaks(request)
+  }
+
+  async renderAccurateFrame(
+    project: ProjectFile,
+    requestedTimeUs: number,
+    options: AccurateFrameOptions = {}
+  ): Promise<AccuratePreviewFrameResult> {
+    if (!Number.isFinite(requestedTimeUs) || requestedTimeUs < 0) throw new Error('Accurate preview time must be a finite non-negative number')
+    const settings: ExportSettings = {
+      outputPath: join(this.workspaceRoot, 'accurate-preview-placeholder.mp4'),
+      width: options.width ?? project.sequence.width,
+      height: options.height ?? project.sequence.height,
+      frameRate: project.sequence.frameRate,
+      videoBitrate: 2_000_000,
+      audioBitrate: 128_000,
+      encoderMode: 'software',
+      burnSubtitles: true,
+      exportSrt: false
+    }
+    const plan = createRenderPlan(project, settings)
+    const fps = { numerator: plan.frameRateNumerator, denominator: plan.frameRateDenominator }
+    const boundedTimeUs = Math.min(requestedTimeUs, Math.max(0, plan.durationUs - 1))
+    const frameIndex = frameIndexForTime(boundedTimeUs, fps)
+    const renderedTimeUs = timeUsForFrameIndex(frameIndex, fps)
+    const fingerprint = projectFingerprint(project)
+    const mediaHash = await mediaFingerprint(project)
+    const cacheKey = createHash('sha256').update(JSON.stringify({
+      fingerprint,
+      mediaHash,
+      frameIndex,
+      width: plan.width,
+      height: plan.height,
+      fps
+    })).digest('hex')
+    const cached = this.#accurateFrames.get(cacheKey)
+    if (cached) {
+      const cachedFrame = await cached
+      return { ...cachedFrame, requestedTimeUs }
+    }
+    const promise = this.#renderAccurateFrame(plan, cacheKey, {
+      requestedTimeUs,
+      renderedTimeUs,
+      frameIndex,
+      projectFingerprint: fingerprint,
+      signal: options.signal
+    })
+    this.#accurateFrames.set(cacheKey, promise)
+    while (this.#accurateFrames.size > 64) {
+      const oldest = this.#accurateFrames.keys().next().value
+      if (!oldest || oldest === cacheKey) break
+      this.#accurateFrames.delete(oldest)
+    }
+    try {
+      return await promise
+    } catch (error) {
+      if (this.#accurateFrames.get(cacheKey) === promise) this.#accurateFrames.delete(cacheKey)
+      throw error
+    }
+  }
+
+  async #renderAccurateFrame(
+    plan: RenderPlan,
+    cacheKey: string,
+    metadata: Omit<AccuratePreviewFrameResult, 'framePath'> & { signal?: AbortSignal }
+  ): Promise<AccuratePreviewFrameResult> {
+    const directory = join(this.workspaceRoot, 'accurate-preview')
+    const outputPath = join(directory, `${cacheKey}.png`)
+    try {
+      const existing = await stat(outputPath)
+      if (existing.isFile() && existing.size > 0) return { framePath: outputPath, ...metadata }
+    } catch {
+      // The bounded cache is best effort; render a missing or invalid entry again.
+    }
+    await mkdir(directory, { recursive: true })
+    const token = randomUUID()
+    const temporaryPath = join(directory, `.${cacheKey}.${token}.png`)
+    const filterGraphPath = join(directory, `.${cacheKey}.${token}.ffgraph`)
+    const assFileName = `${cacheKey}.ass`
+    const assPath = join(directory, assFileName)
+    try {
+      await Promise.all([
+        writeFile(filterGraphPath, buildAccurateFrameFilterGraph(plan, metadata.frameIndex, assFileName), 'utf8'),
+        writeFile(assPath, plan.ass, 'utf8')
+      ])
+      await this.executor.run({
+        command: this.paths.ffmpegPath,
+        args: [
+          '-hide_banner',
+          '-y',
+          '-loglevel',
+          'warning',
+          ...plan.inputArgs,
+          '-filter_complex_script',
+          filterGraphPath,
+          '-map',
+          '[vout]',
+          '-frames:v',
+          '1',
+          '-an',
+          '-c:v',
+          'png',
+          '-f',
+          'image2',
+          temporaryPath
+        ],
+        cwd: directory,
+        signal: metadata.signal,
+        timeoutMs: 120_000,
+        maxOutputBytes: 32 * 1024 * 1024
+      })
+      const rendered = await stat(temporaryPath)
+      if (!rendered.isFile() || rendered.size === 0) throw new Error('Accurate preview renderer produced an empty frame')
+      await moveIntoPlace(temporaryPath, outputPath)
+      return { framePath: outputPath, ...metadata }
+    } finally {
+      await Promise.all([
+        rm(temporaryPath, { force: true }).catch(() => undefined),
+        rm(filterGraphPath, { force: true }).catch(() => undefined),
+        rm(assPath, { force: true }).catch(() => undefined)
+      ])
+    }
   }
 
   createRenderPlan(project: ProjectFile, settings: ExportSettings): RenderPlan {

@@ -40,6 +40,59 @@ const validationJson = JSON.stringify({
 })
 
 describe('FFmpeg export service', () => {
+  it('renders an authoritative single frame and shares bounded cache entries', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-accurate-frame-'))
+    try {
+      const project = await prepareProjectFiles(root)
+      let renderCalls = 0
+      const graphs: string[] = []
+      const executor: ProcessExecutor = {
+        async run(request) {
+          if (request.args.includes('-filter_complex_script')) {
+            renderCalls += 1
+            const graphPath = request.args[request.args.indexOf('-filter_complex_script') + 1]
+            if (!graphPath) throw new Error('Missing accurate frame graph')
+            graphs.push(await readFile(graphPath, 'utf8'))
+            const outputPath = request.args.at(-1)
+            if (!outputPath) throw new Error('Missing accurate frame output')
+            await writeFile(outputPath, `frame-${renderCalls}`)
+          }
+          return success(request)
+        }
+      }
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, {
+        executor,
+        platform: 'win32',
+        workspaceRoot: join(root, 'workspaces')
+      })
+
+      const first = await service.renderAccurateFrame(project, 100_000)
+      const sameFrame = await service.renderAccurateFrame(project, 100_000)
+      const sameCanonicalFrame = await service.renderAccurateFrame(project, 100_001)
+      expect(renderCalls).toBe(1)
+      expect(sameFrame).toEqual(first)
+      expect(sameCanonicalFrame.framePath).toBe(first.framePath)
+      expect(sameCanonicalFrame.requestedTimeUs).toBe(100_001)
+      expect(first.frameIndex).toBe(3)
+      expect(first.renderedTimeUs).toBe(100_000)
+      expect(graphs[0]).toContain("select='eq(n\\,3)'")
+
+      const nextFrame = await service.renderAccurateFrame(project, 133_334)
+      expect(renderCalls).toBe(2)
+      expect(nextFrame.frameIndex).toBe(4)
+      expect(nextFrame.framePath).not.toBe(first.framePath)
+
+      const sourcePath = project.media[0]?.path
+      if (!sourcePath) throw new Error('Missing fixture source')
+      await writeFile(sourcePath, 'changed-source')
+      const invalidated = await service.renderAccurateFrame(project, 100_000)
+      expect(renderCalls).toBe(3)
+      expect(invalidated.framePath).not.toBe(first.framePath)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('falls back from a runtime GPU failure to CPU, validates, and replaces output', async () => {
     const root = await mkdtemp(join(tmpdir(), 'spectra-service-'))
     try {

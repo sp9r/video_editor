@@ -59,6 +59,11 @@ export interface RenderCommandOptions {
   supportsFileOption?: boolean
 }
 
+export interface AuthoritativeVideoGraph {
+  statements: string[]
+  videoLabel: string
+}
+
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(maximum, Math.max(minimum, Number.isFinite(value) ? value : minimum))
 
@@ -197,24 +202,54 @@ const makeInputArgs = (
   return ['-ss', seconds(clip.sourceInUs), '-t', seconds(clip.durationUs), '-i', asset.path]
 }
 
-export const buildRenderFilterGraph = (
-  plan: Omit<RenderPlan, 'filterGraph'> | RenderPlan,
-  encoderId: H264EncoderId,
-  assFileName = plan.assFileName
-): string => {
+const validateAssFileName = (assFileName: string): void => {
   if (!/^[A-Za-z0-9_.-]+$/u.test(assFileName)) throw new Error('ASS filename must be a safe workspace basename')
+}
+
+export const buildAuthoritativeVideoGraph = (
+  plan: Omit<RenderPlan, 'filterGraph'> | RenderPlan,
+  assFileName = plan.assFileName
+): AuthoritativeVideoGraph => {
+  validateAssFileName(assFileName)
   const statements = [...plan.graphStatements]
   let videoLabel = plan.compositedVideoLabel
   if (plan.burnSubtitles && plan.subtitleCueCount > 0 && plan.srt.trim()) {
     statements.push(`[${videoLabel}]ass=filename='${assFileName}'[subtitled]`)
     videoLabel = 'subtitled'
   }
+  return { statements, videoLabel }
+}
+
+export const buildRenderFilterGraph = (
+  plan: Omit<RenderPlan, 'filterGraph'> | RenderPlan,
+  encoderId: H264EncoderId,
+  assFileName = plan.assFileName
+): string => {
+  const authoritative = buildAuthoritativeVideoGraph(plan, assFileName)
+  const statements = authoritative.statements
+  const videoLabel = authoritative.videoLabel
   const format = encoderPixelFormat(encoderId)
   const terminalFilter = encoderRequiresHardwareUpload(encoderId)
     ? `format=${format},hwupload`
     : `format=${format}`
   statements.push(`[${videoLabel}]${terminalFilter}[vout]`)
   return statements.join(';\n')
+}
+
+export const buildAccurateFrameFilterGraph = (
+  plan: Omit<RenderPlan, 'filterGraph'> | RenderPlan,
+  frameIndex: number,
+  assFileName = plan.assFileName
+): string => {
+  if (!Number.isInteger(frameIndex) || frameIndex < 0) throw new Error('Accurate frame index must be a non-negative integer')
+  const authoritative = buildAuthoritativeVideoGraph(plan, assFileName)
+  authoritative.statements.push(
+    `[${authoritative.videoLabel}]select='eq(n\\,${frameIndex})',setpts=PTS-STARTPTS,format=rgba[vout]`
+  )
+  // The authoritative plan still builds its audio semantics. Consume that
+  // branch explicitly because a PNG frame has no audio output stream.
+  authoritative.statements.push(`[${plan.audioOutputLabel}]anullsink`)
+  return authoritative.statements.join(';\n')
 }
 
 export const createRenderPlan = (project: ProjectFile, settings: ExportSettings): RenderPlan => {
@@ -321,8 +356,9 @@ export const createRenderPlan = (project: ProjectFile, settings: ExportSettings)
 }
 
 /**
- * Preview consumes the same validated ProjectFile and RenderPlan construction
- * as final render. Only the presentation backend differs after this boundary.
+ * Fast Preview consumes the same validated ProjectFile and RenderPlan inputs
+ * as final render, but is an approximate presentation backend. Accurate
+ * Preview and Final render use buildAuthoritativeVideoGraph as their authority.
  */
 export const createPreviewPlan = (project: ProjectFile, settings: ExportSettings): PreviewPlan => {
   const renderPlan = createRenderPlan(project, settings)

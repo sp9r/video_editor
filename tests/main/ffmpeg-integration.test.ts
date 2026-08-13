@@ -9,6 +9,110 @@ import { generateAss } from '../../src/main/ffmpeg/subtitles.js'
 import { makeExportSettings, makeProject } from './ffmpeg-fixtures.js'
 
 describe('bundled FFmpeg integration', () => {
+  it('matches Accurate Preview with the same canonical frame from Final render', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-accurate-preview-'))
+    try {
+      const paths = await resolveFfmpegPaths()
+      const videoPath = join(root, 'source.mkv')
+      const imagePath = join(root, 'overlay.bmp')
+      const outputPath = join(root, 'final.mp4')
+      const finalFramePath = join(root, 'final-frame.png')
+      await executeProcess({
+        command: paths.ffmpegPath,
+        args: [
+          '-hide_banner', '-loglevel', 'error', '-y',
+          '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=30:duration=1',
+          '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=1',
+          '-c:v', 'ffv1', '-c:a', 'pcm_s16le', videoPath
+        ],
+        timeoutMs: 30_000
+      })
+      await executeProcess({
+        command: paths.ffmpegPath,
+        args: ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=80x60', '-frames:v', '1', imagePath],
+        timeoutMs: 30_000
+      })
+
+      const project = makeProject()
+      project.sequence = {
+        width: 320,
+        height: 180,
+        frameRate: { numerator: 30, denominator: 1 },
+        sampleRate: 48_000,
+        backgroundColor: '#102030'
+      }
+      const videoAsset = project.media[0]
+      const imageAsset = project.media[1]
+      if (!videoAsset || !imageAsset) throw new Error('accurate preview fixture assets are missing')
+      videoAsset.path = videoPath
+      videoAsset.durationUs = 1_000_000
+      videoAsset.width = 320
+      videoAsset.height = 180
+      imageAsset.path = imagePath
+      const videoClip = project.tracks[1]?.clips[0]
+      if (videoClip?.kind === 'video') {
+        videoClip.durationUs = 1_000_000
+        videoClip.sourceInUs = 0
+        videoClip.transform = {
+          ...videoClip.transform,
+          crop: { left: 0.04, top: 0.03, right: 0.02, bottom: 0.05 },
+          rotation: 2
+        }
+      }
+      const imageClip = project.tracks[0]?.clips[0]
+      if (imageClip?.kind === 'image') {
+        imageClip.startUs = 200_000
+        imageClip.durationUs = 500_000
+        imageClip.transform.rotation = -8
+      }
+      const subtitleClip = project.tracks[2]?.clips[0]
+      if (subtitleClip?.kind === 'subtitle') {
+        subtitleClip.startUs = 200_000
+        subtitleClip.durationUs = 500_000
+        subtitleClip.style = { ...subtitleClip.style, animation: 'none', fontSize: 24, outlineWidth: 4, shadowBlur: 8, backgroundOpacity: 0.15 }
+      }
+      const settings = {
+        ...makeExportSettings(outputPath),
+        width: 320,
+        height: 180,
+        videoBitrate: 1_000_000,
+        audioBitrate: 96_000,
+        encoderMode: 'software' as const
+      }
+      const service = new FfmpegService(paths, { platform: 'darwin', workspaceRoot: join(root, 'workspace') })
+      const accurate = await service.renderAccurateFrame(project, 500_000)
+      await (await service.startExport(project, settings, { jobId: 'accurate-parity' })).result
+      await executeProcess({
+        command: paths.ffmpegPath,
+        args: [
+          '-hide_banner', '-loglevel', 'error', '-y', '-i', outputPath,
+          '-vf', `select=eq(n\\,${accurate.frameIndex})`, '-frames:v', '1', finalFramePath
+        ],
+        timeoutMs: 30_000
+      })
+      const accurateProbe = await service.probeMedia(accurate.framePath)
+      const finalProbe = await service.probeMedia(finalFramePath)
+      expect(accurateProbe.width).toBe(320)
+      expect(accurateProbe.height).toBe(180)
+      expect(finalProbe.width).toBe(320)
+      expect(finalProbe.height).toBe(180)
+
+      const comparison = await executeProcess({
+        command: paths.ffmpegPath,
+        args: [
+          '-hide_banner', '-loglevel', 'info', '-i', accurate.framePath, '-i', finalFramePath,
+          '-lavfi', 'ssim=stats_file=-', '-f', 'null', '-'
+        ],
+        timeoutMs: 30_000
+      })
+      const report = `${comparison.stdout}\n${comparison.stderr}`
+      const all = /All:([0-9.]+)/u.exec(report)?.[1]
+      expect(Number(all), report).toBeGreaterThan(0.9)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 120_000)
+
   it('renders crop, image, audio, subtitle, and CPU H.264 into a validated MP4', async () => {
     const root = await mkdtemp(join(tmpdir(), 'spectra-ffmpeg-integration-'))
     try {
