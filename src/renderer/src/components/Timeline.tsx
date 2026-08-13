@@ -27,6 +27,14 @@ import { peakCountForPixelWidth, Waveform } from './Waveform'
 
 const seconds = (timeUs: number): number => timeUs / 1_000_000
 
+export const isTextEditingTarget = (target: EventTarget | null): boolean => {
+  const element = target as HTMLElement | null
+  return element?.matches('input, textarea, select, [contenteditable="true"]') ?? false
+}
+
+export const isOutsideContextMenu = (menu: HTMLElement | null, target: EventTarget | null): boolean =>
+  !menu?.contains(target as Node)
+
 const trackGlyph = (kind: TimelineTrack['kind']): string => kind === 'subtitle' ? 'C' : 'V'
 
 const trackLabel = (track: TimelineTrack, tracks: TimelineTrack[]): string => {
@@ -120,12 +128,8 @@ export default function Timeline(): React.JSX.Element {
   const ticks = useMemo(() => ticksFor(durationUs, zoomPxPerSecond), [durationUs, zoomPxPerSecond])
 
   useEffect(() => {
-    const isEditableTarget = (target: EventTarget | null): boolean => {
-      const element = target as HTMLElement | null
-      return element?.matches('input, textarea, select, [contenteditable="true"]') ?? false
-    }
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (isEditableTarget(event.target)) return
+      if (isTextEditingTarget(event.target)) return
       const modifier = event.ctrlKey || event.metaKey
       if (!modifier) return
       if (event.key.toLowerCase() === 'c') { event.preventDefault(); copySelected(); setContextMenu(null) }
@@ -133,7 +137,7 @@ export default function Timeline(): React.JSX.Element {
       if (event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelected(); setContextMenu(null) }
     }
     const onPointerDown = (event: PointerEvent): void => {
-      if (!contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null)
+      if (isOutsideContextMenu(contextMenuRef.current, event.target)) setContextMenu(null)
     }
     const onKeyEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') setContextMenu(null) }
     const onBlur = (): void => setContextMenu(null)

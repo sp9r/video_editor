@@ -116,4 +116,13 @@ describe('editor history and linked selection', () => {
     useEditorStore.getState().deleteTrack(extra.id)
     expect(useEditorStore.getState().project.tracks.some((track) => track.id === extra.id)).toBe(false)
   })
+
+  it('supports ten or more media and subtitle tracks without fixed-count assumptions', () => {
+    useEditorStore.getState().loadProject(createEmptyProject('many-tracks'))
+    for (let index = 0; index < 10; index += 1) useEditorStore.getState().addMediaTrack()
+    for (let index = 0; index < 10; index += 1) useEditorStore.getState().addSubtitleTrack()
+    const tracks = useEditorStore.getState().project.tracks
+    expect(tracks.filter((track) => track.kind === 'media')).toHaveLength(11)
+    expect(tracks.filter((track) => track.kind === 'subtitle')).toHaveLength(11)
+  })
 })
