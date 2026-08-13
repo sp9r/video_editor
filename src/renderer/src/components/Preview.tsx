@@ -3,7 +3,7 @@ import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-r
 import { formatTimecode, projectDurationUs } from '../../../shared/project'
 import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
 import { buildSubtitleRenderSpec, subtitleAnchorTransform } from '../../../shared/subtitle-render'
-import type { MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip } from '../../../shared/types'
+import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip } from '../../../shared/types'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
 
@@ -85,11 +85,15 @@ function PreviewAudio({
 export default function Preview(): React.JSX.Element {
   const { project, playheadUs, setPlayhead, playing, setPlaying, selectClip } = useEditorStore()
   const [renderPlan, setRenderPlan] = useState<PreviewPlan | null>(null)
+  const [accurateFrame, setAccurateFrame] = useState<AccuratePreviewFrameResult | null>(null)
+  const [accurateRendering, setAccurateRendering] = useState(false)
+  const [accurateError, setAccurateError] = useState<string | null>(null)
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
   const requestRef = useRef<number | null>(null)
   const lastFrameRef = useRef<number>(0)
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const audioRefs = useRef(new Map<string, HTMLAudioElement>())
+  const accurateRequestSequence = useRef(0)
   const durationUs = Math.max(renderPlan?.durationUs ?? projectDurationUs(project), 1_000_000)
 
   useEffect(() => {
@@ -103,6 +107,33 @@ export default function Preview(): React.JSX.Element {
       .catch(() => { if (active) setRenderPlan(null) })
     return () => { active = false }
   }, [project])
+
+  useEffect(() => {
+    const sequence = ++accurateRequestSequence.current
+    setAccurateFrame(null)
+    setAccurateError(null)
+    if (playing || !window.spectra) {
+      setAccurateRendering(false)
+      return
+    }
+    setAccurateRendering(true)
+    const api = window.spectra
+    const timeout = window.setTimeout(() => {
+      if (!api) return
+      void api.renderAccuratePreviewFrame(project, playheadUs)
+        .then((result) => {
+          if (sequence !== accurateRequestSequence.current || useEditorStore.getState().playing) return
+          setAccurateFrame(result)
+          setAccurateRendering(false)
+        })
+        .catch((error: unknown) => {
+          if (sequence !== accurateRequestSequence.current || useEditorStore.getState().playing) return
+          setAccurateRendering(false)
+          setAccurateError(error instanceof Error ? error.message : '正確プレビューを生成できませんでした')
+        })
+    }, 180)
+    return () => window.clearTimeout(timeout)
+  }, [playheadUs, playing, project])
 
   useLayoutEffect(() => {
     const element = canvasRef.current
@@ -187,7 +218,10 @@ export default function Preview(): React.JSX.Element {
       <header className="viewer-tabs">
         <button type="button">ソース</button>
         <button type="button" className="is-active">完成映像</button>
-        <span className="viewer-quality"><i />プレビュー品質: 1/2</span>
+        <span className="viewer-quality" aria-live="polite">
+          <i />{playing ? '高速プレビュー' : accurateRendering ? '正確プレビュー生成中…' : accurateFrame ? '正確プレビュー' : '正確プレビュー待機'}
+          {accurateError && <small className="preview-accurate-error" title={accurateError}>取得失敗</small>}
+        </span>
       </header>
       <div className="viewer-stage">
         <div ref={canvasRef} className="viewer-canvas" style={{ background: project.sequence.backgroundColor, aspectRatio: `${project.sequence.width} / ${project.sequence.height}` }}>
@@ -241,6 +275,14 @@ export default function Preview(): React.JSX.Element {
                 </button>
               })()
             ))}
+            {!playing && accurateFrame && window.spectra && (
+              <img
+                className="accurate-preview-overlay"
+                src={window.spectra.mediaUrl(accurateFrame.framePath)}
+                alt=""
+                draggable={false}
+              />
+            )}
           </div>
           <div className="preview-audio-pool" aria-hidden="true">
             {(renderPlan?.audioClips ?? []).map((item) => (

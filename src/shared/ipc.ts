@@ -12,6 +12,7 @@ export const IPC = {
   waveformPeaks: 'waveform:peaks',
   fontFamilies: 'fonts:families',
   previewPlan: 'preview:plan',
+  previewAccurateFrame: 'preview:accurate-frame',
   subtitlesImport: 'subtitles:import',
   encodersDetect: 'encoders:detect',
   exportChoosePath: 'export:choose-path',

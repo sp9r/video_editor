@@ -60,7 +60,8 @@ const registerIpcHandlers = (): void => {
       version: app.getVersion(),
       platform: process.platform,
       arch: process.arch,
-      packaged: app.isPackaged
+      packaged: app.isPackaged,
+      smokeMode: process.env.SPECTRA_ACCURATE_PREVIEW_SMOKE === '1'
     }
   })
 
@@ -128,6 +129,14 @@ const registerIpcHandlers = (): void => {
       burnSubtitles: true,
       exportSrt: false
     })
+  })
+
+  ipcMain.handle(IPC.previewAccurateFrame, async (event, projectInput: ProjectFile, timeUs: unknown) => {
+    assertTrustedSender(event)
+    if (typeof timeUs !== 'number' || !Number.isFinite(timeUs) || timeUs < 0) {
+      throw new Error('正確プレビューの時刻が不正です。')
+    }
+    return await requireService().renderAccurateFrame(validateProject(projectInput), timeUs)
   })
 
   ipcMain.handle(IPC.waveformPeaks, async (event, request) => {
@@ -253,6 +262,46 @@ const runSubtitleParitySmoke = async (window: BrowserWindow): Promise<void> => {
   })}`)
 }
 
+const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<string, unknown>> => {
+  const projectPath = process.env.SPECTRA_PREVIEW_E2E_PROJECT
+  if (!projectPath) throw new Error('SPECTRA_PREVIEW_E2E_PROJECT is required')
+  console.log('SPECTRA_ACCURATE_PREVIEW_STAGE project-read')
+  const project = validateProject(JSON.parse(await readFile(projectPath, 'utf8')) as ProjectFile)
+  const startup = await waitForRendererStartup(window)
+  console.log('SPECTRA_ACCURATE_PREVIEW_STAGE renderer-ready')
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  const detail = JSON.stringify({ project, timeUs: 500_000 })
+  await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${detail} }))`)
+  console.log('SPECTRA_ACCURATE_PREVIEW_STAGE project-dispatched')
+  const readDom = async (): Promise<{ overlay: boolean; quality: string; playButton: boolean; overlayCount: number }> => await window.webContents.executeJavaScript(`(() => ({
+    overlay: document.querySelector('.accurate-preview-overlay') !== null,
+    quality: document.querySelector('.viewer-quality')?.textContent ?? '',
+    playButton: document.querySelector('.play-button') !== null,
+    overlayCount: document.querySelectorAll('.accurate-preview-overlay').length
+  }))()`)
+  console.log('SPECTRA_ACCURATE_PREVIEW_STAGE dom-poll-start')
+  const wait = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds))
+  const until = async (predicate: (dom: Awaited<ReturnType<typeof readDom>>) => boolean, timeoutMs = 10_000): Promise<boolean> => {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const dom = await readDom()
+      if (predicate(dom)) return true
+      await wait(50)
+    }
+    return false
+  }
+  const accurateInitial = await until((dom) => dom.overlay)
+  const initialDom = await readDom()
+  if (!initialDom.playButton) throw new Error('Preview play button is missing')
+  await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
+  const fastDuringPlay = await until((dom) => !dom.overlay && dom.quality.includes('高速'))
+  await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
+  const accurateAfterResume = await until((dom) => dom.overlay)
+  const finalDom = await readDom()
+  const report = { accurateInitial, initialQuality: initialDom.quality, fastDuringPlay, accurateAfterResume, overlayCount: finalDom.overlayCount }
+  return { ...startup, ...report }
+}
+
 const start = async (): Promise<void> => {
   installMediaProtocol()
   ffmpegService = await createFfmpegService({
@@ -267,6 +316,17 @@ const start = async (): Promise<void> => {
       app.exit(0)
     } catch (error) {
       console.error(`SPECTRA_SUBTITLE_PARITY_REPORT ${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}`)
+      app.exit(1)
+    }
+    return
+  }
+  if (process.env.SPECTRA_ACCURATE_PREVIEW_SMOKE === '1') {
+    try {
+      const report = await runAccuratePreviewSmoke(mainWindow)
+      console.log(`SPECTRA_ACCURATE_PREVIEW_REPORT ${JSON.stringify(report)}`)
+      app.exit(0)
+    } catch (error) {
+      console.error(`SPECTRA_ACCURATE_PREVIEW_REPORT ${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}`)
       app.exit(1)
     }
     return

@@ -1,6 +1,6 @@
 # アーキテクチャ
 
-更新日: 2026-08-13
+更新日: 2026-08-14
 対象: Spectra Video Studio 0.1.x
 
 ## clip_automationとの境界（Phase 3）
@@ -13,11 +13,20 @@ flowchart LR
   EP --> L["independent validator / loader"]
   L --> PM["video_editor Project Model"]
   PM --> RP["shared Render Plan"]
-  RP --> PV["minimal Preview"]
+  RP --> FP["Fast Preview\nReact/CSS approximate"]
+  RP --> AP["Accurate Preview\nFFmpeg/libass PNG"]
   RP --> HR["headless / final FFmpeg render"]
 ```
 
 `caption_project.v2.json`と`transcript_words.json`は字幕・transcriptモデルとしてclip_automation側に残り、video_editorへは変換済みの`edit_project.v1`だけを渡す。内部の`linkGroupId`は`.spectra` Project Modelにのみ存在し、正式contractへ逆輸出しない。Phase 4ではcontract import時の厳密なV/A pair推論と手動linked editingを実装するが、旧pipeline統合は行わない。
+
+### Preview authority (Phase 4R)
+
+Previewには二つのモードがある。再生中のFast PreviewはReact/HTML/CSSによる低遅延の近似表示であり、Final相当の画素正本ではない。停止中のAccurate Previewは`FfmpegService.renderAccurateFrame()`を通じ、Finalと同じ`buildAuthoritativeVideoGraph()`、ASS、RenderPlanからcanonical frame PNGを生成してoverlayする。Final renderer、Accurate Preview、headless renderの差は末端出力だけである。
+
+`src/shared/frame-time.ts`がframe quantizationの正本で、floor semantics（playhead時刻以下の最後のframe）を使う。Accurate frame requestはmain processが安全なcache/temp pathを決め、rendererはpathを指定しない。cacheはproject fingerprint、media size/mtime、frame index、解像度、fpsで無効化される。
+
+停止後のrequestは180ms debounceし、latest sequenceだけを表示する。再生開始時はAccurate overlayを隠してFast Previewへ戻る。失敗時はFast Previewを残し、Previewの小さな診断表示だけを出す。export pipelineは影響を受けない。
 
 ## 設計目標
 

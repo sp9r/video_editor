@@ -1,5 +1,12 @@
 # Editor Backlog
 
+## Phase 4R - Preview architecture
+
+- Fast PreviewはReact/HTML/CSSの近似表示、Accurate PreviewとFinalはFFmpeg/libassのauthoritative RenderPlanを使用する。
+- Accurate Previewの対応範囲は、現在のProject Model、visual transforms、layer order、字幕ASS、Final frame comparison fixtureで検証する。Chromium/libassのrasterization差は許容する。
+- Accurate PreviewのPNG memory cacheは64件。大規模disk cache、GPU decode、HDR/color managementは未実装。
+- Accurate frame extractionは1 requestにつきFFmpegを起動するため、長い連続seekの最適化や共有workerは将来検討する。
+
 ## Phase 4.11 subtitle visual parity stabilization
 
 - Canonical shadow offset is `(0px, 2px)` in `SubtitleRenderSpec`; blur controls softness only and no longer changes the shadow position.

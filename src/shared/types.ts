@@ -193,6 +193,14 @@ export interface PreviewPlan {
   captions: PreviewPlanClip[]
 }
 
+export interface AccuratePreviewFrameResult {
+  framePath: string
+  requestedTimeUs: TimeUs
+  renderedTimeUs: TimeUs
+  frameIndex: number
+  projectFingerprint: string
+}
+
 export interface WaveformRequest {
   mediaPath: string
   sourceInUs: TimeUs
@@ -286,6 +294,7 @@ export interface AppInfo {
   platform: string
   arch: string
   packaged: boolean
+  smokeMode?: boolean
 }
 
 export interface DesktopApi {
@@ -303,6 +312,7 @@ export interface DesktopApi {
   getWaveformPeaks(request: WaveformRequest): Promise<number[]>
   listFontFamilies(): Promise<string[]>
   createPreviewPlan(project: ProjectFile): Promise<PreviewPlan>
+  renderAccuratePreviewFrame(project: ProjectFile, timeUs: TimeUs): Promise<AccuratePreviewFrameResult>
   detectEncoders(force?: boolean): Promise<EncoderReport>
   chooseExportPath(defaultName: string): Promise<string | null>
   startExport(project: ProjectFile, settings: ExportSettings): Promise<StartExportResult>

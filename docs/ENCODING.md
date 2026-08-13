@@ -1,6 +1,6 @@
 # エンコードエンジン実装ガイド
 
-更新日: 2026-08-12
+更新日: 2026-08-14
 
 ## 1. 実装範囲
 
@@ -43,6 +43,7 @@ service.cancelExport(job.jobId)
 | `probeMedia(path)` | metadataを取得。失敗時はreject |
 | `probeMediaSafe(path)` | UI一括取込用。失敗を`ProbeResult.error`へ格納 |
 | `createRenderPlan(project, settings)` | process起動を伴わないrender計画生成 |
+| `renderAccurateFrame(project, timeUs, options?)` | Finalと同じauthoritative graphからcanonical PNGを生成 |
 | `startExport(project, settings, options?)` | background export開始 |
 | `cancelExport(jobId)` | 該当jobへAbortSignalを送り停止 |
 | `writeSrt(project, outputPath)` | 字幕trackをSRTへ保存 |
@@ -112,6 +113,19 @@ visual処理はsoftware filterで統一する。
 音声は48 kHz stereoへ正規化し、gain、pan、fade、timeline delayを適用して`amix`、`alimiter`へ渡す。音声clipがない場合も`anullsrc`を作り、完成MP4のstream構成を一定にする。
 
 filter graphはUTF-8一時fileへ保存する。同梱FFmpeg 6.xでは`-filter_complex_script`、FFmpeg 7以降では`-/filter_complex`を使用する。Windows path、空白、日本語、`&`などをshell escapingへ任せない。
+
+### Final / Accurate Previewの共通経路
+
+Final書き出しとAccurate Previewは、同じ`RenderPlan`から`buildAuthoritativeVideoGraph()`を通る。字幕ASS、canvas、visual layer order、transform、opacity、audio semanticsを含むtimeline graphを先に構築し、末端だけを分ける。
+
+- Finalはencoder pixel format、audio map、MP4 outputへ接続する。
+- Accurate Previewは同じvideo graphの末尾へcanonical `select`を追加し、1 frameをRGBA PNGへ書き出す。audio branchは`anullsink`で明示的に消費する。
+- inputをplayhead位置へshiftして別rendererを作らない。timeline semanticsを構築した後にframeを選ぶ。
+- PNGは`accurate-preview/<cache-key>.png`へ一時出力し、非空検証後にatomic promoteする。rendererが出力先を指定することはない。
+
+frame timeは`src/shared/frame-time.ts`のfloor semanticsを正本とする。30fpsでは0usと33333usはframe 0、33334usはframe 1である。Accurate Preview、Final比較fixture、将来のframe extractionは同じhelperを使う。
+
+React/CSS Previewは再生中のFast Previewとして許容誤差のある近似表示を行う。停止中は180ms debounce後にAccurate PNGをoverlayし、play開始時にoverlayを隠す。project変更・seekの古いrequest結果はsequenceで破棄する。cache keyはproject fingerprint、media pathのsize/mtime、frame index、width、height、fpsを含み、memory cacheは64件に制限する。
 
 ## 6. 字幕
 

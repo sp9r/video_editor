@@ -16,7 +16,7 @@ import {
   X
 } from 'lucide-react'
 import { createEmptyProject } from '../../shared/project'
-import type { EncoderReport } from '../../shared/types'
+import type { EncoderReport, ProjectFile } from '../../shared/types'
 import { BrandMark } from './components/Brand'
 import { Button, IconButton } from './components/Controls'
 import ExportDialog from './components/ExportDialog'
@@ -122,13 +122,35 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     void detectEncoders()
     if (!window.spectra) return
-    void window.spectra.loadRecovery().then((recovery) => {
-      if (recovery && window.confirm('前回の自動保存データがあります。復元しますか？')) {
+    void Promise.all([window.spectra.getAppInfo(), window.spectra.loadRecovery()]).then(([info, recovery]) => {
+      if (!info.smokeMode && recovery && window.confirm('前回の自動保存データがあります。復元しますか？')) {
         loadProject(recovery)
         showNotice('自動保存データを復元しました。', 'success')
       }
     }).catch(() => undefined)
   }, [detectEncoders, loadProject, showNotice])
+
+  useEffect(() => {
+    if (!window.spectra) return
+    let active = true
+    const onPreviewE2eProject = (event: Event): void => {
+      const detail = (event as CustomEvent<{ project?: ProjectFile; timeUs?: number }>).detail
+      if (!detail?.project) return
+      try {
+        loadProject(detail.project)
+        if (Number.isFinite(detail.timeUs)) setPlayhead(detail.timeUs ?? 0)
+      } catch (error) {
+        showNotice(`E2Eプロジェクトを読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      }
+    }
+    void window.spectra.getAppInfo().then((info) => {
+      if (active && info.smokeMode) window.addEventListener('spectra:e2e-project', onPreviewE2eProject)
+    }).catch(() => undefined)
+    return () => {
+      active = false
+      window.removeEventListener('spectra:e2e-project', onPreviewE2eProject)
+    }
+  }, [loadProject, setPlayhead, showNotice])
 
   useEffect(() => {
     if (!dirty) return

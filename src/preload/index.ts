@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '../shared/ipc'
-import type { DesktopApi, ExportProgress, ExportSettings, ProjectFile, WaveformRequest } from '../shared/types'
+import type { DesktopApi, ExportProgress, ExportSettings, ProjectFile, TimeUs, WaveformRequest } from '../shared/types'
 
 const api: DesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
@@ -17,6 +17,7 @@ const api: DesktopApi = {
   getWaveformPeaks: (request: WaveformRequest) => ipcRenderer.invoke(IPC.waveformPeaks, request),
   listFontFamilies: () => ipcRenderer.invoke(IPC.fontFamilies),
   createPreviewPlan: (project: ProjectFile) => ipcRenderer.invoke(IPC.previewPlan, project),
+  renderAccuratePreviewFrame: (project: ProjectFile, timeUs: TimeUs) => ipcRenderer.invoke(IPC.previewAccurateFrame, project, timeUs),
   detectEncoders: (force = false) => ipcRenderer.invoke(IPC.encodersDetect, force),
   chooseExportPath: (defaultName: string) => ipcRenderer.invoke(IPC.exportChoosePath, defaultName),
   startExport: (project: ProjectFile, settings: ExportSettings) => ipcRenderer.invoke(IPC.exportStart, project, settings),
