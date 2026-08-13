@@ -88,6 +88,8 @@ export interface VideoClip extends BaseClip {
   assetId: string
   transform: TransformSettings
   audio: AudioSettings
+  /** Whether this video clip contributes audio from the source asset. Omitted legacy values mean enabled. */
+  sourceAudioEnabled?: boolean
 }
 
 export interface ImageClip extends BaseClip {

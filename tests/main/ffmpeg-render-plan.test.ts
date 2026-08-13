@@ -95,4 +95,18 @@ describe('FFmpeg render planning', () => {
     missing.media = missing.media.filter((asset) => asset.id !== 'asset-video')
     expect(() => createRenderPlan(missing, makeExportSettings(join(process.cwd(), 'out.mp4')))).toThrow(/missing asset/u)
   })
+
+  it('keeps legacy video source audio enabled by default and supports explicit disablement', () => {
+    const legacy = makeProject()
+    const legacyPlan = createRenderPlan(legacy, makeExportSettings(join(process.cwd(), 'out.mp4')))
+    expect(legacyPlan.inputs.filter((input) => input.useAudio).map((input) => input.clipId)).toEqual(['clip-video'])
+
+    const disabled = makeProject()
+    const videoClip = disabled.tracks.find((track) => track.id === 'track-main')?.clips[0]
+    if (videoClip?.kind !== 'video') throw new Error('Expected legacy video fixture')
+    videoClip.sourceAudioEnabled = false
+    const disabledPlan = createRenderPlan(disabled, makeExportSettings(join(process.cwd(), 'out.mp4')))
+    expect(disabledPlan.inputs.filter((input) => input.useAudio)).toHaveLength(0)
+    expect(disabledPlan.graphStatements.join('\n')).toContain('anullsrc')
+  })
 })

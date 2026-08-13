@@ -45,16 +45,23 @@ describe('standalone edit_project headless render', () => {
 
       const loaded = await loadEditProject(projectPath)
       const service = new FfmpegService(paths, { platform: 'win32', workspaceRoot: join(root, 'workspace') })
-      const job = await service.startExport(loaded.project, {
+      const settings = {
         outputPath,
         width: 320,
         height: 180,
         frameRate: { numerator: 30, denominator: 1 },
         videoBitrate: 500_000,
         audioBitrate: 96_000,
-        encoderMode: 'software',
+        encoderMode: 'software' as const,
         burnSubtitles: true,
         exportSrt: false
+      }
+      const plan = service.createRenderPlan(loaded.project, settings)
+      expect(plan.inputs.filter((input) => input.useAudio).map((input) => input.clipId)).toEqual(['a1'])
+      expect(plan.graphStatements.filter((statement) => /\[\d+:a:0\]/u.test(statement))).toHaveLength(1)
+      expect(plan.graphStatements.join('\n')).toContain('amix=inputs=1')
+      const job = await service.startExport(loaded.project, {
+        ...settings
       }, { jobId: 'headless-contract' })
       const result = await job.result
       const probe = await service.probeMedia(result.outputPath)

@@ -197,10 +197,51 @@ describe('standalone edit_project.v1 loader', () => {
       const finalPlan = createRenderPlan(loaded.project, settings)
       expect(preview.durationUs).toBe(finalPlan.durationUs)
       expect(preview.videoClips.map((clip) => clip.clipId)).toEqual(['video_1', 'video_2'])
-      expect(preview.audioClips.map((clip) => clip.clipId)).toEqual(['video_1', 'audio_1', 'video_2'])
+      expect(preview.audioClips.map((clip) => clip.clipId)).toEqual(['audio_1'])
       expect(preview.captions.map((caption) => caption.clipId)).toEqual(['caption_1'])
+      expect(finalPlan.inputs.filter((input) => input.useAudio).map((input) => input.clipId)).toEqual(['audio_1'])
+      expect(finalPlan.graphStatements.join('\n')).toContain('amix=inputs=1')
       expect(finalPlan.inputArgs).toContain('-ss')
       expect(finalPlan.filterGraph).toContain('ass=filename')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps contract video audio-only semantics for video-only, disabled, and zero-volume variants', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'video-editor-audio-semantics-'))
+    try {
+      const settings = {
+        outputPath: join(root, 'output.mp4'), width: 640, height: 360,
+        frameRate: { numerator: 30, denominator: 1 }, videoBitrate: 1_000_000,
+        audioBitrate: 96_000, encoderMode: 'software' as const, burnSubtitles: false, exportSrt: false
+      }
+      const loadPlan = async (document: EditProjectDocument) => {
+        const projectPath = await writeProject(root, document)
+        const loaded = await loadEditProject(projectPath)
+        return { project: loaded.project, plan: createRenderPlan(loaded.project, settings) }
+      }
+
+      const videoOnly = makeDocument()
+      videoOnly.tracks = videoOnly.tracks.filter((track) => track.id !== 'A1')
+      const videoOnlyResult = await loadPlan(videoOnly)
+      expect(videoOnlyResult.plan.inputs.filter((input) => input.useAudio)).toHaveLength(0)
+      expect(videoOnlyResult.plan.graphStatements.join('\n')).toContain('anullsrc')
+
+      const disabledAudio = makeDocument()
+      const disabledTrack = disabledAudio.tracks.find((track) => track.id === 'A1')
+      for (const clip of disabledTrack?.clips ?? []) clip.enabled = false
+      const disabledResult = await loadPlan(disabledAudio)
+      expect(disabledResult.plan.inputs.filter((input) => input.useAudio)).toHaveLength(0)
+      expect(disabledResult.plan.graphStatements.join('\n')).toContain('anullsrc')
+
+      const zeroVolume = makeDocument()
+      const zeroAudio = zeroVolume.tracks.find((track) => track.id === 'A1')?.clips[0]
+      if (!zeroAudio || zeroAudio.type !== 'audio_clip') throw new Error('Expected audio clip fixture')
+      zeroAudio.volume = 0
+      const zeroVolumeResult = await loadPlan(zeroVolume)
+      expect(zeroVolumeResult.plan.inputs.filter((input) => input.useAudio).map((input) => input.clipId)).toEqual(['audio_1'])
+      expect(zeroVolumeResult.plan.graphStatements.join('\n')).toContain('volume=0')
     } finally {
       await rm(root, { recursive: true, force: true })
     }

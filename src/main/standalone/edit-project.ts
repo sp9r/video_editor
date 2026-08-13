@@ -486,7 +486,14 @@ const buildProjectModel = async (
           rotation: clip.transform.rotation,
           opacity: clip.transform.opacity
         }
-        const video: VideoClip = { ...common, kind: 'video', assetId: clip.source_media_id, transform, audio: structuredClone(DEFAULT_AUDIO) }
+        const video: VideoClip = {
+          ...common,
+          kind: 'video',
+          assetId: clip.source_media_id,
+          transform,
+          audio: structuredClone(DEFAULT_AUDIO),
+          sourceAudioEnabled: false
+        }
         return video
       }
       const audio: AudioClip = { ...common, kind: 'audio', assetId: clip.source_media_id, audio: { ...structuredClone(DEFAULT_AUDIO), volumeDb: volumeToDb(clip.volume) } }

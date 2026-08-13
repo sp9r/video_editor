@@ -235,7 +235,7 @@ export const createRenderPlan = (project: ProjectFile, settings: ExportSettings)
       validateClip(timelineClip)
       const useVideo = (timelineClip.kind === 'video' || timelineClip.kind === 'image') && !track.hidden
       const asset = getAsset(assets, timelineClip)
-      const useAudio = (timelineClip.kind === 'audio' || (timelineClip.kind === 'video' && asset.hasAudio)) && !track.muted
+      const useAudio = (timelineClip.kind === 'audio' || (timelineClip.kind === 'video' && timelineClip.sourceAudioEnabled !== false && asset.hasAudio)) && !track.muted
       if (!useVideo && !useAudio) continue
       const input: RenderInput = {
         index: inputs.length,
