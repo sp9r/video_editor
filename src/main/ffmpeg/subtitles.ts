@@ -101,18 +101,21 @@ const animationOverride = (
   }
 }
 
-const styleLine = (spec: ReturnType<typeof buildSubtitleRenderSpec>, index: number): string => {
-  const hasBackground = spec.backgroundOpacity > 0
-  const backColor = hasBackground
-    ? assColor(spec.backgroundColor, spec.backgroundOpacity)
-    : assColor(spec.shadowColor)
+type AssStyleRole = 'main' | 'shadow'
+
+const styleLine = (spec: SubtitleRenderSpec, index: number, role: AssStyleRole = 'main'): string => {
+  const isShadow = role === 'shadow'
+  const hasBackground = !isShadow && spec.backgroundOpacity > 0
+  const primaryColor = isShadow ? assColor(spec.shadowColor) : assColor(spec.color)
+  const outlineColor = isShadow ? primaryColor : assColor(spec.outlineColor)
+  const backColor = hasBackground ? assColor(spec.backgroundColor, spec.backgroundOpacity) : assColor('#00000000')
   return [
-    `Style: Cue${index}`,
+    `Style: Cue${index}${isShadow ? 'Shadow' : ''}`,
     safeFont(spec.fontFamily),
     Math.round(spec.fontSizePx),
-    assColor(spec.color),
-    assColor(spec.color),
-    assColor(spec.outlineColor),
+    primaryColor,
+    primaryColor,
+    outlineColor,
     backColor,
     spec.bold ? -1 : 0,
     spec.italic ? -1 : 0,
@@ -123,8 +126,8 @@ const styleLine = (spec: ReturnType<typeof buildSubtitleRenderSpec>, index: numb
     spec.letterSpacingPx.toFixed(2),
     0,
     hasBackground ? 3 : 1,
-    spec.outlineWidthPx.toFixed(2),
-    clamp(spec.shadowBlurPx / 2, 0, 20).toFixed(2),
+    isShadow ? '0.00' : spec.outlineWidthPx.toFixed(2),
+    '0.00',
     assAlignment(spec.anchor),
     10,
     10,
@@ -132,6 +135,11 @@ const styleLine = (spec: ReturnType<typeof buildSubtitleRenderSpec>, index: numb
     1
   ].join(',')
 }
+
+const hasVisibleColor = (value: string): boolean => parseHexColor(value).alpha > 0
+
+const shadowOffsetPx = (spec: SubtitleRenderSpec): number =>
+  2 + Math.min(16, Math.round(spec.shadowBlurPx / 4))
 
 export const generateAss = (project: ProjectFile): string => {
   const cues = collectSubtitleCues(project)
@@ -147,20 +155,33 @@ export const generateAss = (project: ProjectFile): string => {
     '',
     '[V4+ Styles]',
     'Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding',
-    ...cues.map(({ clip }, index) => styleLine(buildSubtitleRenderSpec(clip, { width, height }), index)),
+    ...cues.flatMap(({ clip }, index) => {
+      const spec = buildSubtitleRenderSpec(clip, { width, height })
+      return [
+        styleLine(spec, index),
+        ...(hasVisibleColor(spec.shadowColor) ? [styleLine(spec, index, 'shadow')] : [])
+      ]
+    }),
     '',
     '[Events]',
     'Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text'
   ]
-const events = cues.map(({ clip, layer }, index) => {
+  const events = cues.flatMap(({ clip, layer }, index) => {
     const start = Math.max(0, clip.startUs)
     const end = Math.max(start + 10_000, start + clip.durationUs)
     const spec = buildSubtitleRenderSpec(clip, { width, height })
     const x = Math.round(spec.xPx)
     const y = Math.round(spec.yPx)
-    const override = animationOverride(spec, x, y)
-    const text = `{${override}\\blur${spec.shadowBlurPx.toFixed(2)}}${escapeAssText(spec.wrappedText)}`
-    return `Dialogue: ${layer},${assTime(start)},${assTime(end, true)},Cue${index},,0,0,0,,${text}`
+    const renderEvent = (styleName: string, eventX: number, eventY: number, eventLayer: number): string => {
+      const override = animationOverride(spec, eventX, eventY)
+      const text = `{${override}}${escapeAssText(spec.wrappedText)}`
+      return `Dialogue: ${eventLayer},${assTime(start)},${assTime(end, true)},${styleName},,0,0,0,,${text}`
+    }
+    const shadow = hasVisibleColor(spec.shadowColor)
+      ? renderEvent(`Cue${index}Shadow`, x, y + shadowOffsetPx(spec), layer)
+      : undefined
+    const main = renderEvent(`Cue${index}`, x, y, layer + (shadow ? 1 : 0))
+    return shadow ? [shadow, main] : [main]
   })
   return `${[...header, ...events].join('\n')}\n`
 }

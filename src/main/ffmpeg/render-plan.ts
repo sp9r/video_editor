@@ -15,7 +15,7 @@ import {
   encoderRequiresHardwareUpload,
   type H264EncoderId
 } from './encoders.js'
-import { generateAss, generateSrt } from './subtitles.js'
+import { collectSubtitleCues, generateAss, generateSrt } from './subtitles.js'
 import { visualLayerOrder } from '../../shared/render-order.js'
 
 export interface RenderInput {
@@ -45,6 +45,8 @@ export interface RenderPlan {
   srt: string
   burnSubtitles: boolean
   assFileName: string
+  subtitleCueCount: number
+  subtitleIds: string[]
 }
 
 export interface RenderCommandOptions {
@@ -203,7 +205,7 @@ export const buildRenderFilterGraph = (
   if (!/^[A-Za-z0-9_.-]+$/u.test(assFileName)) throw new Error('ASS filename must be a safe workspace basename')
   const statements = [...plan.graphStatements]
   let videoLabel = plan.compositedVideoLabel
-  if (plan.burnSubtitles && plan.srt.trim()) {
+  if (plan.burnSubtitles && plan.subtitleCueCount > 0 && plan.srt.trim()) {
     statements.push(`[${videoLabel}]ass=filename='${assFileName}'[subtitled]`)
     videoLabel = 'subtitled'
   }
@@ -225,6 +227,7 @@ export const createRenderPlan = (project: ProjectFile, settings: ExportSettings)
   const frameDurationUs = Math.ceil(denominator * 1_000_000 / numerator)
   const durationUs = Math.max(frameDurationUs, projectDuration(project))
   const fps = fpsText(numerator, denominator)
+  const subtitleCues = collectSubtitleCues(project)
   const assets = new Map(project.media.map((asset) => [asset.id, asset]))
   const inputs: RenderInput[] = []
   const visualItems: Array<{ trackIndex: number; clip: Extract<TimelineClip, { kind: 'video' | 'image' }>; input: RenderInput }> = []
@@ -307,7 +310,9 @@ export const createRenderPlan = (project: ProjectFile, settings: ExportSettings)
     ass: generateAss(project),
     srt: generateSrt(project),
     burnSubtitles: settings.burnSubtitles,
-    assFileName: 'captions.ass'
+    assFileName: 'captions.ass',
+    subtitleCueCount: subtitleCues.length,
+    subtitleIds: subtitleCues.map(({ clip }) => clip.id)
   }
   return {
     ...partial,

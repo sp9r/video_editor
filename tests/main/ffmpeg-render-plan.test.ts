@@ -29,6 +29,9 @@ describe('FFmpeg render planning', () => {
     expect(plan.graphStatements.join('\n')).toContain('adelay=0:all=1')
     expect(plan.graphStatements.join('\n')).toContain('amix=inputs=1:duration=longest:normalize=0')
     expect(plan.srt).toContain('日本語')
+    expect(plan.burnSubtitles).toBe(true)
+    expect(plan.subtitleCueCount).toBe(1)
+    expect(plan.subtitleIds).toEqual(['caption-1'])
   })
 
   it('generates CPU and VAAPI terminal filters without interpolating paths into the graph', () => {
@@ -38,6 +41,7 @@ describe('FFmpeg render planning', () => {
     const vaapi = buildRenderFilterGraph(plan, 'h264_vaapi')
 
     expect(cpu).toContain("ass=filename='captions.ass'")
+    expect(plan.subtitleCueCount).toBe(1)
     expect(cpu).toMatch(/\]format=yuv420p\[vout\]$/u)
     expect(vaapi).toMatch(/\]format=nv12,hwupload\[vout\]$/u)
     expect(cpu).not.toContain(project.media[0]?.path ?? 'missing')

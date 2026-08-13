@@ -59,6 +59,79 @@ describe('subtitle serialization', () => {
     expect(ass).toContain(',8,10,10,10,1')
     expect(ass).toContain('alpha beta gamma\\N日本語')
   })
+
+  it.each([
+    ['A', { outlineWidth: 0, shadowColor: '#00000000', shadowBlur: 0, backgroundOpacity: 0 }],
+    ['B', { outlineWidth: 14, shadowColor: '#00000000', shadowBlur: 0, backgroundOpacity: 0 }],
+    ['C', { outlineWidth: 14, shadowColor: '#d60000', shadowBlur: 0, backgroundOpacity: 0 }],
+    ['D', { outlineWidth: 14, shadowColor: '#d60000', shadowBlur: 24, backgroundOpacity: 0 }],
+    ['E', { outlineWidth: 14, shadowColor: '#00000000', shadowBlur: 0, backgroundOpacity: 0.15 }],
+    ['F', { outlineWidth: 14, shadowColor: '#d60000', shadowBlur: 24, backgroundOpacity: 0.15 }]
+  ])('keeps main glyph invariants in the Final ASS style matrix %s', (_name, stylePatch) => {
+    const project = makeProject()
+    const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+    if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+    subtitle.text = '字幕を入力'
+    subtitle.style = {
+      ...subtitle.style,
+      fontFamily: 'Noto Sans JP ExtraBold',
+      fontSize: 123,
+      animation: 'none',
+      animationDurationUs: 0,
+      positionX: 50,
+      positionY: 86,
+      alignment: 'bottom',
+      ...stylePatch
+    }
+
+    const ass = generateAss(project)
+    const spec = buildSubtitleRenderSpec(subtitle, project.sequence)
+    const mainStyle = ass.split('\n').find((line) => line.startsWith('Style: Cue0,'))
+    const mainEvent = ass.split('\n').find((line) => line.includes(',Cue0,,0,0,0,,{') && !line.includes('Cue0Shadow'))
+    expect(mainStyle).toContain('Noto Sans JP ExtraBold,123')
+    expect(mainStyle).toContain(`,${spec.outlineWidthPx.toFixed(2)},0.00,2,`)
+    expect(mainEvent).toContain(`\\pos(${Math.round(spec.xPx)},${Math.round(spec.yPx)})`)
+    expect(mainEvent).toContain('字幕を入力')
+    expect(ass).not.toContain('\\blur')
+    if (stylePatch.shadowColor === '#00000000') expect(ass).not.toContain('Cue0Shadow')
+    else expect(ass).toContain('Style: Cue0Shadow,')
+    if (stylePatch.backgroundOpacity > 0) expect(mainStyle).toContain(',3,')
+    else expect(mainStyle).toContain(',1,')
+  })
+
+  it('keeps the exact user style in the shared spec and separates red shadow from the main glyph', () => {
+    const project = makeProject()
+    const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+    if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+    subtitle.text = '字幕を入力'
+    subtitle.style = {
+      ...subtitle.style,
+      fontFamily: 'Noto Sans JP ExtraBold',
+      fontSize: 123,
+      color: '#ffffff',
+      outlineColor: '#111318',
+      outlineWidth: 14,
+      shadowColor: '#d60000',
+      shadowBlur: 24,
+      backgroundColor: '#000000',
+      backgroundOpacity: 0.15,
+      bold: true,
+      alignment: 'bottom',
+      positionX: 50,
+      positionY: 86,
+      maxWidthPercent: 80,
+      animation: 'none',
+      animationDurationUs: 0
+    }
+    const spec = buildSubtitleRenderSpec(subtitle, project.sequence)
+    const ass = generateAss(project)
+    const mainStyle = ass.split('\n').find((line) => line.startsWith('Style: Cue0,'))
+    expect(spec).toMatchObject({ fontSizePx: 123, xPx: 960, yPx: 928.8, outlineWidthPx: 14, shadowBlurPx: 24, backgroundOpacity: 0.15 })
+    expect(mainStyle).toContain(',3,14.00,0.00,2,')
+    expect(ass).toContain('Style: Cue0Shadow,')
+    expect(ass.match(/Dialogue:/gu)).toHaveLength(2)
+    expect(ass).not.toContain('\\blur24')
+  })
 })
 
 describe('subtitle parsing', () => {
