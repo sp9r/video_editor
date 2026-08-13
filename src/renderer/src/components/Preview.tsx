@@ -218,22 +218,26 @@ export default function Preview(): React.JSX.Element {
                     left: `${spec.xPx}px`,
                     top: `${spec.yPx}px`,
                     width: `${spec.maxWidthPx}px`,
-                    color: spec.color,
-                    fontFamily: spec.fontFamily,
-                    fontSize: `${spec.fontSizePx}px`,
-                    fontWeight: spec.bold ? 700 : 400,
-                    fontStyle: spec.italic ? 'italic' : 'normal',
-                    letterSpacing: `${spec.letterSpacingPx}px`,
-                    lineHeight: spec.lineHeight,
                     animationDuration: `${Math.max(0, spec.animationDurationUs / 1_000)}ms`,
-                    transform: subtitleAnchorTransform(spec.anchor),
-                    WebkitTextStroke: `${spec.outlineWidthPx}px ${spec.outlineColor}`,
-                    paintOrder: 'stroke fill',
-                    textShadow: `0 2px ${spec.shadowBlurPx}px ${spec.shadowColor}`,
-                    background: `color-mix(in srgb, ${spec.backgroundColor} ${spec.backgroundOpacity * 100}%, transparent)`
+                    transform: subtitleAnchorTransform(spec.anchor)
                   }}
                 >
-                  {spec.wrappedText}
+                  <span
+                    className="preview-subtitle-text"
+                    style={{
+                      color: spec.color,
+                      fontFamily: spec.fontFamily,
+                      fontSize: `${spec.fontSizePx}px`,
+                      fontWeight: spec.bold ? 700 : 400,
+                      fontStyle: spec.italic ? 'italic' : 'normal',
+                      letterSpacing: `${spec.letterSpacingPx}px`,
+                      lineHeight: spec.lineHeight,
+                      WebkitTextStroke: `${spec.outlineWidthPx}px ${spec.outlineColor}`,
+                      paintOrder: 'stroke fill',
+                      textShadow: `${spec.shadowOffsetXPx}px ${spec.shadowOffsetYPx}px ${spec.shadowBlurPx}px ${spec.shadowColor}`,
+                      background: `color-mix(in srgb, ${spec.backgroundColor} ${spec.backgroundOpacity * 100}%, transparent)`
+                    }}
+                  >{spec.wrappedText}</span>
                 </button>
               })()
             ))}

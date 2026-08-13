@@ -20,6 +20,8 @@ export interface SubtitleRenderSpec {
   outlineWidthPx: number
   shadowColor: string
   shadowBlurPx: number
+  shadowOffsetXPx: number
+  shadowOffsetYPx: number
   backgroundColor: string
   backgroundOpacity: number
   animation: SubtitleStyle['animation']
@@ -53,6 +55,9 @@ export const buildSubtitleRenderSpec = (clip: SubtitleClip, sequence: Pick<Seque
     outlineWidthPx: Math.max(0, finiteOr(style.outlineWidth, 0)),
     shadowColor: style.shadowColor,
     shadowBlurPx: Math.max(0, finiteOr(style.shadowBlur, 0)),
+    // Canonical default until editable shadow offsets are introduced in the model.
+    shadowOffsetXPx: 0,
+    shadowOffsetYPx: 2,
     backgroundColor: style.backgroundColor,
     backgroundOpacity: Math.min(1, Math.max(0, finiteOr(style.backgroundOpacity, 0))),
     animation: style.animation,

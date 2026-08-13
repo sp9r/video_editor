@@ -555,7 +555,8 @@ select {
 .safe-guides i { position: absolute; inset: 6%; border: 1px dashed rgb(255 255 255 / 0.12); }
 .viewer-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim); background: #090b0e; }
 .viewer-placeholder span { font-size: 10px; }
-.preview-subtitle { position: absolute; z-index: 5; box-sizing: border-box; padding: 3px 8px; color: white; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; border: 0; border-radius: 3px; cursor: pointer; }
+.preview-subtitle { position: absolute; z-index: 5; box-sizing: border-box; padding: 0; color: white; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; background: transparent; border: 0; border-radius: 3px; cursor: pointer; }
+.preview-subtitle-text { display: inline-block; max-width: 100%; padding: 3px 8px; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 3px; }
 .subtitle-fade { animation: subtitle-fade 650ms both; }
 .subtitle-pop { animation: subtitle-pop 420ms cubic-bezier(.18,.86,.35,1.35) both; }
 .subtitle-slide-up { animation: subtitle-slide 550ms ease-out both; }

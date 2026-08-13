@@ -101,16 +101,16 @@ const animationOverride = (
   }
 }
 
-type AssStyleRole = 'main' | 'shadow'
+type AssStyleRole = 'main' | 'shadow' | 'background'
 
 const styleLine = (spec: SubtitleRenderSpec, index: number, role: AssStyleRole = 'main'): string => {
   const isShadow = role === 'shadow'
-  const hasBackground = !isShadow && spec.backgroundOpacity > 0
-  const primaryColor = isShadow ? assColor(spec.shadowColor) : assColor(spec.color)
-  const outlineColor = isShadow ? primaryColor : assColor(spec.outlineColor)
-  const backColor = hasBackground ? assColor(spec.backgroundColor, spec.backgroundOpacity) : assColor('#00000000')
+  const isBackground = role === 'background'
+  const primaryColor = isShadow ? assColor(spec.shadowColor) : isBackground ? assColor('#00000000') : assColor(spec.color)
+  const outlineColor = isShadow || isBackground ? assColor('#00000000') : assColor(spec.outlineColor)
+  const backColor = isBackground ? assColor(spec.backgroundColor, spec.backgroundOpacity) : assColor('#00000000')
   return [
-    `Style: Cue${index}${isShadow ? 'Shadow' : ''}`,
+    `Style: Cue${index}${isShadow ? 'Shadow' : isBackground ? 'Background' : ''}`,
     safeFont(spec.fontFamily),
     Math.round(spec.fontSizePx),
     primaryColor,
@@ -125,8 +125,8 @@ const styleLine = (spec: SubtitleRenderSpec, index: number, role: AssStyleRole =
     100,
     spec.letterSpacingPx.toFixed(2),
     0,
-    hasBackground ? 3 : 1,
-    isShadow ? '0.00' : spec.outlineWidthPx.toFixed(2),
+    isBackground ? 3 : 1,
+    isShadow || isBackground ? '0.00' : spec.outlineWidthPx.toFixed(2),
     '0.00',
     assAlignment(spec.anchor),
     10,
@@ -138,8 +138,13 @@ const styleLine = (spec: SubtitleRenderSpec, index: number, role: AssStyleRole =
 
 const hasVisibleColor = (value: string): boolean => parseHexColor(value).alpha > 0
 
-const shadowOffsetPx = (spec: SubtitleRenderSpec): number =>
-  2 + Math.min(16, Math.round(spec.shadowBlurPx / 4))
+/**
+ * CSS text-shadow blur is a visual spread, while ASS \\blur is a libass
+ * filter radius. A half-radius is the current conservative approximation;
+ * the mapping is deliberately applied only to the duplicate shadow event.
+ */
+export const assShadowBlurFromCss = (cssShadowBlurPx: number): number =>
+  cssShadowBlurPx <= 0 ? 0 : clamp(Math.round(cssShadowBlurPx / 2), 1, 20)
 
 export const generateAss = (project: ProjectFile): string => {
   const cues = collectSubtitleCues(project)
@@ -158,6 +163,7 @@ export const generateAss = (project: ProjectFile): string => {
     ...cues.flatMap(({ clip }, index) => {
       const spec = buildSubtitleRenderSpec(clip, { width, height })
       return [
+        ...(spec.backgroundOpacity > 0 ? [styleLine(spec, index, 'background')] : []),
         styleLine(spec, index),
         ...(hasVisibleColor(spec.shadowColor) ? [styleLine(spec, index, 'shadow')] : [])
       ]
@@ -172,16 +178,19 @@ export const generateAss = (project: ProjectFile): string => {
     const spec = buildSubtitleRenderSpec(clip, { width, height })
     const x = Math.round(spec.xPx)
     const y = Math.round(spec.yPx)
-    const renderEvent = (styleName: string, eventX: number, eventY: number, eventLayer: number): string => {
+    const renderEvent = (styleName: string, eventX: number, eventY: number, eventLayer: number, shadow = false): string => {
       const override = animationOverride(spec, eventX, eventY)
-      const text = `{${override}}${escapeAssText(spec.wrappedText)}`
+      const assBlur = shadow ? assShadowBlurFromCss(spec.shadowBlurPx) : 0
+      const blurOverride = assBlur > 0 ? `\\blur${assBlur}` : ''
+      const text = `{${override}${blurOverride}}${escapeAssText(spec.wrappedText)}`
       return `Dialogue: ${eventLayer},${assTime(start)},${assTime(end, true)},${styleName},,0,0,0,,${text}`
     }
     const shadow = hasVisibleColor(spec.shadowColor)
-      ? renderEvent(`Cue${index}Shadow`, x, y + shadowOffsetPx(spec), layer)
+      ? renderEvent(`Cue${index}Shadow`, x + Math.round(spec.shadowOffsetXPx), y + Math.round(spec.shadowOffsetYPx), layer, true)
       : undefined
-    const main = renderEvent(`Cue${index}`, x, y, layer + (shadow ? 1 : 0))
-    return shadow ? [shadow, main] : [main]
+    const background = spec.backgroundOpacity > 0 ? renderEvent(`Cue${index}Background`, x, y, layer) : undefined
+    const main = renderEvent(`Cue${index}`, x, y, layer + (shadow ? 1 : 0) + (background ? 1 : 0))
+    return [background, shadow, main].filter((event): event is string => event !== undefined)
   })
   return `${[...header, ...events].join('\n')}\n`
 }

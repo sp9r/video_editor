@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   collectSubtitleCues,
   escapeAssText,
+  assShadowBlurFromCss,
   generateAss,
   generateSrt,
   parseSrt,
@@ -92,11 +93,19 @@ describe('subtitle serialization', () => {
     expect(mainStyle).toContain(`,${spec.outlineWidthPx.toFixed(2)},0.00,2,`)
     expect(mainEvent).toContain(`\\pos(${Math.round(spec.xPx)},${Math.round(spec.yPx)})`)
     expect(mainEvent).toContain('字幕を入力')
-    expect(ass).not.toContain('\\blur')
+    const shadowEvent = ass.split('\n').find((line) => line.includes(',Cue0Shadow,'))
+    expect(mainEvent).not.toContain('\\blur')
     if (stylePatch.shadowColor === '#00000000') expect(ass).not.toContain('Cue0Shadow')
-    else expect(ass).toContain('Style: Cue0Shadow,')
-    if (stylePatch.backgroundOpacity > 0) expect(mainStyle).toContain(',3,')
-    else expect(mainStyle).toContain(',1,')
+    else {
+      expect(ass).toContain('Style: Cue0Shadow,')
+      expect(shadowEvent).toContain(`\\pos(${Math.round(spec.xPx)},${Math.round(spec.yPx + 2)})`)
+      expect(shadowEvent).toContain(stylePatch.shadowBlur > 0 ? `\\blur${assShadowBlurFromCss(stylePatch.shadowBlur)}` : `\\pos(${Math.round(spec.xPx)},${Math.round(spec.yPx + 2)})`)
+    }
+    if (stylePatch.backgroundOpacity > 0) {
+      const backgroundStyle = ass.split('\n').find((line) => line.startsWith('Style: Cue0Background,'))
+      expect(backgroundStyle).toContain(',3,0.00,0.00,2,')
+      expect(mainStyle).toContain(',1,')
+    } else expect(mainStyle).toContain(',1,')
   })
 
   it('keeps the exact user style in the shared spec and separates red shadow from the main glyph', () => {
@@ -127,10 +136,14 @@ describe('subtitle serialization', () => {
     const ass = generateAss(project)
     const mainStyle = ass.split('\n').find((line) => line.startsWith('Style: Cue0,'))
     expect(spec).toMatchObject({ fontSizePx: 123, xPx: 960, yPx: 928.8, outlineWidthPx: 14, shadowBlurPx: 24, backgroundOpacity: 0.15 })
-    expect(mainStyle).toContain(',3,14.00,0.00,2,')
+    const backgroundStyle = ass.split('\n').find((line) => line.startsWith('Style: Cue0Background,'))
+    expect(backgroundStyle).toContain(',3,0.00,0.00,2,')
+    expect(mainStyle).toContain(',1,14.00,0.00,2,')
     expect(ass).toContain('Style: Cue0Shadow,')
-    expect(ass.match(/Dialogue:/gu)).toHaveLength(2)
-    expect(ass).not.toContain('\\blur24')
+    expect(ass.match(/Dialogue:/gu)).toHaveLength(3)
+    expect(ass).toContain(`\\blur${assShadowBlurFromCss(24)}`)
+    const mainEvent = ass.split('\n').find((line) => line.includes(',Cue0,,0,0,0,,{'))
+    expect(mainEvent).not.toContain('\\blur')
   })
 })
 

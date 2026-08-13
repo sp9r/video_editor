@@ -33,6 +33,6 @@ describe('canonical subtitle render spec', () => {
     expect(spec.xPx).toBe(-480)
     expect(spec.yPx).toBe(1620)
     expect(spec.wrappedText).toContain('\n')
-    expect(spec).toMatchObject({ fontFamily: 'Test Family', fontSizePx: 64, bold: false, italic: true, color: '#123456', outlineColor: '#654321', outlineWidthPx: 7, letterSpacingPx: 3, lineHeight: 1.4, shadowColor: '#abcdef', shadowBlurPx: 8, backgroundColor: '#fedcba', backgroundOpacity: 0.4 })
+    expect(spec).toMatchObject({ fontFamily: 'Test Family', fontSizePx: 64, bold: false, italic: true, color: '#123456', outlineColor: '#654321', outlineWidthPx: 7, letterSpacingPx: 3, lineHeight: 1.4, shadowColor: '#abcdef', shadowBlurPx: 8, shadowOffsetXPx: 0, shadowOffsetYPx: 2, backgroundColor: '#fedcba', backgroundOpacity: 0.4 })
   })
 })
