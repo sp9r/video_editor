@@ -161,8 +161,6 @@ type UnknownRecord = Record<string, unknown>
 
 const isRecord = (value: unknown): value is UnknownRecord => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
-const positive = (value: unknown): value is number => finite(value) && value > 0
-const nonNegative = (value: unknown): value is number => finite(value) && value >= 0
 const nonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0
 
 const invalid = (message: string, details?: Record<string, unknown>): never => {
@@ -179,9 +177,27 @@ const requiredString = (value: unknown, label: string): string => {
   return value as string
 }
 
-const requiredNumber = (value: unknown, label: string, minimum = 0): number => {
-  if (!finite(value) || value < minimum) invalid(`${label} must be a finite number >= ${minimum}`)
+const requiredFinite = (value: unknown, label: string): number => {
+  if (!finite(value)) invalid(`${label} must be a finite number`)
   return value as number
+}
+
+const requiredPositive = (value: unknown, label: string): number => {
+  const number = requiredFinite(value, label)
+  if (number <= 0) invalid(`${label} must be > 0`)
+  return number
+}
+
+const requiredNonNegative = (value: unknown, label: string): number => {
+  const number = requiredFinite(value, label)
+  if (number < 0) invalid(`${label} must be >= 0`)
+  return number
+}
+
+const requiredOpacity = (value: unknown, label: string): number => {
+  const number = requiredFinite(value, label)
+  if (number < 0 || number > 1) invalid(`${label} must be between 0 and 1`)
+  return number
 }
 
 const requiredBoolean = (value: unknown, label: string): boolean => {
@@ -191,22 +207,22 @@ const requiredBoolean = (value: unknown, label: string): boolean => {
 
 const range = (value: unknown, label: string): EditProjectTimeRange => {
   const object = record(value, label)
-  const start = requiredNumber(object.start, `${label}.start`)
-  const duration = requiredNumber(object.duration, `${label}.duration`, Number.MIN_VALUE)
+  const start = requiredNonNegative(object.start, `${label}.start`)
+  const duration = requiredPositive(object.duration, `${label}.duration`)
   return { start, duration }
 }
 
 const parseTransform = (value: unknown, label: string): EditProjectTransform => {
   const object = record(value, label)
   return {
-    x: requiredNumber(object.x, `${label}.x`),
-    y: requiredNumber(object.y, `${label}.y`),
-    scale_x: requiredNumber(object.scale_x, `${label}.scale_x`, Number.MIN_VALUE),
-    scale_y: requiredNumber(object.scale_y, `${label}.scale_y`, Number.MIN_VALUE),
-    rotation: requiredNumber(object.rotation, `${label}.rotation`),
-    opacity: requiredNumber(object.opacity, `${label}.opacity`),
-    ...(object.anchor_x === undefined ? {} : { anchor_x: requiredNumber(object.anchor_x, `${label}.anchor_x`) }),
-    ...(object.anchor_y === undefined ? {} : { anchor_y: requiredNumber(object.anchor_y, `${label}.anchor_y`) })
+    x: requiredFinite(object.x, `${label}.x`),
+    y: requiredFinite(object.y, `${label}.y`),
+    scale_x: requiredPositive(object.scale_x, `${label}.scale_x`),
+    scale_y: requiredPositive(object.scale_y, `${label}.scale_y`),
+    rotation: requiredFinite(object.rotation, `${label}.rotation`),
+    opacity: requiredOpacity(object.opacity, `${label}.opacity`),
+    ...(object.anchor_x === undefined ? {} : { anchor_x: requiredFinite(object.anchor_x, `${label}.anchor_x`) }),
+    ...(object.anchor_y === undefined ? {} : { anchor_y: requiredFinite(object.anchor_y, `${label}.anchor_y`) })
   }
 }
 
@@ -230,7 +246,7 @@ const parseClip = (value: unknown, label: string): EditProjectClip => {
     }
   }
   if (type === 'audio_clip') {
-    return { id, type, source_media_id: sourceMediaId, timeline, source, volume: requiredNumber(object.volume, `${label}.volume`), enabled }
+    return { id, type, source_media_id: sourceMediaId, timeline, source, volume: requiredNonNegative(object.volume, `${label}.volume`), enabled }
   }
   return invalid(`${label}.type is unsupported: ${type}`)
 }
@@ -250,7 +266,14 @@ const parseCaption = (value: unknown, label: string): EditProjectCaption => {
   }
 }
 
-const isAbsoluteContractPath = (value: string): boolean => path.isAbsolute(value) || path.win32.isAbsolute(value) || path.posix.isAbsolute(value)
+const isPortableRelativeContractPath = (value: string): boolean =>
+  !path.isAbsolute(value) &&
+  !path.win32.isAbsolute(value) &&
+  !path.posix.isAbsolute(value) &&
+  !/^[A-Za-z]:/u.test(value) &&
+  !value.startsWith('/') &&
+  !value.startsWith('\\') &&
+  !value.includes('\\')
 
 export const validateEditProject = (input: unknown): EditProjectDocument => {
   const inputObject = record(input, 'edit_project')
@@ -275,11 +298,11 @@ export const validateEditProject = (input: unknown): EditProjectDocument => {
   }
   const sequence: EditProjectSequence = {
     ...(sequenceInput.id === undefined ? {} : { id: requiredString(sequenceInput.id, 'sequence.id') }),
-    width: requiredNumber(sequenceInput.width, 'sequence.width', 1),
-    height: requiredNumber(sequenceInput.height, 'sequence.height', 1),
-    fps: requiredNumber(sequenceInput.fps, 'sequence.fps', Number.MIN_VALUE),
+    width: requiredPositive(sequenceInput.width, 'sequence.width'),
+    height: requiredPositive(sequenceInput.height, 'sequence.height'),
+    fps: requiredPositive(sequenceInput.fps, 'sequence.fps'),
     ...(timebase === undefined ? {} : { timebase: { numerator: timebase.numerator as number, denominator: timebase.denominator as number } }),
-    duration: requiredNumber(sequenceInput.duration, 'sequence.duration', Number.MIN_VALUE)
+    duration: requiredPositive(sequenceInput.duration, 'sequence.duration')
   }
   if (!Number.isInteger(sequence.width) || !Number.isInteger(sequence.height)) invalid('sequence width and height must be integers')
 
@@ -290,7 +313,7 @@ export const validateEditProject = (input: unknown): EditProjectDocument => {
     if (sourceIds.has(id)) invalid(`duplicate source media id: ${id}`)
     sourceIds.add(id)
     const mediaPath = requiredString(object.path, `source_media[${index}].path`)
-    if (!isAbsoluteContractPath(mediaPath) && mediaPath.includes('\\')) invalid(`source_media[${index}].path must use / separators`)
+    if (!isPortableRelativeContractPath(mediaPath)) invalid(`source_media[${index}].path must be a portable relative path using / separators`)
     const kind = object.kind as unknown
     if (kind !== 'video' && kind !== 'audio') invalid(`source_media[${index}].kind is unsupported`)
     const result: EditProjectSourceMedia = {
@@ -298,12 +321,12 @@ export const validateEditProject = (input: unknown): EditProjectDocument => {
       path: mediaPath,
       kind: kind as EditProjectSourceMedia['kind'],
       ...(object.sha256 === undefined ? {} : { sha256: requiredString(object.sha256, `source_media[${index}].sha256`).toLowerCase() }),
-      duration: requiredNumber(object.duration, `source_media[${index}].duration`, Number.MIN_VALUE),
-      ...(object.width === undefined ? {} : { width: requiredNumber(object.width, `source_media[${index}].width`, 1) }),
-      ...(object.height === undefined ? {} : { height: requiredNumber(object.height, `source_media[${index}].height`, 1) }),
-      ...(object.fps === undefined ? {} : { fps: requiredNumber(object.fps, `source_media[${index}].fps`, Number.MIN_VALUE) }),
-      ...(object.sample_rate === undefined ? {} : { sample_rate: requiredNumber(object.sample_rate, `source_media[${index}].sample_rate`, 1) }),
-      ...(object.channels === undefined ? {} : { channels: requiredNumber(object.channels, `source_media[${index}].channels`, 1) })
+      duration: requiredPositive(object.duration, `source_media[${index}].duration`),
+      ...(object.width === undefined ? {} : { width: requiredPositive(object.width, `source_media[${index}].width`) }),
+      ...(object.height === undefined ? {} : { height: requiredPositive(object.height, `source_media[${index}].height`) }),
+      ...(object.fps === undefined ? {} : { fps: requiredPositive(object.fps, `source_media[${index}].fps`) }),
+      ...(object.sample_rate === undefined ? {} : { sample_rate: requiredPositive(object.sample_rate, `source_media[${index}].sample_rate`) }),
+      ...(object.channels === undefined ? {} : { channels: requiredPositive(object.channels, `source_media[${index}].channels`) })
     }
     if (result.sha256 && !/^[0-9a-f]{64}$/u.test(result.sha256)) invalid(`source_media[${index}].sha256 must be SHA-256 hex`)
     return result
@@ -378,7 +401,7 @@ export const validateEditProject = (input: unknown): EditProjectDocument => {
 }
 
 const resolveSourcePath = (projectPath: string, mediaPath: string): string =>
-  isAbsoluteContractPath(mediaPath) ? path.normalize(mediaPath) : path.resolve(path.dirname(projectPath), mediaPath)
+  path.resolve(path.dirname(projectPath), mediaPath)
 
 const sha256File = async (filePath: string): Promise<string> => {
   const content = await readFile(filePath)

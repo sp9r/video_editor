@@ -140,6 +140,49 @@ describe('standalone edit_project.v1 loader', () => {
     expect(() => validateEditProject(speedChange)).toThrow(/changes speed/u)
   })
 
+  it('validates transform semantics with finite, positive, and bounded helpers', () => {
+    const valid = makeDocument()
+    const validClip = valid.tracks[0]!.clips[0]!
+    if (validClip.type !== 'video_clip') throw new Error('Expected video clip fixture')
+    validClip.transform.x = -100
+    validClip.transform.y = -50
+    validClip.transform.rotation = -45
+    expect(() => validateEditProject(valid)).not.toThrow()
+
+    for (const value of [-1, 0]) {
+      const invalidScale = makeDocument()
+      const clip = invalidScale.tracks[0]!.clips[0]!
+      if (clip.type !== 'video_clip') throw new Error('Expected video clip fixture')
+      clip.transform.scale_x = value
+      expect(() => validateEditProject(invalidScale)).toThrow(/scale_x/u)
+    }
+
+    for (const value of [-0.1, 1.1]) {
+      const invalidOpacity = makeDocument()
+      const clip = invalidOpacity.tracks[0]!.clips[0]!
+      if (clip.type !== 'video_clip') throw new Error('Expected video clip fixture')
+      clip.transform.opacity = value
+      expect(() => validateEditProject(invalidOpacity)).toThrow(/opacity/u)
+    }
+
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const invalidFinite = makeDocument()
+      const clip = invalidFinite.tracks[0]!.clips[0]!
+      if (clip.type !== 'video_clip') throw new Error('Expected video clip fixture')
+      clip.transform.x = value
+      expect(() => validateEditProject(invalidFinite)).toThrow(/x must be a finite number/u)
+    }
+  })
+
+  it('accepts only portable relative source paths in edit_project.v1', () => {
+    for (const sourcePath of ['source.mp4', '../media/source.mp4', '../../source/source.mp4']) {
+      expect(() => validateEditProject(makeDocument(sourcePath))).not.toThrow()
+    }
+    for (const sourcePath of ['C:/source.mp4', String.raw`C:\source.mp4`, '/source.mp4', String.raw`\\server\source.mp4`]) {
+      expect(() => validateEditProject(makeDocument(sourcePath))).toThrow(/portable relative path/u)
+    }
+  })
+
   it('feeds preview and final render planning from the same adapted project', async () => {
     const root = await mkdtemp(join(tmpdir(), 'video-editor-render-plan-'))
     try {
