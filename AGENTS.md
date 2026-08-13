@@ -8,6 +8,7 @@
 - `edit_project.v1` contractを破壊しない。変更が必要ならschema versionと移行方針を明示する。
 - `source_media[].path`は`edit_project.json`のparent directory基準でresolveする。CWDや`run_dir`を暗黙の基準にしない。
 - PreviewとFinal Renderは同じProject ModelとRender Planを共有する。別々のtimeline解釈を作らない。
+- `edit_project.v1`ではvideo clipは映像のみ、audio clipは音声のみ。video sourceのaudioは`sourceAudioEnabled`で明示し、contract importでは`false`、legacyの未指定値は有効扱いとする。
 - FFmpeg出力は`partial → validation → atomic promote`の順で公開する。
 
 ## 開発前提

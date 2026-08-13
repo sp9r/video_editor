@@ -85,6 +85,16 @@ edit_project.json
 
 2026-08-13 Phase 3.5の実行結果: `npm.cmd run check`成功（14 files / 62 tests）、`npm.cmd run build`成功。GitHub `sp9r/video_editor`の`main`へpush済み。
 
+## Phase 3.6 audio semantics
+
+- 原因: 旧Render Planが`asset.hasAudio`だけでvideo clipのsource audioを有効化し、contractのV1 video + A1 audioを二重mixし得た。
+- `VideoClip.sourceAudioEnabled?: boolean`を追加。legacy/internal `.spectra`の未指定値は従来互換で有効、明示`false`は無効とする。
+- `edit_project.v1` adapterはvideo clipへ`sourceAudioEnabled: false`を設定。audio clipは独立audio contributionとしてのみRender Planへ入る。
+- PreviewはFinalと同じRender Planのinputsからaudio clipを列挙するため、Preview専用の回避処理はない。
+- V1+A1、V1のみ、disabled A1、volume=0、legacy default/disabled、Preview/Final input、実FFmpeg sourceの回帰を追加した。
+
+2026-08-13 Phase 3.6の実行結果: `npm.cmd run check`成功（14 files / 64 tests）、`npm.cmd run build`成功、generated video+sine audioのheadless E2Eとffprobe検証成功。
+
 契約の入力形状は`clip_automation` Phase 2.5時点の`edit_project.v1`（監査時点のsource commit: `569bfbf`）を正本として扱った。`caption_project.v2.json`や`transcript_words.json`をvideo_editorへimportする処理は追加せず、loaderは`edit_project.v1`だけを受け取る。
 
 2026-08-13の実行結果: `npm.cmd run typecheck`成功、`npm.cmd test`成功（14 files / 60 tests）、`npm.cmd run build`成功、contract sourceを同梱FFmpegでMP4へheadless renderしffprobe検証成功。GitHub `sp9r/video_editor`の`main`へpush済み。実Electron画面の手動受入と別PC受入は未完了。
