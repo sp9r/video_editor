@@ -126,7 +126,7 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
           <NumberField label="縁取り幅" suffix="px" min={0} max={20} value={clip.style.outlineWidth} onChange={(event) => patchStyle({ outlineWidth: numberValue(event.target.value) })} />
           <NumberField label="影ぼかし" suffix="px" min={0} max={40} value={clip.style.shadowBlur} onChange={(event) => patchStyle({ shadowBlur: numberValue(event.target.value) })} />
           <NumberField label="背景濃度" suffix="%" min={0} max={100} value={Math.round(clip.style.backgroundOpacity * 100)} onChange={(event) => patchStyle({ backgroundOpacity: numberValue(event.target.value) / 100 })} />
-          <NumberField label="字幕幅" suffix="%" min={70} max={85} value={clip.style.maxWidthPercent ?? 80} onChange={(event) => patchStyle({ maxWidthPercent: Math.min(85, Math.max(70, numberValue(event.target.value, 80))) })} />
+          <NumberField label="字幕幅" suffix="%" min={10} max={300} value={clip.style.maxWidthPercent ?? 80} onChange={(event) => patchStyle({ maxWidthPercent: numberValue(event.target.value, 80) })} />
         </div>
         <Button className="subtle-button" onClick={() => useEditorStore.getState().applySubtitleStyleToAll(clip.id)}>この字幕のスタイルを全字幕へ適用</Button>
       </Section>
@@ -135,8 +135,8 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
           <option value="top">上</option><option value="middle">中央</option><option value="bottom">下</option>
         </SelectField>
         <div className="field-grid">
-          <NumberField label="位置 X" suffix="%" min={0} max={100} value={clip.style.positionX} onChange={(event) => patchStyle({ positionX: numberValue(event.target.value) })} />
-          <NumberField label="位置 Y" suffix="%" min={0} max={100} value={clip.style.positionY} onChange={(event) => patchStyle({ positionY: numberValue(event.target.value) })} />
+          <NumberField label="位置 X" suffix="%" min={-100} max={200} value={clip.style.positionX} onChange={(event) => patchStyle({ positionX: numberValue(event.target.value, 50) })} />
+          <NumberField label="位置 Y" suffix="%" min={-100} max={200} value={clip.style.positionY} onChange={(event) => patchStyle({ positionY: numberValue(event.target.value, 86) })} />
         </div>
         <SelectField label="登場効果" value={clip.style.animation} onChange={(event) => patchStyle({ animation: event.target.value as SubtitleStyle['animation'] })}>
           <option value="none">なし</option><option value="fade">フェード</option><option value="pop">ポップ</option><option value="slide-up">下からスライド</option><option value="typewriter">タイプライター</option>

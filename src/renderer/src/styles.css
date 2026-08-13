@@ -555,13 +555,14 @@ select {
 .safe-guides i { position: absolute; inset: 6%; border: 1px dashed rgb(255 255 255 / 0.12); }
 .viewer-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim); background: #090b0e; }
 .viewer-placeholder span { font-size: 10px; }
-.preview-subtitle { position: absolute; z-index: 5; box-sizing: border-box; padding: 3px 8px; color: white; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; border: 0; border-radius: 3px; transform: translate(-50%, -50%); cursor: pointer; }
+.preview-subtitle { position: absolute; z-index: 5; box-sizing: border-box; padding: 3px 8px; color: white; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; border: 0; border-radius: 3px; cursor: pointer; }
 .subtitle-fade { animation: subtitle-fade 650ms both; }
 .subtitle-pop { animation: subtitle-pop 420ms cubic-bezier(.18,.86,.35,1.35) both; }
 .subtitle-slide-up { animation: subtitle-slide 550ms ease-out both; }
+.subtitle-typewriter { animation: subtitle-fade 650ms both; }
 @keyframes subtitle-fade { from { opacity: 0; } }
-@keyframes subtitle-pop { from { opacity: 0; transform: translate(-50%, -50%) scale(.65); } }
-@keyframes subtitle-slide { from { opacity: 0; transform: translate(-50%, calc(-50% + 20px)); } }
+@keyframes subtitle-pop { from { opacity: 0; scale: .65; } }
+@keyframes subtitle-slide { from { opacity: 0; translate: 0 20px; } }
 
 .transport { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 10px; border-top: 1px solid var(--line-soft); background: #161a20; }
 .transport code { color: var(--mint); font: 12px "Cascadia Mono", Consolas, monospace; }

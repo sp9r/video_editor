@@ -1,12 +1,8 @@
 import type { SubtitleStyle } from './types'
 
-/**
- * Conservative, renderer-independent wrapping used by both Preview and ASS.
- * It intentionally leaves 70–85% of the sequence available for captions so
- * glyph outlines do not touch the frame edge.
- */
+/** Renderer-independent width normalization used by Preview and ASS. */
 export const subtitleMaxWidthPercent = (style: Pick<SubtitleStyle, 'maxWidthPercent'>): number =>
-  Math.min(85, Math.max(70, style.maxWidthPercent ?? 80))
+  Number.isFinite(style.maxWidthPercent) && style.maxWidthPercent > 0 ? style.maxWidthPercent : 80
 
 const graphemes = (text: string): string[] => {
   if (typeof Intl.Segmenter === 'function') {

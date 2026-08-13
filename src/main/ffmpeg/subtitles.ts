@@ -1,5 +1,5 @@
 import type { ProjectFile, SubtitleClip, SubtitleStyle } from '../../shared/types.js'
-import { wrapSubtitleText } from '../../shared/subtitle-layout.js'
+import { buildSubtitleRenderSpec, type SubtitleRenderSpec } from '../../shared/subtitle-render.js'
 
 export interface SubtitleCue {
   clip: SubtitleClip
@@ -82,14 +82,13 @@ export const escapeAssText = (value: string): string => value
   .replace(/\r\n|\r|\n/gu, '\\N')
 
 const animationOverride = (
-  clip: SubtitleClip,
+  spec: SubtitleRenderSpec,
   x: number,
   y: number
 ): string => {
-  const maximum = Math.max(0, Math.floor(clip.durationUs / 2))
-  const durationMs = Math.round(clamp(clip.style.animationDurationUs, 0, maximum) / 1_000)
-  if (durationMs <= 0 || clip.style.animation === 'none') return `\\pos(${x},${y})`
-  switch (clip.style.animation) {
+  const durationMs = Math.round(spec.animationDurationUs / 1_000)
+  if (durationMs <= 0 || spec.animation === 'none') return `\\pos(${x},${y})`
+  switch (spec.animation) {
     case 'fade':
       return `\\pos(${x},${y})\\fad(${durationMs},${durationMs})`
     case 'pop':
@@ -102,31 +101,31 @@ const animationOverride = (
   }
 }
 
-const styleLine = (style: SubtitleStyle, index: number): string => {
-  const hasBackground = clamp(style.backgroundOpacity, 0, 1) > 0
+const styleLine = (spec: ReturnType<typeof buildSubtitleRenderSpec>, index: number): string => {
+  const hasBackground = spec.backgroundOpacity > 0
   const backColor = hasBackground
-    ? assColor(style.backgroundColor, style.backgroundOpacity)
-    : assColor(style.shadowColor)
+    ? assColor(spec.backgroundColor, spec.backgroundOpacity)
+    : assColor(spec.shadowColor)
   return [
     `Style: Cue${index}`,
-    safeFont(style.fontFamily),
-    Math.round(clamp(style.fontSize, 1, 500)),
-    assColor(style.color),
-    assColor(style.color),
-    assColor(style.outlineColor),
+    safeFont(spec.fontFamily),
+    Math.round(spec.fontSizePx),
+    assColor(spec.color),
+    assColor(spec.color),
+    assColor(spec.outlineColor),
     backColor,
-    style.bold ? -1 : 0,
-    style.italic ? -1 : 0,
+    spec.bold ? -1 : 0,
+    spec.italic ? -1 : 0,
     0,
     0,
     100,
     100,
-    clamp(style.letterSpacing, -100, 100).toFixed(2),
+    spec.letterSpacingPx.toFixed(2),
     0,
     hasBackground ? 3 : 1,
-    clamp(style.outlineWidth, 0, 20).toFixed(2),
-    clamp(style.shadowBlur / 2, 0, 20).toFixed(2),
-    assAlignment(style.alignment),
+    spec.outlineWidthPx.toFixed(2),
+    clamp(spec.shadowBlurPx / 2, 0, 20).toFixed(2),
+    assAlignment(spec.anchor),
     10,
     10,
     10,
@@ -148,20 +147,19 @@ export const generateAss = (project: ProjectFile): string => {
     '',
     '[V4+ Styles]',
     'Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding',
-    ...cues.map(({ clip }, index) => styleLine(clip.style, index)),
+    ...cues.map(({ clip }, index) => styleLine(buildSubtitleRenderSpec(clip, { width, height }), index)),
     '',
     '[Events]',
     'Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text'
   ]
-  const events = cues.map(({ clip, layer }, index) => {
+const events = cues.map(({ clip, layer }, index) => {
     const start = Math.max(0, clip.startUs)
     const end = Math.max(start + 10_000, start + clip.durationUs)
-    const x = Math.round(width * clamp(clip.style.positionX, 0, 100) / 100)
-    const y = Math.round(height * clamp(clip.style.positionY, 0, 100) / 100)
-    const override = animationOverride(clip, x, y)
-    const blur = clamp(clip.style.shadowBlur, 0, 100)
-    const wrapped = wrapSubtitleText(clip.text, clip.style, width)
-    const text = `{${override}\\blur${blur.toFixed(2)}}${escapeAssText(wrapped)}`
+    const spec = buildSubtitleRenderSpec(clip, { width, height })
+    const x = Math.round(spec.xPx)
+    const y = Math.round(spec.yPx)
+    const override = animationOverride(spec, x, y)
+    const text = `{${override}\\blur${spec.shadowBlurPx.toFixed(2)}}${escapeAssText(spec.wrappedText)}`
     return `Dialogue: ${layer},${assTime(start)},${assTime(end, true)},Cue${index},,0,0,0,,${text}`
   })
   return `${[...header, ...events].join('\n')}\n`

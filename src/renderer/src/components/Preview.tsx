@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-react'
 import { formatTimecode, projectDurationUs } from '../../../shared/project'
 import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
-import { subtitleMaxWidthPercent, wrapSubtitleText } from '../../../shared/subtitle-layout'
+import { buildSubtitleRenderSpec, subtitleAnchorTransform } from '../../../shared/subtitle-render'
 import type { MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip } from '../../../shared/types'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
@@ -207,30 +207,35 @@ export default function Preview(): React.JSX.Element {
             {visuals.length === 0 && <div className="viewer-placeholder"><Play size={34} /><span>再生位置に映像がありません</span></div>}
             <div className="safe-guides" aria-hidden="true"><i /></div>
             {subtitles.map((subtitle) => (
-              <button
-                type="button"
-                key={subtitle.id}
-                className={`preview-subtitle subtitle-${subtitle.style.animation}`}
-                onClick={() => selectClip(subtitle.id)}
-                style={{
-                  left: `${subtitle.style.positionX}%`,
-                  top: `${subtitle.style.positionY}%`,
-                  width: `${subtitleMaxWidthPercent(subtitle.style)}%`,
-                  color: subtitle.style.color,
-                  fontFamily: subtitle.style.fontFamily,
-                  fontSize: `${subtitle.style.fontSize}px`,
-                  fontWeight: subtitle.style.bold ? 700 : 400,
-                  fontStyle: subtitle.style.italic ? 'italic' : 'normal',
-                  letterSpacing: `${subtitle.style.letterSpacing}px`,
-                  lineHeight: subtitle.style.lineHeight,
-                  WebkitTextStroke: `${subtitle.style.outlineWidth}px ${subtitle.style.outlineColor}`,
-                  paintOrder: 'stroke fill',
-                  textShadow: `0 2px ${subtitle.style.shadowBlur}px ${subtitle.style.shadowColor}`,
-                  background: `color-mix(in srgb, ${subtitle.style.backgroundColor} ${subtitle.style.backgroundOpacity * 100}%, transparent)`
-                }}
-              >
-                {wrapSubtitleText(subtitle.text, subtitle.style, project.sequence.width)}
-              </button>
+              (() => {
+                const spec = buildSubtitleRenderSpec(subtitle, project.sequence)
+                return <button
+                  type="button"
+                  key={subtitle.id}
+                  className={`preview-subtitle subtitle-${spec.animation} anchor-${spec.anchor}`}
+                  onClick={() => selectClip(subtitle.id)}
+                  style={{
+                    left: `${spec.xPx}px`,
+                    top: `${spec.yPx}px`,
+                    width: `${spec.maxWidthPx}px`,
+                    color: spec.color,
+                    fontFamily: spec.fontFamily,
+                    fontSize: `${spec.fontSizePx}px`,
+                    fontWeight: spec.bold ? 700 : 400,
+                    fontStyle: spec.italic ? 'italic' : 'normal',
+                    letterSpacing: `${spec.letterSpacingPx}px`,
+                    lineHeight: spec.lineHeight,
+                    animationDuration: `${Math.max(0, spec.animationDurationUs / 1_000)}ms`,
+                    transform: subtitleAnchorTransform(spec.anchor),
+                    WebkitTextStroke: `${spec.outlineWidthPx}px ${spec.outlineColor}`,
+                    paintOrder: 'stroke fill',
+                    textShadow: `0 2px ${spec.shadowBlurPx}px ${spec.shadowColor}`,
+                    background: `color-mix(in srgb, ${spec.backgroundColor} ${spec.backgroundOpacity * 100}%, transparent)`
+                  }}
+                >
+                  {spec.wrappedText}
+                </button>
+              })()
             ))}
           </div>
           <div className="preview-audio-pool" aria-hidden="true">
