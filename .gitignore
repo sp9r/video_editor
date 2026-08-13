@@ -1,0 +1,9 @@
+node_modules/
+out/
+release/
+fixtures/generated/
+*.tsbuildinfo
+coverage/
+.vite/
+*.log
+

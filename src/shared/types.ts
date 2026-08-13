@@ -1,0 +1,304 @@
+export const PROJECT_SCHEMA_VERSION = 1 as const
+export const APP_VERSION = '0.1.0'
+
+export type TimeUs = number
+export type MediaKind = 'video' | 'audio' | 'image'
+export type TrackKind = 'video' | 'audio' | 'subtitle'
+export type EncoderMode = 'auto' | 'hardware' | 'software'
+export type EncoderVendor = 'nvidia' | 'intel' | 'amd' | 'apple' | 'vaapi' | 'cpu'
+
+export interface Rational {
+  numerator: number
+  denominator: number
+}
+
+export interface MediaAsset {
+  id: string
+  name: string
+  path: string
+  relativePath?: string
+  kind: MediaKind
+  durationUs: TimeUs
+  width?: number
+  height?: number
+  frameRate?: Rational
+  sampleRate?: number
+  channels?: number
+  hasAudio: boolean
+  fileSize: number
+  modifiedAt: string
+  offline: boolean
+}
+
+export interface CropSettings {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+export interface TransformSettings {
+  positionX: number
+  positionY: number
+  scale: number
+  rotation: number
+  opacity: number
+  crop: CropSettings
+}
+
+export interface AudioSettings {
+  volumeDb: number
+  pan: number
+  fadeInUs: TimeUs
+  fadeOutUs: TimeUs
+}
+
+export interface SubtitleStyle {
+  fontFamily: string
+  fontSize: number
+  color: string
+  outlineColor: string
+  outlineWidth: number
+  shadowColor: string
+  shadowBlur: number
+  backgroundColor: string
+  backgroundOpacity: number
+  bold: boolean
+  italic: boolean
+  letterSpacing: number
+  lineHeight: number
+  alignment: 'top' | 'middle' | 'bottom'
+  positionX: number
+  positionY: number
+  animation: 'none' | 'fade' | 'pop' | 'slide-up' | 'typewriter'
+  animationDurationUs: TimeUs
+}
+
+interface BaseClip {
+  id: string
+  name: string
+  startUs: TimeUs
+  durationUs: TimeUs
+  sourceInUs: TimeUs
+  enabled: boolean
+}
+
+export interface VideoClip extends BaseClip {
+  kind: 'video'
+  assetId: string
+  transform: TransformSettings
+  audio: AudioSettings
+}
+
+export interface ImageClip extends BaseClip {
+  kind: 'image'
+  assetId: string
+  transform: TransformSettings
+}
+
+export interface AudioClip extends BaseClip {
+  kind: 'audio'
+  assetId: string
+  audio: AudioSettings
+}
+
+export interface SubtitleClip extends BaseClip {
+  kind: 'subtitle'
+  text: string
+  style: SubtitleStyle
+}
+
+export type TimelineClip = VideoClip | ImageClip | AudioClip | SubtitleClip
+
+export interface TimelineTrack {
+  id: string
+  name: string
+  kind: TrackKind
+  clips: TimelineClip[]
+  locked: boolean
+  muted: boolean
+  hidden: boolean
+}
+
+export interface SequenceSettings {
+  width: number
+  height: number
+  frameRate: Rational
+  sampleRate: number
+  backgroundColor: string
+}
+
+export interface ProjectFile {
+  schemaVersion: typeof PROJECT_SCHEMA_VERSION
+  appVersion: string
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  projectPath?: string
+  projectFormat?: 'spectra' | 'edit_project_v1'
+  sequence: SequenceSettings
+  media: MediaAsset[]
+  tracks: TimelineTrack[]
+}
+
+export interface ProbeResult {
+  path: string
+  name: string
+  kind: MediaKind
+  durationUs: TimeUs
+  width?: number
+  height?: number
+  frameRate?: Rational
+  sampleRate?: number
+  channels?: number
+  hasAudio: boolean
+  fileSize: number
+  modifiedAt: string
+  error?: string
+}
+
+export interface ImportedSubtitleCue {
+  startUs: TimeUs
+  endUs: TimeUs
+  text: string
+}
+
+export interface EncoderCapability {
+  id: string
+  name: string
+  codec: 'h264'
+  vendor: EncoderVendor
+  hardware: boolean
+  available: boolean
+  reason?: string
+}
+
+export interface EncoderReport {
+  ffmpegPath: string | null
+  ffmpegVersion: string | null
+  platform: string
+  capabilities: EncoderCapability[]
+  selectedId: string | null
+  checkedAt: string
+}
+
+export interface ExportSettings {
+  outputPath: string
+  width: number
+  height: number
+  frameRate: Rational
+  videoBitrate: number
+  audioBitrate: number
+  encoderMode: EncoderMode
+  preferredEncoderId?: string
+  burnSubtitles: boolean
+  exportSrt: boolean
+}
+
+export type ExportStage =
+  | 'queued'
+  | 'probing'
+  | 'rendering'
+  | 'validating'
+  | 'fallback'
+  | 'completed'
+  | 'cancelled'
+  | 'failed'
+
+export interface ExportProgress {
+  jobId: string
+  stage: ExportStage
+  ratio: number
+  encodedUs: TimeUs
+  totalUs: TimeUs
+  encoderId?: string
+  message: string
+  fallbackReason?: string
+  outputPath?: string
+  error?: string
+}
+
+export interface SaveProjectResult {
+  cancelled: boolean
+  projectPath?: string
+  project?: ProjectFile
+}
+
+export interface OpenProjectResult {
+  cancelled: boolean
+  projectPath?: string
+  project?: ProjectFile
+  warnings: string[]
+}
+
+export interface StartExportResult {
+  cancelled: boolean
+  jobId?: string
+  outputPath?: string
+}
+
+export interface AppInfo {
+  name: string
+  version: string
+  platform: string
+  arch: string
+  packaged: boolean
+}
+
+export interface DesktopApi {
+  getAppInfo(): Promise<AppInfo>
+  pickMedia(): Promise<ProbeResult[]>
+  probeMedia(paths: string[]): Promise<ProbeResult[]>
+  getPathForFile(file: unknown): string
+  saveProject(project: ProjectFile, saveAs?: boolean): Promise<SaveProjectResult>
+  openProject(): Promise<OpenProjectResult>
+  writeRecovery(project: ProjectFile): Promise<void>
+  loadRecovery(): Promise<ProjectFile | null>
+  relinkMedia(assetId: string, expectedName: string): Promise<ProbeResult | null>
+  importSubtitles(): Promise<ImportedSubtitleCue[] | null>
+  mediaUrl(path: string): string
+  detectEncoders(force?: boolean): Promise<EncoderReport>
+  chooseExportPath(defaultName: string): Promise<string | null>
+  startExport(project: ProjectFile, settings: ExportSettings): Promise<StartExportResult>
+  cancelExport(jobId: string): Promise<boolean>
+  exportSrt(project: ProjectFile, suggestedName: string): Promise<string | null>
+  onExportProgress(callback: (progress: ExportProgress) => void): () => void
+}
+
+export const DEFAULT_TRANSFORM: TransformSettings = {
+  positionX: 0,
+  positionY: 0,
+  scale: 1,
+  rotation: 0,
+  opacity: 1,
+  crop: { left: 0, top: 0, right: 0, bottom: 0 }
+}
+
+export const DEFAULT_AUDIO: AudioSettings = {
+  volumeDb: 0,
+  pan: 0,
+  fadeInUs: 0,
+  fadeOutUs: 0
+}
+
+export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
+  fontFamily: 'Noto Sans JP',
+  fontSize: 54,
+  color: '#ffffff',
+  outlineColor: '#111318',
+  outlineWidth: 3,
+  shadowColor: '#000000',
+  shadowBlur: 4,
+  backgroundColor: '#000000',
+  backgroundOpacity: 0,
+  bold: true,
+  italic: false,
+  letterSpacing: 0,
+  lineHeight: 1.15,
+  alignment: 'bottom',
+  positionX: 50,
+  positionY: 86,
+  animation: 'fade',
+  animationDurationUs: 180_000
+}
