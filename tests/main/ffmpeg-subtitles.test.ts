@@ -8,6 +8,7 @@ import {
   parseVtt
 } from '../../src/main/ffmpeg/subtitles.js'
 import { makeProject } from './ffmpeg-fixtures.js'
+import { buildSubtitleRenderSpec } from '../../src/shared/subtitle-render.js'
 
 describe('subtitle serialization', () => {
   it('creates escaped ASS with style, placement, and animation', () => {
@@ -43,6 +44,20 @@ describe('subtitle serialization', () => {
     const ass = generateAss(project)
     expect(ass).toContain('WrapStyle: 2')
     expect(ass).toMatch(/あ{20,}\\Nあ+/u)
+  })
+
+  it('keeps Preview geometry values, anchors, and expanded positions in ASS', () => {
+    const project = makeProject()
+    const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+    if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+    subtitle.style = { ...subtitle.style, alignment: 'top', positionX: -25, positionY: 150, maxWidthPercent: 150, animation: 'none', animationDurationUs: 0 }
+    subtitle.text = 'alpha beta gamma\n日本語'
+    const spec = buildSubtitleRenderSpec(subtitle, project.sequence)
+    const ass = generateAss(project)
+    expect(spec).toMatchObject({ xPx: -480, yPx: 1620, maxWidthPx: 2880, anchor: 'top' })
+    expect(ass).toContain('\\pos(-480,1620)')
+    expect(ass).toContain(',8,10,10,10,1')
+    expect(ass).toContain('alpha beta gamma\\N日本語')
   })
 })
 

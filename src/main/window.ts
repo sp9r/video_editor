@@ -85,18 +85,23 @@ export const waitForRendererStartup = async (window: BrowserWindow, timeoutMs = 
     await delay(50)
   }
   const initialPlayhead = await window.webContents.executeJavaScript(`document.querySelector('.playhead-hit-area')?.getAttribute('aria-label') ?? ''`)
-  const playheadDragChanged = await window.webContents.executeJavaScript(`(async () => {
+  const playheadDispatched = await window.webContents.executeJavaScript(`(() => {
     const handle = document.querySelector('.playhead-hit-area')
     if (!(handle instanceof HTMLElement)) return false
-    const before = handle.getAttribute('aria-label')
     const rect = handle.getBoundingClientRect()
     const pointerId = 77
-    handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 1, clientX: rect.left + 2, clientY: rect.top + 20 }))
-    handle.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 1, clientX: rect.left + 102, clientY: rect.top + 20 }))
-    handle.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 0, clientX: rect.left + 102, clientY: rect.top + 20 }))
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    return before !== handle.getAttribute('aria-label')
+    try {
+      handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 1, clientX: rect.left + 2, clientY: rect.top + 20 }))
+      handle.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 1, clientX: rect.left + 102, clientY: rect.top + 20 }))
+      handle.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 0, clientX: rect.left + 102, clientY: rect.top + 20 }))
+      return true
+    } catch {
+      return false
+    }
   })()`)
+  await delay(50)
+  const finalPlayhead = await window.webContents.executeJavaScript(`document.querySelector('.playhead-hit-area')?.getAttribute('aria-label') ?? ''`)
+  const playheadDragChanged = Boolean(initialPlayhead && playheadDispatched && initialPlayhead !== finalPlayhead)
   const report: RendererStartupReport = {
     didFinishLoad,
     rendererProcessAlive: !window.webContents.isDestroyed(),
