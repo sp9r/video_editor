@@ -148,6 +148,13 @@ const isNonRetryableExportError = (error: unknown): boolean => {
   ].some((phrase) => message.includes(phrase))
 }
 
+const assertSubtitleBurnInGraph = (plan: RenderPlan, graph: string): void => {
+  if (!plan.burnSubtitles || plan.subtitleCueCount === 0) return
+  if (!graph.includes(`ass=filename='${plan.assFileName}'`)) {
+    throw new Error('Subtitle burn-in is enabled but the render graph has no ASS filter')
+  }
+}
+
 const tryStatSameFile = async (left: string, right: string): Promise<boolean> => {
   if (resolve(left).toLowerCase() === resolve(right).toLowerCase()) return true
   try {
@@ -271,6 +278,22 @@ export class FfmpegService {
       await mkdir(workspacePath, { recursive: true })
       await writeFile(join(workspacePath, plan.assFileName), plan.ass, 'utf8')
       if (settings.exportSrt) await writeFile(join(workspacePath, 'captions.srt'), plan.srt, 'utf8')
+      const debugArtifacts = process.env.SPECTRA_KEEP_EXPORT_DEBUG === '1'
+      if (debugArtifacts) {
+        const debugSettings = {
+          ...settings,
+          burnSubtitles: plan.burnSubtitles,
+          subtitleCueCount: plan.subtitleCueCount,
+          subtitleIds: plan.subtitleIds,
+          assFileName: plan.assFileName,
+          assFilterExpected: plan.burnSubtitles && plan.subtitleCueCount > 0
+        }
+        await Promise.all([
+          writeFile(join(workspacePath, 'project-snapshot.json'), JSON.stringify(project, null, 2), 'utf8'),
+          writeFile(join(workspacePath, 'export-settings.json'), JSON.stringify(debugSettings, null, 2), 'utf8'),
+          writeFile(join(workspacePath, 'render.ffgraph'), buildRenderFilterGraph(plan, 'libx264'), 'utf8')
+        ])
+      }
 
       let fallbackReason: string | undefined
       const failures: string[] = []
@@ -300,6 +323,7 @@ export class FfmpegService {
             signal
           })
           const graph = buildRenderFilterGraph(plan, encoderId)
+          assertSubtitleBurnInGraph(plan, graph)
           await writeFile(filterGraphPath, graph, 'utf8')
           let latestRatio = 0
           const consumeProgress = createFfmpegProgressParser(plan.durationUs, (encodedUs) => {
@@ -401,7 +425,9 @@ export class FfmpegService {
       })
       throw error
     } finally {
-      if (workspacePath) await rm(workspacePath, { recursive: true, force: true }).catch(() => undefined)
+      if (workspacePath && process.env.SPECTRA_KEEP_EXPORT_DEBUG !== '1') {
+        await rm(workspacePath, { recursive: true, force: true }).catch(() => undefined)
+      }
     }
   }
 }

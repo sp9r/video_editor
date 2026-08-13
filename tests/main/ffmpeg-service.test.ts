@@ -142,6 +142,48 @@ describe('FFmpeg export service', () => {
     }
   })
 
+  it('keeps a diagnosable export workspace when subtitle debug mode is enabled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-export-debug-'))
+    const previous = process.env.SPECTRA_KEEP_EXPORT_DEBUG
+    process.env.SPECTRA_KEEP_EXPORT_DEBUG = '1'
+    try {
+      const project = await prepareProjectFiles(root)
+      const outputPath = join(root, 'debug.mp4')
+      const executor: ProcessExecutor = {
+        async run(request) {
+          if (request.args.includes('-version')) return success(request, 'ffmpeg version 6.1.1-test\n')
+          if (request.args.includes('-encoders')) return success(request, ' V....D libx264 CPU\n')
+          if (request.command === 'ffprobe') return success(request, validationJson)
+          if (request.args.includes('-progress')) {
+            request.onStdout?.('out_time_us=5000000\nprogress=end\n')
+            const temporaryPath = request.args.at(-1)
+            if (!temporaryPath) throw new Error('No output argument')
+            await writeFile(temporaryPath, 'debug-output')
+            return success(request)
+          }
+          return success(request)
+        }
+      }
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, {
+        executor,
+        platform: 'win32',
+        workspaceRoot: join(root, 'workspaces')
+      })
+      await (await service.startExport(project, { ...makeExportSettings(outputPath), encoderMode: 'software', exportSrt: false }, { jobId: 'debug-artifacts' })).result
+
+      const workspace = join(root, 'workspaces', 'export-debug-artifacts')
+      const settings = JSON.parse(await readFile(join(workspace, 'export-settings.json'), 'utf8')) as Record<string, unknown>
+      expect(settings).toMatchObject({ burnSubtitles: true, subtitleCueCount: 1, subtitleIds: ['caption-1'], assFilterExpected: true })
+      expect(await readFile(join(workspace, 'project-snapshot.json'), 'utf8')).toContain('字幕')
+      expect(await readFile(join(workspace, 'captions.ass'), 'utf8')).toContain('Style: Cue0')
+      expect(await readFile(join(workspace, 'render.ffgraph'), 'utf8')).toContain("ass=filename='captions.ass'")
+    } finally {
+      if (previous === undefined) delete process.env.SPECTRA_KEEP_EXPORT_DEBUG
+      else process.env.SPECTRA_KEEP_EXPORT_DEBUG = previous
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('does not retry another encoder for a non-recoverable disk failure', async () => {
     const root = await mkdtemp(join(tmpdir(), 'spectra-disk-full-'))
     try {
