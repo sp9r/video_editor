@@ -1,4 +1,5 @@
 import type { ProjectFile, SubtitleClip, SubtitleStyle } from '../../shared/types.js'
+import { wrapSubtitleText } from '../../shared/subtitle-layout.js'
 
 export interface SubtitleCue {
   clip: SubtitleClip
@@ -140,7 +141,7 @@ export const generateAss = (project: ProjectFile): string => {
   const header = [
     '[Script Info]',
     'ScriptType: v4.00+',
-    'WrapStyle: 0',
+    'WrapStyle: 2',
     'ScaledBorderAndShadow: yes',
     `PlayResX: ${width}`,
     `PlayResY: ${height}`,
@@ -159,7 +160,8 @@ export const generateAss = (project: ProjectFile): string => {
     const y = Math.round(height * clamp(clip.style.positionY, 0, 100) / 100)
     const override = animationOverride(clip, x, y)
     const blur = clamp(clip.style.shadowBlur, 0, 100)
-    const text = `{${override}\\blur${blur.toFixed(2)}}${escapeAssText(clip.text)}`
+    const wrapped = wrapSubtitleText(clip.text, clip.style, width)
+    const text = `{${override}\\blur${blur.toFixed(2)}}${escapeAssText(wrapped)}`
     return `Dialogue: ${layer},${assTime(start)},${assTime(end, true)},Cue${index},,0,0,0,,${text}`
   })
   return `${[...header, ...events].join('\n')}\n`

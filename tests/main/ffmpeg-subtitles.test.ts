@@ -34,6 +34,16 @@ describe('subtitle serialization', () => {
   it('escapes ASS control characters without losing Unicode', () => {
     expect(escapeAssText('A\\B{C}\n日本語')).toBe('A\\\\B\\{C\\}\\N日本語')
   })
+
+  it('uses the same conservative line wrapping policy as Preview', () => {
+    const project = makeProject()
+    const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+    if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+    subtitle.text = 'あ'.repeat(50)
+    const ass = generateAss(project)
+    expect(ass).toContain('WrapStyle: 2')
+    expect(ass).toMatch(/あ{20,}\\Nあ+/u)
+  })
 })
 
 describe('subtitle parsing', () => {

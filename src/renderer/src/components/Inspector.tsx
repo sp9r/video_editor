@@ -1,7 +1,7 @@
 ﻿import { Captions, Image as ImageIcon, SlidersHorizontal, Volume2 } from 'lucide-react'
 import type { AudioSettings, SubtitleClip, SubtitleStyle, TimelineClip, TransformSettings } from '../../../shared/types'
 import { findClip, useEditorStore } from '../store'
-import { EmptyState, Field, NumberField, Section, SelectField } from './Controls'
+import { Button, EmptyState, Field, NumberField, Section, SelectField } from './Controls'
 
 const numberValue = (value: string, fallback = 0): number => {
   const parsed = Number(value)
@@ -93,9 +93,10 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
         </Field>
       </Section>
       <Section title="文字スタイル">
-        <SelectField {...transaction} label="フォント" value={clip.style.fontFamily} onChange={(event) => patchStyle({ fontFamily: event.target.value })}>
-          <option>Noto Sans JP</option><option>Yu Gothic UI</option><option>Meiryo</option><option>Arial</option>
-        </SelectField>
+        <Field label="フォント">
+          <input {...transaction} list="subtitle-font-options" value={clip.style.fontFamily} onChange={(event) => patchStyle({ fontFamily: event.target.value })} />
+          <datalist id="subtitle-font-options"><option value="Noto Sans JP" /><option value="Yu Gothic UI" /><option value="Meiryo" /><option value="Arial" /></datalist>
+        </Field>
         <div className="field-grid">
           <NumberField {...transaction} label="サイズ" suffix="px" min={8} max={240} value={clip.style.fontSize} onChange={(event) => patchStyle({ fontSize: numberValue(event.target.value, 54) })} />
           <NumberField {...transaction} label="字間" suffix="px" min={-5} max={30} step={0.5} value={clip.style.letterSpacing} onChange={(event) => patchStyle({ letterSpacing: numberValue(event.target.value) })} />
@@ -115,7 +116,9 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
           <NumberField label="縁取り幅" suffix="px" min={0} max={20} value={clip.style.outlineWidth} onChange={(event) => patchStyle({ outlineWidth: numberValue(event.target.value) })} />
           <NumberField label="影ぼかし" suffix="px" min={0} max={40} value={clip.style.shadowBlur} onChange={(event) => patchStyle({ shadowBlur: numberValue(event.target.value) })} />
           <NumberField label="背景濃度" suffix="%" min={0} max={100} value={Math.round(clip.style.backgroundOpacity * 100)} onChange={(event) => patchStyle({ backgroundOpacity: numberValue(event.target.value) / 100 })} />
+          <NumberField label="字幕幅" suffix="%" min={70} max={85} value={clip.style.maxWidthPercent ?? 80} onChange={(event) => patchStyle({ maxWidthPercent: Math.min(85, Math.max(70, numberValue(event.target.value, 80))) })} />
         </div>
+        <Button className="subtle-button" onClick={() => useEditorStore.getState().applySubtitleStyleToAll(clip.id)}>この字幕のスタイルを全字幕へ適用</Button>
       </Section>
       <Section title="配置とアニメーション">
         <SelectField label="縦位置" value={clip.style.alignment} onChange={(event) => patchStyle({ alignment: event.target.value as SubtitleStyle['alignment'] })}>
