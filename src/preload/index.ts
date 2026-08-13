@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '../shared/ipc'
-import type { DesktopApi, ExportProgress, ExportSettings, ProjectFile } from '../shared/types'
+import type { DesktopApi, ExportProgress, ExportSettings, ProjectFile, WaveformRequest } from '../shared/types'
 
 const api: DesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
@@ -14,6 +14,7 @@ const api: DesktopApi = {
   relinkMedia: (assetId: string, expectedName: string) => ipcRenderer.invoke(IPC.mediaRelink, assetId, expectedName),
   importSubtitles: () => ipcRenderer.invoke(IPC.subtitlesImport),
   mediaUrl: (filePath: string) => `spectra-media://local/${encodeURIComponent(filePath)}`,
+  getWaveformPeaks: (request: WaveformRequest) => ipcRenderer.invoke(IPC.waveformPeaks, request),
   createPreviewPlan: (project: ProjectFile) => ipcRenderer.invoke(IPC.previewPlan, project),
   detectEncoders: (force = false) => ipcRenderer.invoke(IPC.encodersDetect, force),
   chooseExportPath: (defaultName: string) => ipcRenderer.invoke(IPC.exportChoosePath, defaultName),

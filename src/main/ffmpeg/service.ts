@@ -26,6 +26,8 @@ import {
   type RenderPlan
 } from './render-plan.js'
 import { generateSrt } from './subtitles.js'
+import { WaveformExtractor } from './waveform.js'
+import type { WaveformRequest } from '../../shared/types.js'
 
 export interface FfmpegServiceOptions {
   ffmpegPath?: string | null
@@ -160,6 +162,7 @@ export class FfmpegService {
   readonly paths: FfmpegPaths
   readonly executor: ProcessExecutor
   readonly detector: EncoderDetector
+  readonly waveform: WaveformExtractor
   readonly workspaceRoot: string
   readonly vaapiDevice?: string
   readonly #jobs = new Map<string, ActiveJob>()
@@ -174,6 +177,7 @@ export class FfmpegService {
       platform: options.platform,
       vaapiDevice: options.vaapiDevice
     })
+    this.waveform = new WaveformExtractor(paths, this.executor)
   }
 
   async detectEncoders(force = false): Promise<EncoderReport> {
@@ -186,6 +190,10 @@ export class FfmpegService {
 
   async probeMediaSafe(path: string): Promise<ProbeResult> {
     return await probeMediaFileSafe(this.paths, path, { executor: this.executor })
+  }
+
+  async getWaveformPeaks(request: WaveformRequest): Promise<number[]> {
+    return await this.waveform.getPeaks(request)
   }
 
   createRenderPlan(project: ProjectFile, settings: ExportSettings): RenderPlan {

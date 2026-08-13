@@ -187,6 +187,13 @@ export interface PreviewPlan {
   captions: PreviewPlanClip[]
 }
 
+export interface WaveformRequest {
+  mediaPath: string
+  sourceInUs: TimeUs
+  durationUs: TimeUs
+  peakCount: number
+}
+
 export interface ImportedSubtitleCue {
   startUs: TimeUs
   endUs: TimeUs
@@ -287,6 +294,7 @@ export interface DesktopApi {
   relinkMedia(assetId: string, expectedName: string): Promise<ProbeResult | null>
   importSubtitles(): Promise<ImportedSubtitleCue[] | null>
   mediaUrl(path: string): string
+  getWaveformPeaks(request: WaveformRequest): Promise<number[]>
   createPreviewPlan(project: ProjectFile): Promise<PreviewPlan>
   detectEncoders(force?: boolean): Promise<EncoderReport>
   chooseExportPath(defaultName: string): Promise<string | null>

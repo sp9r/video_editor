@@ -5,42 +5,19 @@ const PEAK_COUNT = 96
 const cache = new Map<string, Promise<number[]>>()
 
 const waveformKey = (asset: MediaAsset, clip: TimelineClip): string =>
-  [asset.id, asset.path, clip.sourceInUs, clip.durationUs, PEAK_COUNT].join('|')
-
-const decodePeaks = async (asset: MediaAsset, clip: TimelineClip): Promise<number[]> => {
-  if (!window.spectra || asset.offline || !asset.hasAudio) return []
-  const response = await fetch(window.spectra.mediaUrl(asset.path))
-  if (!response.ok) throw new Error(`waveform media request failed: ${response.status}`)
-  const data = await response.arrayBuffer()
-  const AudioContextClass = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-  if (!AudioContextClass) return []
-  const context = new AudioContextClass()
-  try {
-    const buffer = await context.decodeAudioData(data.slice(0))
-    const start = Math.min(buffer.length, Math.max(0, Math.floor(clip.sourceInUs / 1_000_000 * buffer.sampleRate)))
-    const end = Math.min(buffer.length, Math.max(start, Math.ceil((clip.sourceInUs + clip.durationUs) / 1_000_000 * buffer.sampleRate)))
-    const span = Math.max(1, end - start)
-    const peaks = Array.from({ length: PEAK_COUNT }, (_, index) => {
-      const from = start + Math.floor(span * index / PEAK_COUNT)
-      const to = Math.max(from + 1, start + Math.floor(span * (index + 1) / PEAK_COUNT))
-      let peak = 0
-      for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
-        const samples = buffer.getChannelData(channel)
-        for (let sample = from; sample < Math.min(to, end); sample += 1) peak = Math.max(peak, Math.abs(samples[sample] ?? 0))
-      }
-      return Math.min(1, peak)
-    })
-    return peaks
-  } finally {
-    await context.close()
-  }
-}
+  [asset.path, clip.sourceInUs, clip.durationUs, PEAK_COUNT].join('|')
 
 const loadPeaks = (asset: MediaAsset, clip: TimelineClip): Promise<number[]> => {
+  if (!window.spectra) return Promise.resolve([])
   const key = waveformKey(asset, clip)
   const existing = cache.get(key)
   if (existing) return existing
-  const request = decodePeaks(asset, clip).catch((error) => {
+  const request = window.spectra.getWaveformPeaks({
+    mediaPath: asset.path,
+    sourceInUs: clip.sourceInUs,
+    durationUs: clip.durationUs,
+    peakCount: PEAK_COUNT
+  }).catch((error: unknown) => {
     cache.delete(key)
     throw error
   })
@@ -56,7 +33,8 @@ export function Waveform({ asset, clip }: { asset?: MediaAsset; clip: Extract<Ti
     if (!asset || !asset.hasAudio || asset.offline) return () => { active = false }
     void loadPeaks(asset, clip).then((next) => {
       if (active) setPeaks(next)
-    }).catch(() => {
+    }).catch((error: unknown) => {
+      console.warn('[waveform] unable to load peaks', error)
       if (active) setPeaks([])
     })
     return () => { active = false }

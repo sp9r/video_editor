@@ -8,6 +8,7 @@ export interface CommandRequest {
   timeoutMs?: number
   maxOutputBytes?: number
   onStdout?: (chunk: string) => void
+  onStdoutBytes?: (chunk: Buffer) => void
   onStderr?: (chunk: string) => void
 }
 
@@ -103,6 +104,7 @@ export const executeProcess = async (request: CommandRequest): Promise<CommandRe
       }
       const chunk = data.toString('utf8')
       if (target === 'stdout') {
+        request.onStdoutBytes?.(data)
         stdout += chunk
         request.onStdout?.(chunk)
       } else {

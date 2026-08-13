@@ -126,6 +126,11 @@ const registerIpcHandlers = (): void => {
     })
   })
 
+  ipcMain.handle(IPC.waveformPeaks, async (event, request) => {
+    assertTrustedSender(event)
+    return await requireService().getWaveformPeaks(request)
+  })
+
   ipcMain.handle(IPC.subtitlesImport, async (event) => {
     assertTrustedSender(event)
     const response = await dialog.showOpenDialog({
