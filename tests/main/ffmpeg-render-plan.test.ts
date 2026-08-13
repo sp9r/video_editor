@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildRenderCommandArgs,
   buildRenderFilterGraph,
+  createPreviewPlan,
   createRenderPlan,
   ffmpegSupportsFileBackedOptions
 } from '../../src/main/ffmpeg/render-plan.js'
@@ -108,5 +109,16 @@ describe('FFmpeg render planning', () => {
     const disabledPlan = createRenderPlan(disabled, makeExportSettings(join(process.cwd(), 'out.mp4')))
     expect(disabledPlan.inputs.filter((input) => input.useAudio)).toHaveLength(0)
     expect(disabledPlan.graphStatements.join('\n')).toContain('anullsrc')
+  })
+
+  it('uses one shared layer order for Preview and Final and exposes preview audio settings', () => {
+    const project = makeProject()
+    const settings = makeExportSettings(join(process.cwd(), 'out.mp4'))
+    const preview = createPreviewPlan(project, settings)
+    const final = createRenderPlan(project, settings)
+    expect(preview.videoClips.map((clip) => clip.clipId)).toEqual(['clip-video', 'clip-image'])
+    expect(final.graphStatements.findIndex((statement) => statement.includes('[1:v:0]')))
+      .toBeLessThan(final.graphStatements.findIndex((statement) => statement.includes('[0:v:0]')))
+    expect(preview.audioClips).toEqual([expect.objectContaining({ clipId: 'clip-video', volumeDb: -3, pan: 0 })])
   })
 })

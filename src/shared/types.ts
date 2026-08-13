@@ -70,6 +70,8 @@ export interface SubtitleStyle {
   alignment: 'top' | 'middle' | 'bottom'
   positionX: number
   positionY: number
+  /** Maximum line box width as a percentage of the sequence width. */
+  maxWidthPercent: number
   animation: 'none' | 'fade' | 'pop' | 'slide-up' | 'typewriter'
   animationDurationUs: TimeUs
 }
@@ -171,6 +173,8 @@ export interface PreviewPlanClip {
   enabled: boolean
   sourceMediaId?: string
   text?: string
+  volumeDb?: number
+  pan?: number
 }
 
 export interface PreviewPlan {
@@ -325,6 +329,7 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   alignment: 'bottom',
   positionX: 50,
   positionY: 86,
+  maxWidthPercent: 80,
   animation: 'fade',
   animationDurationUs: 180_000
 }

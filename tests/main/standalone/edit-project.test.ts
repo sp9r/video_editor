@@ -202,6 +202,8 @@ describe('standalone edit_project.v1 loader', () => {
       expect(preview.durationUs).toBe(finalPlan.durationUs)
       expect(preview.videoClips.map((clip) => clip.clipId)).toEqual(['video_1', 'video_2'])
       expect(preview.audioClips.map((clip) => clip.clipId)).toEqual(['audio_1'])
+      expect(preview.audioClips).toHaveLength(1)
+      expect(preview.audioClips[0]).toMatchObject({ clipId: 'audio_1', volumeDb: 0 })
       expect(preview.captions.map((caption) => caption.clipId)).toEqual(['caption_1'])
       expect(finalPlan.inputs.filter((input) => input.useAudio).map((input) => input.clipId)).toEqual(['audio_1'])
       expect(finalPlan.graphStatements.join('\n')).toContain('amix=inputs=1')
@@ -231,6 +233,9 @@ describe('standalone edit_project.v1 loader', () => {
       const videoOnlyResult = await loadPlan(videoOnly)
       expect(videoOnlyResult.plan.inputs.filter((input) => input.useAudio)).toHaveLength(0)
       expect(videoOnlyResult.plan.graphStatements.join('\n')).toContain('anullsrc')
+      const videoOnlyPath = await writeProject(root, videoOnly)
+      const videoOnlyPreview = createPreviewPlan((await loadEditProject(videoOnlyPath)).project, settings)
+      expect(videoOnlyPreview.audioClips).toHaveLength(0)
 
       const disabledAudio = makeDocument()
       const disabledTrack = disabledAudio.tracks.find((track) => track.id === 'A1')

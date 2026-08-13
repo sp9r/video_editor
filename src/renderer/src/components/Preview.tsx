@@ -1,26 +1,95 @@
-﻿import { useEffect, useMemo, useRef } from 'react'
-import { useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-react'
 import { formatTimecode, projectDurationUs } from '../../../shared/project'
-import type { MediaAsset, PreviewPlan, SubtitleClip, TimelineClip, VideoClip } from '../../../shared/types'
+import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
+import { subtitleMaxWidthPercent, wrapSubtitleText } from '../../../shared/subtitle-layout'
+import type { MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip } from '../../../shared/types'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
 
-const activeAt = (clip: TimelineClip, timeUs: number): boolean =>
+const activeAt = (clip: { startUs: number; durationUs: number; enabled: boolean }, timeUs: number): boolean =>
   clip.enabled && clip.startUs <= timeUs && clip.startUs + clip.durationUs > timeUs
 
-const frameGradient = (asset?: MediaAsset): string => {
-  if (!asset) return 'linear-gradient(145deg, #1b222b, #0d1015)'
-  if (asset.id.includes('cafe')) return 'linear-gradient(135deg, #6b402a 0%, #c69866 43%, #33473d 44%, #16251f 100%)'
-  return 'linear-gradient(155deg, #9dd8d2 0%, #c9e5da 34%, #65837d 35%, #2b3b3b 51%, #cd9d6a 52%, #6f4836 100%)'
+const dbToLinear = (value = 0): number => 10 ** (Math.max(-96, Math.min(24, value)) / 20)
+
+function PreviewVisual({
+  clip,
+  asset,
+  mediaSource,
+  playheadUs,
+  playing,
+  onSelect
+}: {
+  clip: VisualClip
+  asset?: MediaAsset
+  mediaSource: string | null
+  playheadUs: number
+  playing: boolean
+  onSelect: () => void
+}): React.JSX.Element {
+  const mediaRef = useRef<HTMLVideoElement | null>(null)
+  useEffect(() => {
+    if (clip.kind !== 'video' || !mediaRef.current || !mediaSource) return
+    const media = mediaRef.current
+    const expectedSeconds = (clip.sourceInUs + Math.max(0, playheadUs - clip.startUs)) / 1_000_000
+    if (Math.abs(media.currentTime - expectedSeconds) > 0.12) media.currentTime = expectedSeconds
+    if (playing) void media.play().catch(() => undefined)
+    else media.pause()
+  }, [clip, mediaSource, playheadUs, playing])
+
+  return (
+    <button
+      type="button"
+      className="preview-visual"
+      onClick={onSelect}
+      style={{
+        transform: `translate(${clip.transform.positionX}px, ${clip.transform.positionY}px) rotate(${clip.transform.rotation}deg) scale(${clip.transform.scale})`,
+        opacity: clip.transform.opacity,
+        clipPath: `inset(${clip.transform.crop.top * 100}% ${clip.transform.crop.right * 100}% ${clip.transform.crop.bottom * 100}% ${clip.transform.crop.left * 100}%)`
+      }}
+      aria-label={`${clip.name}を選択`}
+    >
+      {mediaSource && asset?.kind === 'video' ? (
+        <video
+          ref={mediaRef}
+          key={asset.id}
+          className="preview-media"
+          src={mediaSource}
+          muted
+          playsInline
+          preload="metadata"
+          aria-label={asset.name}
+        />
+      ) : mediaSource && asset?.kind === 'image' ? (
+        <img className="preview-media" src={mediaSource} alt={asset.name} />
+      ) : (
+        <span className="preview-visual-placeholder">{asset?.name ?? clip.name}</span>
+      )}
+    </button>
+  )
+}
+
+function PreviewAudio({
+  item,
+  asset,
+  elementRef
+}: {
+  item: PreviewPlanClip
+  asset?: MediaAsset
+  elementRef: (element: HTMLAudioElement | null) => void
+}): React.JSX.Element | null {
+  if (!asset || asset.offline || !window.spectra) return null
+  return <audio ref={elementRef} data-clip-id={item.clipId} src={window.spectra.mediaUrl(asset.path)} preload="auto" />
 }
 
 export default function Preview(): React.JSX.Element {
   const { project, playheadUs, setPlayhead, playing, setPlaying, selectClip } = useEditorStore()
   const [renderPlan, setRenderPlan] = useState<PreviewPlan | null>(null)
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
   const requestRef = useRef<number | null>(null)
   const lastFrameRef = useRef<number>(0)
-  const mediaRef = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLDivElement | null>(null)
+  const audioRefs = useRef(new Map<string, HTMLAudioElement>())
   const durationUs = Math.max(renderPlan?.durationUs ?? projectDurationUs(project), 1_000_000)
 
   useEffect(() => {
@@ -34,6 +103,16 @@ export default function Preview(): React.JSX.Element {
       .catch(() => { if (active) setRenderPlan(null) })
     return () => { active = false }
   }, [project])
+
+  useLayoutEffect(() => {
+    const element = canvasRef.current
+    if (!element) return
+    const update = (): void => setViewportSize({ width: element.clientWidth, height: element.clientHeight })
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     if (!playing) {
@@ -62,30 +141,46 @@ export default function Preview(): React.JSX.Element {
     }
   }, [playing, renderPlan?.durationUs])
 
-  const active = useMemo(() => {
-    const plannedIds = renderPlan
-      ? new Set([...renderPlan.videoClips, ...renderPlan.captions].map((clip) => clip.clipId))
-      : null
-    const clips = project.tracks
-      .filter((track) => !track.hidden && !track.muted)
-      .flatMap((track) => track.clips.filter((clip) => activeAt(clip, playheadUs) && (!plannedIds || plannedIds.has(clip.id))))
-    return {
-      visuals: clips.filter((clip): clip is VideoClip | Extract<TimelineClip, { kind: 'image' }> => clip.kind === 'video' || clip.kind === 'image'),
-      subtitles: clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle')
-    }
-  }, [project, playheadUs, renderPlan])
-  const baseVisual = active.visuals.at(-1)
-  const asset = baseVisual && 'assetId' in baseVisual ? project.media.find((item) => item.id === baseVisual.assetId) : undefined
-  const mediaSource = asset && !asset.offline && window.spectra ? window.spectra.mediaUrl(asset.path) : null
+  const plannedVideoIds = renderPlan ? new Set(renderPlan.videoClips.map((clip) => clip.clipId)) : null
+  const plannedCaptionIds = renderPlan ? new Set(renderPlan.captions.map((clip) => clip.clipId)) : null
+  const visuals = useMemo(() => visualLayerOrder(project)
+    .map(({ clip }) => clip)
+    .filter((clip) => activeAt(clip, playheadUs) && (!plannedVideoIds || plannedVideoIds.has(clip.id))), [playheadUs, plannedVideoIds, project])
+  const subtitles = useMemo(() => project.tracks
+    .filter((track) => track.kind === 'subtitle' && !track.hidden && !track.muted)
+    .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && activeAt(clip, playheadUs) && (!plannedCaptionIds || plannedCaptionIds.has(clip.id)))), [plannedCaptionIds, playheadUs, project])
+  const scale = viewportSize.width > 0 && viewportSize.height > 0
+    ? Math.min(viewportSize.width / project.sequence.width, viewportSize.height / project.sequence.height)
+    : 1
 
   useEffect(() => {
-    const media = mediaRef.current
-    if (!media || !baseVisual || baseVisual.kind !== 'video') return
-    const expectedSeconds = (baseVisual.sourceInUs + Math.max(0, playheadUs - baseVisual.startUs)) / 1_000_000
-    if (Math.abs(media.currentTime - expectedSeconds) > 0.12) media.currentTime = expectedSeconds
-    if (playing) void media.play().catch(() => undefined)
-    else media.pause()
-  }, [baseVisual, playheadUs, playing])
+    const activeIds = new Set<string>()
+    for (const item of renderPlan?.audioClips ?? []) {
+      const audio = audioRefs.current.get(item.clipId)
+      if (!audio) continue
+      const asset = item.sourceMediaId ? project.media.find((media) => media.id === item.sourceMediaId) : undefined
+      if (!asset || asset.offline) continue
+      audio.volume = dbToLinear(item.volumeDb)
+      const active = activeAt(item, playheadUs)
+      if (!active) {
+        audio.pause()
+        continue
+      }
+      activeIds.add(item.clipId)
+      const expectedSeconds = (item.sourceInUs + playheadUs - item.startUs) / 1_000_000
+      if (Math.abs(audio.currentTime - expectedSeconds) > 0.12 || !Number.isFinite(audio.currentTime)) audio.currentTime = Math.max(0, expectedSeconds)
+      if (playing) void audio.play().catch(() => undefined)
+      else audio.pause()
+    }
+    for (const [clipId, audio] of audioRefs.current) {
+      if (!activeIds.has(clipId)) audio.pause()
+    }
+  }, [playheadUs, playing, project, renderPlan])
+
+  const setAudioRef = (clipId: string) => (element: HTMLAudioElement | null): void => {
+    if (element) audioRefs.current.set(clipId, element)
+    else audioRefs.current.delete(clipId)
+  }
 
   return (
     <section className="viewer-panel panel" aria-label="プログラムモニター">
@@ -95,65 +190,59 @@ export default function Preview(): React.JSX.Element {
         <span className="viewer-quality"><i />プレビュー品質: 1/2</span>
       </header>
       <div className="viewer-stage">
-        <div className="viewer-canvas" style={{ background: project.sequence.backgroundColor }}>
-          {baseVisual ? (
-            <button
-              type="button"
-              className="composite-frame"
-              onClick={() => selectClip(baseVisual.id)}
-              style={{
-                backgroundImage: frameGradient(asset),
-                transform: `translate(${baseVisual.transform.positionX * 0.15}px, ${baseVisual.transform.positionY * 0.15}px) rotate(${baseVisual.transform.rotation}deg) scale(${baseVisual.transform.scale})`,
-                opacity: baseVisual.transform.opacity,
-                clipPath: `inset(${baseVisual.transform.crop.top * 100}% ${baseVisual.transform.crop.right * 100}% ${baseVisual.transform.crop.bottom * 100}% ${baseVisual.transform.crop.left * 100}%)`
-              }}
-              aria-label={`${baseVisual.name}を選択`}
-            >
-              {mediaSource && asset?.kind === 'video' ? (
-                <video
-                  ref={mediaRef}
-                  key={asset.id}
-                  className="preview-media"
-                  src={mediaSource}
-                  muted
-                  playsInline
-                  preload="metadata"
-                  aria-label={asset.name}
-                />
-              ) : mediaSource && asset?.kind === 'image' ? (
-                <img className="preview-media" src={mediaSource} alt={asset.name} />
-              ) : null}
-              <span className="frame-skyline" aria-hidden="true"><i /><i /><i /><i /><i /></span>
-              <span className="frame-label">{asset?.name}</span>
-            </button>
-          ) : (
-            <div className="viewer-placeholder"><Play size={34} /><span>再生位置に映像がありません</span></div>
-          )}
-          <div className="safe-guides" aria-hidden="true"><i /></div>
-          {active.subtitles.map((subtitle) => (
-            <button
-              type="button"
-              key={subtitle.id}
-              className={`preview-subtitle subtitle-${subtitle.style.animation}`}
-              onClick={() => selectClip(subtitle.id)}
-              style={{
-                left: `${subtitle.style.positionX}%`,
-                top: `${subtitle.style.positionY}%`,
-                color: subtitle.style.color,
-                fontFamily: subtitle.style.fontFamily,
-                fontSize: `${Math.max(12, subtitle.style.fontSize * 0.55)}px`,
-                fontWeight: subtitle.style.bold ? 700 : 400,
-                fontStyle: subtitle.style.italic ? 'italic' : 'normal',
-                letterSpacing: `${subtitle.style.letterSpacing}px`,
-                lineHeight: subtitle.style.lineHeight,
-                WebkitTextStroke: `${subtitle.style.outlineWidth * 0.55}px ${subtitle.style.outlineColor}`,
-                textShadow: `0 2px ${subtitle.style.shadowBlur}px ${subtitle.style.shadowColor}`,
-                background: `color-mix(in srgb, ${subtitle.style.backgroundColor} ${subtitle.style.backgroundOpacity * 100}%, transparent)`
-              }}
-            >
-              {subtitle.text}
-            </button>
-          ))}
+        <div ref={canvasRef} className="viewer-canvas" style={{ background: project.sequence.backgroundColor, aspectRatio: `${project.sequence.width} / ${project.sequence.height}` }}>
+          <div
+            className="preview-scene"
+            style={{
+              width: project.sequence.width,
+              height: project.sequence.height,
+              transform: `translate(-50%, -50%) scale(${scale})`
+            }}
+          >
+            {visuals.map((clip) => {
+              const asset = 'assetId' in clip ? project.media.find((item) => item.id === clip.assetId) : undefined
+              const mediaSource = asset && !asset.offline && window.spectra ? window.spectra.mediaUrl(asset.path) : null
+              return <PreviewVisual key={clip.id} clip={clip} asset={asset} mediaSource={mediaSource} playheadUs={playheadUs} playing={playing} onSelect={() => selectClip(clip.id)} />
+            })}
+            {visuals.length === 0 && <div className="viewer-placeholder"><Play size={34} /><span>再生位置に映像がありません</span></div>}
+            <div className="safe-guides" aria-hidden="true"><i /></div>
+            {subtitles.map((subtitle) => (
+              <button
+                type="button"
+                key={subtitle.id}
+                className={`preview-subtitle subtitle-${subtitle.style.animation}`}
+                onClick={() => selectClip(subtitle.id)}
+                style={{
+                  left: `${subtitle.style.positionX}%`,
+                  top: `${subtitle.style.positionY}%`,
+                  width: `${subtitleMaxWidthPercent(subtitle.style)}%`,
+                  color: subtitle.style.color,
+                  fontFamily: subtitle.style.fontFamily,
+                  fontSize: `${subtitle.style.fontSize}px`,
+                  fontWeight: subtitle.style.bold ? 700 : 400,
+                  fontStyle: subtitle.style.italic ? 'italic' : 'normal',
+                  letterSpacing: `${subtitle.style.letterSpacing}px`,
+                  lineHeight: subtitle.style.lineHeight,
+                  WebkitTextStroke: `${subtitle.style.outlineWidth}px ${subtitle.style.outlineColor}`,
+                  paintOrder: 'stroke fill',
+                  textShadow: `0 2px ${subtitle.style.shadowBlur}px ${subtitle.style.shadowColor}`,
+                  background: `color-mix(in srgb, ${subtitle.style.backgroundColor} ${subtitle.style.backgroundOpacity * 100}%, transparent)`
+                }}
+              >
+                {wrapSubtitleText(subtitle.text, subtitle.style, project.sequence.width)}
+              </button>
+            ))}
+          </div>
+          <div className="preview-audio-pool" aria-hidden="true">
+            {(renderPlan?.audioClips ?? []).map((item) => (
+              <PreviewAudio
+                key={item.clipId}
+                item={item}
+                asset={item.sourceMediaId ? project.media.find((asset) => asset.id === item.sourceMediaId) : undefined}
+                elementRef={setAudioRef(item.clipId)}
+              />
+            ))}
+          </div>
         </div>
       </div>
       <div className="transport">

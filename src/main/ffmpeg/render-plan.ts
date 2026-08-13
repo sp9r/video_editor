@@ -16,6 +16,7 @@ import {
   type H264EncoderId
 } from './encoders.js'
 import { generateAss, generateSrt } from './subtitles.js'
+import { visualLayerOrder } from '../../shared/render-order.js'
 
 export interface RenderInput {
   index: number
@@ -260,9 +261,10 @@ export const createRenderPlan = (project: ProjectFile, settings: ExportSettings)
     `color=c=${safeBackgroundColor(project.sequence.backgroundColor)}:s=${width}x${height}:r=${fps}:d=${seconds(durationUs)},format=rgba[canvas]`
   ]
   let currentVideo = 'canvas'
-  const orderedVisuals = visualItems.sort((left, right) =>
-    right.trackIndex - left.trackIndex || left.clip.startUs - right.clip.startUs
-  )
+  const visualInputById = new Map(visualItems.map((item) => [item.clip.id, item] as const))
+  const orderedVisuals = visualLayerOrder(project)
+    .map(({ clip }) => visualInputById.get(clip.id))
+    .filter((item): item is (typeof visualItems)[number] => item !== undefined)
   orderedVisuals.forEach(({ clip, input }, index) => {
     const sourceLabel = `visual${index}`
     const nextLabel = `composite${index}`
@@ -337,7 +339,13 @@ export const createPreviewPlan = (project: ProjectFile, settings: ExportSettings
       videoClips.push({ ...common, kind: 'video', sourceMediaId: clip.assetId })
     }
     if (input.useAudio && (clip.kind === 'video' || clip.kind === 'audio')) {
-      audioClips.push({ ...common, kind: 'audio', sourceMediaId: clip.assetId })
+      audioClips.push({
+        ...common,
+        kind: 'audio',
+        sourceMediaId: clip.assetId,
+        volumeDb: clip.audio.volumeDb,
+        pan: clip.audio.pan
+      })
     }
   }
   for (const track of project.tracks) {
@@ -353,7 +361,9 @@ export const createPreviewPlan = (project: ProjectFile, settings: ExportSettings
     width: renderPlan.width,
     height: renderPlan.height,
     frameRate: { numerator: renderPlan.frameRateNumerator, denominator: renderPlan.frameRateDenominator },
-    videoClips: videoClips.sort((left, right) => left.startUs - right.startUs),
+    videoClips: visualLayerOrder(project)
+      .map(({ clip }) => videoClips.find((item) => item.clipId === clip.id))
+      .filter((item): item is PreviewPlan['videoClips'][number] => item !== undefined),
     audioClips: audioClips.sort((left, right) => left.startUs - right.startUs),
     captions: captions.sort((left, right) => left.startUs - right.startUs)
   }
