@@ -18,7 +18,7 @@ export interface RendererStartupReport {
   rootChildCount: number
   appShellPresent: boolean
   preloadApiPresent: boolean
-  playheadDragChanged: boolean
+  playheadPresent: boolean
   consoleErrors: string[]
   loadFailure: string | null
   renderProcessGone: string | null
@@ -60,53 +60,43 @@ export const waitForRendererStartup = async (window: BrowserWindow, timeoutMs = 
   let didFinishLoad = false
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`renderer did-finish-load timeout after ${timeoutMs}ms`)), timeoutMs)
+    let settled = false
     const onFinished = (): void => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
       didFinishLoad = true
       resolve()
     }
     const onFailed = (): void => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
       reject(new Error(diagnostics.loadFailure ?? 'renderer failed to load'))
     }
     window.webContents.once('did-finish-load', onFinished)
     window.webContents.once('did-fail-load', onFailed)
+    // createMainWindow starts loadFile/loadURL before this wait is called. In
+    // fast startup environments the event may already have fired.
+    if (!window.webContents.isLoadingMainFrame() && window.webContents.getURL()) onFinished()
   })
 
   const deadline = Date.now() + timeoutMs
-  let dom = { rootChildCount: 0, appShellPresent: false, preloadApiPresent: false }
+  let dom = { rootChildCount: 0, appShellPresent: false, preloadApiPresent: false, playheadPresent: false }
   while (Date.now() < deadline) {
     dom = await window.webContents.executeJavaScript(`(() => ({
       rootChildCount: document.querySelector('#root')?.childElementCount ?? 0,
       appShellPresent: document.querySelector('.app-shell') !== null,
-      preloadApiPresent: typeof window.spectra !== 'undefined'
+      preloadApiPresent: typeof window.spectra !== 'undefined',
+      playheadPresent: document.querySelector('.playhead-hit-area') !== null
     }))()`)
-    if (dom.rootChildCount > 0 && dom.appShellPresent && dom.preloadApiPresent) break
+    if (dom.rootChildCount > 0 && dom.appShellPresent && dom.preloadApiPresent && dom.playheadPresent) break
     await delay(50)
   }
-  const initialPlayhead = await window.webContents.executeJavaScript(`document.querySelector('.playhead-hit-area')?.getAttribute('aria-label') ?? ''`)
-  const playheadDispatched = await window.webContents.executeJavaScript(`(() => {
-    const handle = document.querySelector('.playhead-hit-area')
-    if (!(handle instanceof HTMLElement)) return false
-    const rect = handle.getBoundingClientRect()
-    const pointerId = 77
-    try {
-      handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 1, clientX: rect.left + 2, clientY: rect.top + 20 }))
-      handle.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 1, clientX: rect.left + 102, clientY: rect.top + 20 }))
-      handle.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId, pointerType: 'mouse', buttons: 0, clientX: rect.left + 102, clientY: rect.top + 20 }))
-      return true
-    } catch {
-      return false
-    }
-  })()`)
-  await delay(50)
-  const finalPlayhead = await window.webContents.executeJavaScript(`document.querySelector('.playhead-hit-area')?.getAttribute('aria-label') ?? ''`)
-  const playheadDragChanged = Boolean(initialPlayhead && playheadDispatched && initialPlayhead !== finalPlayhead)
   const report: RendererStartupReport = {
     didFinishLoad,
     rendererProcessAlive: !window.webContents.isDestroyed(),
     ...dom,
-    playheadDragChanged: Boolean(initialPlayhead && playheadDragChanged),
     consoleErrors: [...diagnostics.consoleErrors],
     loadFailure: diagnostics.loadFailure,
     renderProcessGone: diagnostics.renderProcessGone

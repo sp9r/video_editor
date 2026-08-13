@@ -117,7 +117,7 @@ filter graphはUTF-8一時fileへ保存する。同梱FFmpeg 6.xでは`-filter_c
 
 subtitle trackのうち、enabledかつ非hidden・非mutedのclipをtimeline順に出力する。
 
-- ASS: font、size、color、outline、background、bold、italic、letter spacing、alignment、positionを変換
+- ASS: font、size、color、outline、background、bold、italic、letter spacing、alignment、positionを変換。background、shadow、main glyphは別style/eventに分離し、shadowBlurをmain glyphの`\\blur`へ直接流さない
 - animation: `fade`、`pop`、`slide-up`をASS override tagへ変換
 - `typewriter`: Unicode graphemeを壊さないfadeへ安全に近似
 - text: backslash、波括弧、改行をescapeし、ASS command注入を防止

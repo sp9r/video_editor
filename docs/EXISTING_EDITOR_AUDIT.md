@@ -116,3 +116,10 @@ Phase 4で再利用した既存コードも完成品とは扱わず、domain tes
 - 修正: Viteへ`base: './'`を指定し、HTMLが`./assets/...`を参照するようにした。`src/renderer/dist/`はruntimeから参照されないtracked stale generated outputだったため削除し、`.gitignore`へ追加した。runtimeのsource of truthは`src/renderer`とbuild後の`out/renderer`である。
 - `scripts/electron-startup-smoke.mjs`を追加。asset referenceと実ファイルを検査し、Electronの`did-finish-load`、renderer process、DOM `#root` child、`.app-shell`、preload `window.spectra`、console error、`did-fail-load`、`render-process-gone`をgateする。
 - 短時間の`npm.cmd run preview`起動も確認した。GUI視覚確認はこの自動操作環境では未実施とし、DOM startup smokeの結果だけを受入結果とする。
+
+## Phase 4.10 subtitle Final style parity
+
+- 旧ASS経路は`shadowBlur`をstyleの`Shadow`とDialogueの`\\blur`へ流し、backgroundの`BackColour`とshadowの意味も兼用していた。これによりshadow変更がmain glyph／outlineをぼかし、Previewとの差が大きくなっていた。
+- Final ASSはmain glyph、shadow、backgroundを分離した。shadowはduplicate eventによるbounded offset近似とし、main eventへ`\\blur`を付与しない。main text、font、size、position、wrap、color、outlineはstyle変更から独立して保持する。
+- Render Planはsubtitle cue count／IDを持ち、字幕付き`burnSubtitles=true`ではASS filterの存在を検査する。`SPECTRA_KEEP_EXPORT_DEBUG=1`ではproject snapshot、ASS、filtergraph、export settingsを保持する。
+- Electron startup smokeはrenderer内のsynthetic pointer dragで停止することがあったため、startup gateではplayhead DOM要素の存在を確認し、実操作は既存の編集テスト／manual acceptanceの対象として分離した。load、DOM、preload、renderer diagnosticsは維持する。
