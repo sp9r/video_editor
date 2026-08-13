@@ -3,6 +3,22 @@
 更新日: 2026-08-12  
 対象: Spectra Video Studio 0.1.x
 
+## clip_automationとの境界（Phase 3）
+
+video_editorは`clip_automation`の内部moduleをimportせず、version付き`edit_project.v1`だけを入力契約として扱う。`edit_project.json`単体または動画ファイルを開けることを前提にし、source mediaのrelative pathはJSON自身のparent directoryから解決する。`run_dir`、現在のworking directory、呼び出し元のpipeline状態には依存しない。
+
+```mermaid
+flowchart LR
+  CA["clip_automation\nPhase 2 planning"] --> EP["edit_project.v1\nJSON contract"]
+  EP --> L["independent validator / loader"]
+  L --> PM["video_editor Project Model"]
+  PM --> RP["shared Render Plan"]
+  RP --> PV["minimal Preview"]
+  RP --> HR["headless / final FFmpeg render"]
+```
+
+`caption_project.v2.json`と`transcript_words.json`は字幕・transcriptモデルとしてclip_automation側に残り、video_editorへは変換済みの`edit_project.v1`だけを渡す。既存`.spectra` Project Model、Timeline、Undo / Redoは互換・fallbackとして維持し、Phase 3ではmanual editingや旧pipeline統合を追加しない。
+
 ## 設計目標
 
 1. Windows / macOS / Linuxへ移植できること。
@@ -105,4 +121,3 @@ AIはProject JSONを直接書き換えない。Providerへ渡すのはローカ�
 - FFmpeg binaryはtarget OS上で依存導入して同梱する。Windows上でmacOS完成物を正しく生成する運用は採らない。
 - 高度なカラー管理、マルチカム、追跡、モーショングラフィックス、共同編集は次期以降。
 - Premiere Pro / DaVinci Resolve / Final Cut Proの画面・ロゴ・素材は複製しない。
-

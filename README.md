@@ -43,13 +43,29 @@ npm.cmd run build
 npm.cmd run preview
 ```
 
+## `edit_project.v1` standalone入口
+
+`clip_automation`との正式な境界は、`edit_project.v1`のJSONです。source mediaの相対pathは、常に`edit_project.json`の親directoryを基準に解決され、指定されたSHA-256があれば読み込み時に検証されます。`clip_automation`の実装やrun directoryは必要ありません。
+
+UIを起動せずに検証・probe・Render Plan確認・書き出しを行えます。
+
+```powershell
+npm.cmd run build
+node scripts/video-editor.mjs validate path\to\edit_project.json
+node scripts/video-editor.mjs probe path\to\edit_project.json
+node scripts/video-editor.mjs plan path\to\edit_project.json
+node scripts/video-editor.mjs render path\to\edit_project.json -o path\to\output.mp4
+```
+
+PreviewとFinalは、既存のProject Modelから同じRender Planを生成した後に分岐します。Phase 3では、手動trim、split、drag、Undo / Redoなどの編集機能を追加せず、既存の`.spectra` editorは互換・fallbackとして残します。
+
 ## テスト
 
 ```powershell
 npm.cmd run check
 ```
 
-2026-08-12の最新確認では、型検査成功、12テストファイル／54テスト成功です。同梱FFmpegを実際に起動し、lossless fixture生成からクロップ・画像・音声・日本語字幕を含むH.264/AAC MP4の完成検証まで通しています。AMD AMFとCPU `libx264` でも、H.264/AAC MP4のffprobeおよび先頭・末尾frame decodeを確認しました（UI経由の受入試験は未完了）。
+2026-08-13のPhase 3確認では、型検査成功、14テストファイル／60テスト成功です。追加したstandalone契約テストでは、相対path解決、移動後の再解決、SHA-256検証、schema拒否、Preview／Final計画共有、実FFmpegによるedit_projectからMP4へのheadless renderとffprobe検証を確認しています。
 
 Windows配布物の予定コマンド:
 

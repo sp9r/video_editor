@@ -58,3 +58,14 @@ edit_project.json
 
 この監査後も`clip_automation`のsource run、旧editor、旧pipeline、既存生成mediaは変更しない。
 
+## Phase 3実装結果
+
+- independent validator / loader / adapter: `src/main/standalone/edit-project.ts`
+- shared Preview Plan: `src/main/ffmpeg/render-plan.ts`、`src/shared/types.ts`
+- standalone CLI: `src/main/standalone/cli.ts`、`scripts/video-editor.mjs`
+- contract open compatibility: `src/main/project-service.ts`
+- Phase 3 tests: `tests/main/standalone/edit-project.test.ts`、`tests/main/standalone/headless-render.test.ts`
+
+契約の入力形状は`clip_automation` Phase 2.5時点の`edit_project.v1`（監査時点のsource commit: `569bfbf`）を正本として扱った。`caption_project.v2.json`や`transcript_words.json`をvideo_editorへimportする処理は追加せず、loaderは`edit_project.v1`だけを受け取る。
+
+2026-08-13の実行結果: `npm.cmd run typecheck`成功、`npm.cmd test`成功（14 files / 60 tests）、`npm.cmd run build`成功、contract sourceを同梱FFmpegでMP4へheadless renderしffprobe検証成功。実Electron画面の手動受入、別PC受入、GitHub private repository作成・pushは未完了。

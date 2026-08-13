@@ -1,7 +1,7 @@
 # Spectra Video Studio 開発引き継ぎ
 
-最終更新: 2026-08-12 21:53 JST
-状態: **P0の再リンクUI・書き出し表記・Windows成果物名を修正。実画面E2Eと別PC受入は未完了の実用アルファ0.1.0**
+最終更新: 2026-08-13 17:00 JST
+状態: **Phase 3 standalone `edit_project.v1`基盤を実装。実画面E2E、別PC受入、GitHub公開は未完了の実用アルファ0.1.0**
 branch: `main`
 
 ## 0. 最初に行うこと
@@ -140,6 +140,17 @@ Codex sandbox内ではesbuildがworkspace上位のpath解決を拒否される�
 したがってこのAMD PCではAMFを選び、AMFがruntime failureした時はlibx264へfallbackする想定。AMFを使った完成動画のUI経由E2Eはまだ未実施。
 
 ## 4. 未完了・既知の問題
+
+### Phase 3: standalone video_editor基盤（今回完了）
+
+- `src/main/standalone/edit-project.ts`にclip_automation非依存の`edit_project.v1` validator / loader / adapterを追加。
+- `source_media[].path`はcontract parent基準で解決し、missing sourceとSHA-256不一致をtyped errorで返す。
+- 既存Project Modelへ変換した後、PreviewとFinalの両方が既存FFmpeg Render Plan生成を共有する。
+- `validate`、`probe`、`plan`、`preview`、`render`のheadless CLIを追加。partial output、ffprobe／decode validation、atomic promoteは既存FFmpeg serviceを利用する。
+- 既存`.spectra` editor、Timeline、Undo / Redoは削除・変更せず、Phase 3のfallback／互換資産として保持する。
+- standalone契約テストと実FFmpeg headless render testを追加した。生成メディアは一時directoryのみで作成し、Git管理しない。
+
+このPhaseでは手動編集機能、旧pipeline統合、clip_automationへの変更、video_editorへのAI／job manager実装を行わない。
 
 ### P0: 次担当が最初に扱う
 
