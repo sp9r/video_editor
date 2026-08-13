@@ -50,6 +50,7 @@ await Promise.all([
   viteBuild({
     configFile: false,
     root: path.join(repositoryRoot, 'src', 'renderer'),
+    base: './',
     plugins: [react()],
     build: {
       outDir: path.join(outputRoot, 'renderer'),
