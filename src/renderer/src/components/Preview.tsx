@@ -1,7 +1,8 @@
 ﻿import { useEffect, useMemo, useRef } from 'react'
+import { useState } from 'react'
 import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-react'
 import { formatTimecode, projectDurationUs } from '../../../shared/project'
-import type { MediaAsset, SubtitleClip, TimelineClip, VideoClip } from '../../../shared/types'
+import type { MediaAsset, PreviewPlan, SubtitleClip, TimelineClip, VideoClip } from '../../../shared/types'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
 
@@ -16,10 +17,23 @@ const frameGradient = (asset?: MediaAsset): string => {
 
 export default function Preview(): React.JSX.Element {
   const { project, playheadUs, setPlayhead, playing, setPlaying, selectClip } = useEditorStore()
+  const [renderPlan, setRenderPlan] = useState<PreviewPlan | null>(null)
   const requestRef = useRef<number | null>(null)
   const lastFrameRef = useRef<number>(0)
   const mediaRef = useRef<HTMLVideoElement | null>(null)
-  const durationUs = Math.max(projectDurationUs(project), 1_000_000)
+  const durationUs = Math.max(renderPlan?.durationUs ?? projectDurationUs(project), 1_000_000)
+
+  useEffect(() => {
+    if (!window.spectra) {
+      setRenderPlan(null)
+      return
+    }
+    let active = true
+    void window.spectra.createPreviewPlan(project)
+      .then((plan) => { if (active) setRenderPlan(plan) })
+      .catch(() => { if (active) setRenderPlan(null) })
+    return () => { active = false }
+  }, [project])
 
   useEffect(() => {
     if (!playing) {
@@ -33,7 +47,7 @@ export default function Preview(): React.JSX.Element {
       lastFrameRef.current = timestamp
       const state = useEditorStore.getState()
       const next = state.playheadUs + elapsedUs
-      if (next >= Math.max(projectDurationUs(state.project), 1_000_000)) {
+      if (next >= Math.max(renderPlan?.durationUs ?? projectDurationUs(state.project), 1_000_000)) {
         state.setPlayhead(0)
         state.setPlaying(false)
         return
@@ -46,17 +60,20 @@ export default function Preview(): React.JSX.Element {
       if (requestRef.current !== null) cancelAnimationFrame(requestRef.current)
       lastFrameRef.current = 0
     }
-  }, [playing])
+  }, [playing, renderPlan?.durationUs])
 
   const active = useMemo(() => {
+    const plannedIds = renderPlan
+      ? new Set([...renderPlan.videoClips, ...renderPlan.captions].map((clip) => clip.clipId))
+      : null
     const clips = project.tracks
       .filter((track) => !track.hidden && !track.muted)
-      .flatMap((track) => track.clips.filter((clip) => activeAt(clip, playheadUs)))
+      .flatMap((track) => track.clips.filter((clip) => activeAt(clip, playheadUs) && (!plannedIds || plannedIds.has(clip.id))))
     return {
       visuals: clips.filter((clip): clip is VideoClip | Extract<TimelineClip, { kind: 'image' }> => clip.kind === 'video' || clip.kind === 'image'),
       subtitles: clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle')
     }
-  }, [project, playheadUs])
+  }, [project, playheadUs, renderPlan])
   const baseVisual = active.visuals.at(-1)
   const asset = baseVisual && 'assetId' in baseVisual ? project.media.find((item) => item.id === baseVisual.assetId) : undefined
   const mediaSource = asset && !asset.offline && window.spectra ? window.spectra.mediaUrl(asset.path) : null

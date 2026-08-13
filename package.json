@@ -4,6 +4,9 @@
   "private": true,
   "description": "A portable, non-linear desktop video editor for everyday YouTube production.",
   "main": "./out/main/index.js",
+  "bin": {
+    "video-editor": "scripts/video-editor.mjs"
+  },
   "type": "module",
   "author": "Spectra Video Studio contributors",
   "license": "MIT",

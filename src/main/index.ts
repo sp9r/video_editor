@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { createFfmpegService, parseSrt, parseVtt, type FfmpegService } from './ffmpeg/index'
+import { createFfmpegService, createPreviewPlan, parseSrt, parseVtt, type FfmpegService } from './ffmpeg/index'
 import { loadRecovery, openProject, saveProject, writeRecovery } from './project-service'
 import { createMainWindow, installMediaProtocol, isTrustedIpcUrl, registerPrivilegedSchemes } from './window'
 import { IPC } from '../shared/ipc'
@@ -108,6 +108,22 @@ const registerIpcHandlers = (): void => {
     })
     const filePath = response.filePaths[0]
     return response.canceled || !filePath ? null : requireService().probeMediaSafe(filePath)
+  })
+
+  ipcMain.handle(IPC.previewPlan, (event, projectInput: ProjectFile) => {
+    assertTrustedSender(event)
+    const project = validateProject(projectInput)
+    return createPreviewPlan(project, {
+      outputPath: path.join(app.getPath('temp'), 'spectra-preview-plan.mp4'),
+      width: project.sequence.width,
+      height: project.sequence.height,
+      frameRate: project.sequence.frameRate,
+      videoBitrate: 2_000_000,
+      audioBitrate: 128_000,
+      encoderMode: 'software',
+      burnSubtitles: true,
+      exportSrt: false
+    })
   })
 
   ipcMain.handle(IPC.subtitlesImport, async (event) => {

@@ -25,6 +25,18 @@ await Promise.all([
   }),
   esbuild({
     absWorkingDir: repositoryRoot,
+    entryPoints: [path.join(repositoryRoot, 'src', 'main', 'standalone', 'cli.ts')],
+    outfile: path.join(outputRoot, 'cli', 'video-editor.js'),
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    packages: 'external',
+    sourcemap: false,
+    logLevel: 'info'
+  }),
+  esbuild({
+    absWorkingDir: repositoryRoot,
     entryPoints: [path.join(repositoryRoot, 'src', 'preload', 'index.ts')],
     outfile: path.join(outputRoot, 'preload', 'index.js'),
     bundle: true,

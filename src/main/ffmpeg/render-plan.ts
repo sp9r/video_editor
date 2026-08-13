@@ -4,6 +4,7 @@ import type {
   ExportSettings,
   MediaAsset,
   ProjectFile,
+  PreviewPlan,
   TimelineClip,
   TransformSettings
 } from '../../shared/types.js'
@@ -309,6 +310,47 @@ export const createRenderPlan = (project: ProjectFile, settings: ExportSettings)
   return {
     ...partial,
     filterGraph: buildRenderFilterGraph(partial, 'libx264')
+  }
+}
+
+/**
+ * Preview consumes the same validated ProjectFile and RenderPlan construction
+ * as final render. Only the presentation backend differs after this boundary.
+ */
+export const createPreviewPlan = (project: ProjectFile, settings: ExportSettings): PreviewPlan => {
+  const renderPlan = createRenderPlan(project, settings)
+  const videoClips: PreviewPlan['videoClips'] = []
+  const audioClips: PreviewPlan['audioClips'] = []
+  const captions: PreviewPlan['captions'] = []
+  for (const track of project.tracks) {
+    if (track.hidden) continue
+    for (const clip of track.clips) {
+      if (!clip.enabled) continue
+      const common = {
+        clipId: clip.id,
+        startUs: clip.startUs,
+        durationUs: clip.durationUs,
+        sourceInUs: clip.sourceInUs,
+        enabled: clip.enabled
+      }
+      if (clip.kind === 'subtitle') {
+        captions.push({ ...common, kind: 'caption', text: clip.text })
+      } else if (clip.kind === 'audio' || (clip.kind === 'video' && !track.muted)) {
+        audioClips.push({ ...common, kind: 'audio', sourceMediaId: clip.assetId })
+      }
+      if ((clip.kind === 'video' || clip.kind === 'image') && !track.hidden) {
+        videoClips.push({ ...common, kind: 'video', sourceMediaId: clip.assetId })
+      }
+    }
+  }
+  return {
+    durationUs: renderPlan.durationUs,
+    width: renderPlan.width,
+    height: renderPlan.height,
+    frameRate: { numerator: renderPlan.frameRateNumerator, denominator: renderPlan.frameRateDenominator },
+    videoClips: videoClips.sort((left, right) => left.startUs - right.startUs),
+    audioClips: audioClips.sort((left, right) => left.startUs - right.startUs),
+    captions: captions.sort((left, right) => left.startUs - right.startUs)
   }
 }
 

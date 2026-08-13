@@ -158,6 +158,27 @@ export interface ProbeResult {
   error?: string
 }
 
+export interface PreviewPlanClip {
+  clipId: string
+  kind: 'video' | 'audio' | 'caption'
+  startUs: TimeUs
+  durationUs: TimeUs
+  sourceInUs: TimeUs
+  enabled: boolean
+  sourceMediaId?: string
+  text?: string
+}
+
+export interface PreviewPlan {
+  durationUs: TimeUs
+  width: number
+  height: number
+  frameRate: Rational
+  videoClips: PreviewPlanClip[]
+  audioClips: PreviewPlanClip[]
+  captions: PreviewPlanClip[]
+}
+
 export interface ImportedSubtitleCue {
   startUs: TimeUs
   endUs: TimeUs
@@ -258,6 +279,7 @@ export interface DesktopApi {
   relinkMedia(assetId: string, expectedName: string): Promise<ProbeResult | null>
   importSubtitles(): Promise<ImportedSubtitleCue[] | null>
   mediaUrl(path: string): string
+  createPreviewPlan(project: ProjectFile): Promise<PreviewPlan>
   detectEncoders(force?: boolean): Promise<EncoderReport>
   chooseExportPath(defaultName: string): Promise<string | null>
   startExport(project: ProjectFile, settings: ExportSettings): Promise<StartExportResult>

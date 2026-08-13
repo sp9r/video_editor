@@ -14,6 +14,7 @@ const api: DesktopApi = {
   relinkMedia: (assetId: string, expectedName: string) => ipcRenderer.invoke(IPC.mediaRelink, assetId, expectedName),
   importSubtitles: () => ipcRenderer.invoke(IPC.subtitlesImport),
   mediaUrl: (filePath: string) => `spectra-media://local/${encodeURIComponent(filePath)}`,
+  createPreviewPlan: (project: ProjectFile) => ipcRenderer.invoke(IPC.previewPlan, project),
   detectEncoders: (force = false) => ipcRenderer.invoke(IPC.encodersDetect, force),
   chooseExportPath: (defaultName: string) => ipcRenderer.invoke(IPC.exportChoosePath, defaultName),
   startExport: (project: ProjectFile, settings: ExportSettings) => ipcRenderer.invoke(IPC.exportStart, project, settings),
