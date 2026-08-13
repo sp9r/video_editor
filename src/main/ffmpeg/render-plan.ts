@@ -322,24 +322,29 @@ export const createPreviewPlan = (project: ProjectFile, settings: ExportSettings
   const videoClips: PreviewPlan['videoClips'] = []
   const audioClips: PreviewPlan['audioClips'] = []
   const captions: PreviewPlan['captions'] = []
+  const clipsById = new Map(project.tracks.flatMap((track) => track.clips.map((clip) => [clip.id, clip] as const)))
+  for (const input of renderPlan.inputs) {
+    const clip = clipsById.get(input.clipId)
+    if (!clip) continue
+    const common = {
+      clipId: clip.id,
+      startUs: clip.startUs,
+      durationUs: clip.durationUs,
+      sourceInUs: clip.sourceInUs,
+      enabled: clip.enabled
+    }
+    if (input.useVideo && (clip.kind === 'video' || clip.kind === 'image')) {
+      videoClips.push({ ...common, kind: 'video', sourceMediaId: clip.assetId })
+    }
+    if (input.useAudio && (clip.kind === 'video' || clip.kind === 'audio')) {
+      audioClips.push({ ...common, kind: 'audio', sourceMediaId: clip.assetId })
+    }
+  }
   for (const track of project.tracks) {
     if (track.hidden) continue
     for (const clip of track.clips) {
-      if (!clip.enabled) continue
-      const common = {
-        clipId: clip.id,
-        startUs: clip.startUs,
-        durationUs: clip.durationUs,
-        sourceInUs: clip.sourceInUs,
-        enabled: clip.enabled
-      }
-      if (clip.kind === 'subtitle') {
-        captions.push({ ...common, kind: 'caption', text: clip.text })
-      } else if (clip.kind === 'audio' || (clip.kind === 'video' && !track.muted)) {
-        audioClips.push({ ...common, kind: 'audio', sourceMediaId: clip.assetId })
-      }
-      if ((clip.kind === 'video' || clip.kind === 'image') && !track.hidden) {
-        videoClips.push({ ...common, kind: 'video', sourceMediaId: clip.assetId })
+      if (clip.enabled && clip.kind === 'subtitle') {
+        captions.push({ clipId: clip.id, kind: 'caption', startUs: clip.startUs, durationUs: clip.durationUs, sourceInUs: clip.sourceInUs, enabled: clip.enabled, text: clip.text })
       }
     }
   }
