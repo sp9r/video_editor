@@ -134,7 +134,7 @@ export interface EditProjectCaption {
   track_id?: string
   text: string
   timeline: EditProjectTimeRange
-  source: EditProjectTimeRange
+  source?: EditProjectTimeRange
   style?: EditProjectCaptionStyle
   enabled: boolean
 }
@@ -169,50 +169,55 @@ const invalid = (message: string, details?: Record<string, unknown>): never => {
   throw new EditProjectError('invalid_contract', message, { details })
 }
 
+const record = (value: unknown, label: string): UnknownRecord => {
+  if (!isRecord(value)) invalid(`${label} must be an object`)
+  return value as UnknownRecord
+}
+
 const requiredString = (value: unknown, label: string): string => {
   if (!nonEmptyString(value)) invalid(`${label} must be a non-empty string`)
-  return value
+  return value as string
 }
 
 const requiredNumber = (value: unknown, label: string, minimum = 0): number => {
   if (!finite(value) || value < minimum) invalid(`${label} must be a finite number >= ${minimum}`)
-  return value
+  return value as number
 }
 
 const requiredBoolean = (value: unknown, label: string): boolean => {
   if (typeof value !== 'boolean') invalid(`${label} must be boolean`)
-  return value
+  return value as boolean
 }
 
 const range = (value: unknown, label: string): EditProjectTimeRange => {
-  if (!isRecord(value)) invalid(`${label} must be an object`)
-  const start = requiredNumber(value.start, `${label}.start`)
-  const duration = requiredNumber(value.duration, `${label}.duration`, Number.MIN_VALUE)
+  const object = record(value, label)
+  const start = requiredNumber(object.start, `${label}.start`)
+  const duration = requiredNumber(object.duration, `${label}.duration`, Number.MIN_VALUE)
   return { start, duration }
 }
 
 const parseTransform = (value: unknown, label: string): EditProjectTransform => {
-  if (!isRecord(value)) invalid(`${label} must be an object`)
+  const object = record(value, label)
   return {
-    x: requiredNumber(value.x, `${label}.x`),
-    y: requiredNumber(value.y, `${label}.y`),
-    scale_x: requiredNumber(value.scale_x, `${label}.scale_x`, Number.MIN_VALUE),
-    scale_y: requiredNumber(value.scale_y, `${label}.scale_y`, Number.MIN_VALUE),
-    rotation: requiredNumber(value.rotation, `${label}.rotation`),
-    opacity: requiredNumber(value.opacity, `${label}.opacity`),
-    ...(value.anchor_x === undefined ? {} : { anchor_x: requiredNumber(value.anchor_x, `${label}.anchor_x`) }),
-    ...(value.anchor_y === undefined ? {} : { anchor_y: requiredNumber(value.anchor_y, `${label}.anchor_y`) })
+    x: requiredNumber(object.x, `${label}.x`),
+    y: requiredNumber(object.y, `${label}.y`),
+    scale_x: requiredNumber(object.scale_x, `${label}.scale_x`, Number.MIN_VALUE),
+    scale_y: requiredNumber(object.scale_y, `${label}.scale_y`, Number.MIN_VALUE),
+    rotation: requiredNumber(object.rotation, `${label}.rotation`),
+    opacity: requiredNumber(object.opacity, `${label}.opacity`),
+    ...(object.anchor_x === undefined ? {} : { anchor_x: requiredNumber(object.anchor_x, `${label}.anchor_x`) }),
+    ...(object.anchor_y === undefined ? {} : { anchor_y: requiredNumber(object.anchor_y, `${label}.anchor_y`) })
   }
 }
 
 const parseClip = (value: unknown, label: string): EditProjectClip => {
-  if (!isRecord(value)) invalid(`${label} must be an object`)
-  const id = requiredString(value.id, `${label}.id`)
-  const type = requiredString(value.type, `${label}.type`)
-  const sourceMediaId = requiredString(value.source_media_id, `${label}.source_media_id`)
-  const timeline = range(value.timeline, `${label}.timeline`)
-  const source = range(value.source, `${label}.source`)
-  const enabled = requiredBoolean(value.enabled, `${label}.enabled`)
+  const object = record(value, label)
+  const id = requiredString(object.id, `${label}.id`)
+  const type = requiredString(object.type, `${label}.type`)
+  const sourceMediaId = requiredString(object.source_media_id, `${label}.source_media_id`)
+  const timeline = range(object.timeline, `${label}.timeline`)
+  const source = range(object.source, `${label}.source`)
+  const enabled = requiredBoolean(object.enabled, `${label}.enabled`)
   if (type === 'video_clip') {
     return {
       id,
@@ -220,82 +225,85 @@ const parseClip = (value: unknown, label: string): EditProjectClip => {
       source_media_id: sourceMediaId,
       timeline,
       source,
-      transform: parseTransform(value.transform, `${label}.transform`),
+      transform: parseTransform(object.transform, `${label}.transform`),
       enabled
     }
   }
   if (type === 'audio_clip') {
-    return { id, type, source_media_id: sourceMediaId, timeline, source, volume: requiredNumber(value.volume, `${label}.volume`), enabled }
+    return { id, type, source_media_id: sourceMediaId, timeline, source, volume: requiredNumber(object.volume, `${label}.volume`), enabled }
   }
-  invalid(`${label}.type is unsupported: ${type}`)
+  return invalid(`${label}.type is unsupported: ${type}`)
 }
 
 const parseCaption = (value: unknown, label: string): EditProjectCaption => {
-  if (!isRecord(value)) invalid(`${label} must be an object`)
-  const style = value.style
+  const object = record(value, label)
+  const style = object.style
   if (style !== undefined && !isRecord(style)) invalid(`${label}.style must be an object`)
   return {
-    id: requiredString(value.id, `${label}.id`),
-    ...(value.track_id === undefined ? {} : { track_id: requiredString(value.track_id, `${label}.track_id`) }),
-    text: typeof value.text === 'string' ? value.text : invalid(`${label}.text must be a string`),
-    timeline: range(value.timeline, `${label}.timeline`),
-    source: range(value.source, `${label}.source`),
+    id: requiredString(object.id, `${label}.id`),
+    ...(object.track_id === undefined ? {} : { track_id: requiredString(object.track_id, `${label}.track_id`) }),
+    text: typeof object.text === 'string' ? object.text : invalid(`${label}.text must be a string`),
+    timeline: range(object.timeline, `${label}.timeline`),
+    ...(object.source === undefined ? {} : { source: range(object.source, `${label}.source`) }),
     ...(style ? { style: style as EditProjectCaptionStyle } : {}),
-    enabled: requiredBoolean(value.enabled, `${label}.enabled`)
+    enabled: requiredBoolean(object.enabled, `${label}.enabled`)
   }
 }
 
 const isAbsoluteContractPath = (value: string): boolean => path.isAbsolute(value) || path.win32.isAbsolute(value) || path.posix.isAbsolute(value)
 
 export const validateEditProject = (input: unknown): EditProjectDocument => {
-  if (!isRecord(input)) invalid('edit_project must be a JSON object')
-  const schema = input.schema_version
+  const inputObject = record(input, 'edit_project')
+  const schema = inputObject.schema_version
   if (schema !== EDIT_PROJECT_SCHEMA_VERSION) {
-    const message = typeof schema === 'string' && /^edit_project\.\d+$/u.test(schema)
+    const message = typeof schema === 'string' && /^edit_project\.v\d+$/u.test(schema)
       ? `unsupported edit_project schema: ${schema}`
       : `schema_version must be ${EDIT_PROJECT_SCHEMA_VERSION}`
     throw new EditProjectError('unsupported_schema', message, { details: { schema_version: schema } })
   }
-  const project = input.project
-  if (!isRecord(project)) invalid('project metadata is required')
-  const sourceMediaInput = input.source_media
-  const tracksInput = input.tracks
-  const captionsInput = input.captions
+  const project = record(inputObject.project, 'project metadata')
+  const sourceMediaInput = inputObject.source_media
+  const tracksInput = inputObject.tracks
+  const captionsInput = inputObject.captions
   if (!Array.isArray(sourceMediaInput) || sourceMediaInput.length === 0) invalid('source_media must be a non-empty array')
   if (!Array.isArray(tracksInput)) invalid('tracks must be an array')
   if (!Array.isArray(captionsInput)) invalid('captions must be an array')
-  if (!isRecord(input.sequence)) invalid('sequence is required')
+  const sequenceInput = record(inputObject.sequence, 'sequence')
+  const timebase = sequenceInput.timebase === undefined ? undefined : record(sequenceInput.timebase, 'sequence.timebase')
+  if (timebase && (!finite(timebase.numerator) || !finite(timebase.denominator) || timebase.numerator <= 0 || timebase.denominator <= 0)) {
+    invalid('sequence.timebase numerator and denominator must be positive finite numbers')
+  }
   const sequence: EditProjectSequence = {
-    ...(input.sequence.id === undefined ? {} : { id: requiredString(input.sequence.id, 'sequence.id') }),
-    width: requiredNumber(input.sequence.width, 'sequence.width', 1),
-    height: requiredNumber(input.sequence.height, 'sequence.height', 1),
-    fps: requiredNumber(input.sequence.fps, 'sequence.fps', Number.MIN_VALUE),
-    ...(input.sequence.timebase === undefined ? {} : { timebase: input.sequence.timebase as EditProjectSequence['timebase'] }),
-    duration: requiredNumber(input.sequence.duration, 'sequence.duration', Number.MIN_VALUE)
+    ...(sequenceInput.id === undefined ? {} : { id: requiredString(sequenceInput.id, 'sequence.id') }),
+    width: requiredNumber(sequenceInput.width, 'sequence.width', 1),
+    height: requiredNumber(sequenceInput.height, 'sequence.height', 1),
+    fps: requiredNumber(sequenceInput.fps, 'sequence.fps', Number.MIN_VALUE),
+    ...(timebase === undefined ? {} : { timebase: { numerator: timebase.numerator as number, denominator: timebase.denominator as number } }),
+    duration: requiredNumber(sequenceInput.duration, 'sequence.duration', Number.MIN_VALUE)
   }
   if (!Number.isInteger(sequence.width) || !Number.isInteger(sequence.height)) invalid('sequence width and height must be integers')
 
   const sourceIds = new Set<string>()
-  const sourceMedia = sourceMediaInput.map((value, index): EditProjectSourceMedia => {
-    if (!isRecord(value)) invalid(`source_media[${index}] must be an object`)
-    const id = requiredString(value.id, `source_media[${index}].id`)
+  const sourceMedia = (sourceMediaInput as unknown[]).map((value: unknown, index: number): EditProjectSourceMedia => {
+    const object = record(value, `source_media[${index}]`)
+    const id = requiredString(object.id, `source_media[${index}].id`)
     if (sourceIds.has(id)) invalid(`duplicate source media id: ${id}`)
     sourceIds.add(id)
-    const mediaPath = requiredString(value.path, `source_media[${index}].path`)
+    const mediaPath = requiredString(object.path, `source_media[${index}].path`)
     if (!isAbsoluteContractPath(mediaPath) && mediaPath.includes('\\')) invalid(`source_media[${index}].path must use / separators`)
-    const kind = value.kind
+    const kind = object.kind as unknown
     if (kind !== 'video' && kind !== 'audio') invalid(`source_media[${index}].kind is unsupported`)
     const result: EditProjectSourceMedia = {
       id,
       path: mediaPath,
-      kind,
-      ...(value.sha256 === undefined ? {} : { sha256: requiredString(value.sha256, `source_media[${index}].sha256`).toLowerCase() }),
-      duration: requiredNumber(value.duration, `source_media[${index}].duration`, Number.MIN_VALUE),
-      ...(value.width === undefined ? {} : { width: requiredNumber(value.width, `source_media[${index}].width`, 1) }),
-      ...(value.height === undefined ? {} : { height: requiredNumber(value.height, `source_media[${index}].height`, 1) }),
-      ...(value.fps === undefined ? {} : { fps: requiredNumber(value.fps, `source_media[${index}].fps`, Number.MIN_VALUE) }),
-      ...(value.sample_rate === undefined ? {} : { sample_rate: requiredNumber(value.sample_rate, `source_media[${index}].sample_rate`, 1) }),
-      ...(value.channels === undefined ? {} : { channels: requiredNumber(value.channels, `source_media[${index}].channels`, 1) })
+      kind: kind as EditProjectSourceMedia['kind'],
+      ...(object.sha256 === undefined ? {} : { sha256: requiredString(object.sha256, `source_media[${index}].sha256`).toLowerCase() }),
+      duration: requiredNumber(object.duration, `source_media[${index}].duration`, Number.MIN_VALUE),
+      ...(object.width === undefined ? {} : { width: requiredNumber(object.width, `source_media[${index}].width`, 1) }),
+      ...(object.height === undefined ? {} : { height: requiredNumber(object.height, `source_media[${index}].height`, 1) }),
+      ...(object.fps === undefined ? {} : { fps: requiredNumber(object.fps, `source_media[${index}].fps`, Number.MIN_VALUE) }),
+      ...(object.sample_rate === undefined ? {} : { sample_rate: requiredNumber(object.sample_rate, `source_media[${index}].sample_rate`, 1) }),
+      ...(object.channels === undefined ? {} : { channels: requiredNumber(object.channels, `source_media[${index}].channels`, 1) })
     }
     if (result.sha256 && !/^[0-9a-f]{64}$/u.test(result.sha256)) invalid(`source_media[${index}].sha256 must be SHA-256 hex`)
     return result
@@ -303,15 +311,15 @@ export const validateEditProject = (input: unknown): EditProjectDocument => {
 
   const trackIds = new Set<string>()
   const clipIds = new Set<string>()
-  const tracks = tracksInput.map((value, index): EditProjectTrack => {
-    if (!isRecord(value)) invalid(`tracks[${index}] must be an object`)
-    const id = requiredString(value.id, `tracks[${index}].id`)
+  const tracks = (tracksInput as unknown[]).map((value: unknown, index: number): EditProjectTrack => {
+    const object = record(value, `tracks[${index}]`)
+    const id = requiredString(object.id, `tracks[${index}].id`)
     if (trackIds.has(id)) invalid(`duplicate track id: ${id}`)
     trackIds.add(id)
-    const kind = value.kind
+    const kind = object.kind as unknown
     if (kind !== 'video' && kind !== 'audio' && kind !== 'caption' && kind !== 'text') invalid(`tracks[${index}].kind is unsupported`)
-    if (!Array.isArray(value.clips)) invalid(`tracks[${index}].clips must be an array`)
-    const clips = value.clips.map((clip, clipIndex) => {
+    if (!Array.isArray(object.clips)) invalid(`tracks[${index}].clips must be an array`)
+    const clips = (object.clips as unknown[]).map((clip: unknown, clipIndex: number) => {
       const parsed = parseClip(clip, `tracks[${index}].clips[${clipIndex}]`)
       if (clipIds.has(parsed.id)) invalid(`duplicate clip id: ${parsed.id}`)
       clipIds.add(parsed.id)
@@ -321,14 +329,14 @@ export const validateEditProject = (input: unknown): EditProjectDocument => {
     })
     return {
       id,
-      kind,
-      ...(value.name === undefined ? {} : { name: requiredString(value.name, `tracks[${index}].name`) }),
-      ...(value.enabled === undefined ? {} : { enabled: requiredBoolean(value.enabled, `tracks[${index}].enabled`) }),
-      ...(value.locked === undefined ? {} : { locked: requiredBoolean(value.locked, `tracks[${index}].locked`) }),
+      kind: kind as EditProjectTrack['kind'],
+      ...(object.name === undefined ? {} : { name: requiredString(object.name, `tracks[${index}].name`) }),
+      ...(object.enabled === undefined ? {} : { enabled: requiredBoolean(object.enabled, `tracks[${index}].enabled`) }),
+      ...(object.locked === undefined ? {} : { locked: requiredBoolean(object.locked, `tracks[${index}].locked`) }),
       clips
     }
   })
-  const captions = captionsInput.map((value, index) => {
+  const captions = (captionsInput as unknown[]).map((value: unknown, index: number) => {
     const caption = parseCaption(value, `captions[${index}]`)
     if (clipIds.has(caption.id)) invalid(`duplicate clip/caption id: ${caption.id}`)
     clipIds.add(caption.id)
@@ -339,7 +347,8 @@ export const validateEditProject = (input: unknown): EditProjectDocument => {
   for (const track of tracks) {
     for (const clip of track.clips) {
       const source = sourceMedia.find((item) => item.id === clip.source_media_id)
-      if (!source) invalid(`clip ${clip.id} references missing source media ${clip.source_media_id}`)
+      if (!source) throw new EditProjectError('invalid_contract', `clip ${clip.id} references missing source media ${clip.source_media_id}`)
+      if (Math.abs(clip.timeline.duration - clip.source.duration) > 0.000001) invalid(`clip ${clip.id} changes speed, which edit_project.v1 does not support`)
       if (clip.source.start + clip.source.duration > source.duration + 0.000001) invalid(`clip ${clip.id} exceeds source media duration`)
       if (clip.timeline.start + clip.timeline.duration > sequence.duration + 0.000001) invalid(`clip ${clip.id} exceeds sequence duration`)
       if (clip.type === 'video_clip' && (clip.transform.opacity < 0 || clip.transform.opacity > 1)) invalid(`clip ${clip.id} opacity must be between 0 and 1`)
@@ -357,13 +366,13 @@ export const validateEditProject = (input: unknown): EditProjectDocument => {
       name: requiredString(project.name, 'project.name'),
       ...(project.created_at === undefined ? {} : { created_at: requiredString(project.created_at, 'project.created_at') }),
       ...(project.updated_at === undefined ? {} : { updated_at: requiredString(project.updated_at, 'project.updated_at') }),
-      ...(project.generator === undefined ? {} : { generator: project.generator })
+      ...(project.generator === undefined ? {} : { generator: isRecord(project.generator) ? project.generator : invalid('project.generator must be an object') })
     },
     source_media: sourceMedia,
     sequence,
     tracks,
     captions,
-    ...(input.metadata === undefined ? {} : { metadata: isRecord(input.metadata) ? input.metadata : invalid('metadata must be an object') })
+    ...(inputObject.metadata === undefined ? {} : { metadata: isRecord(inputObject.metadata) ? inputObject.metadata : invalid('metadata must be an object') })
   }
   return structuredClone(result)
 }
@@ -376,7 +385,7 @@ const sha256File = async (filePath: string): Promise<string> => {
   return createHash('sha256').update(content).digest('hex')
 }
 
-const toMilliseconds = (seconds: number): number => Math.round(seconds * 1_000_000)
+const toMicroseconds = (seconds: number): number => Math.round(seconds * 1_000_000)
 const volumeToDb = (volume: number): number => volume <= 0 ? -96 : Math.max(-96, Math.min(24, 20 * Math.log10(volume)))
 
 const captionStyle = (style: EditProjectCaptionStyle | undefined): SubtitleClip['style'] => ({
@@ -404,8 +413,8 @@ const buildProjectModel = async (
       id: source.id,
       name: path.basename(sourcePath),
       path: sourcePath,
-      kind: 'video',
-      durationUs: toMilliseconds(source.duration),
+      kind: source.kind,
+      durationUs: toMicroseconds(source.duration),
       ...(source.width === undefined ? {} : { width: source.width }),
       ...(source.height === undefined ? {} : { height: source.height }),
       ...(source.fps === undefined ? {} : { frameRate: { numerator: Math.round(source.fps), denominator: 1 } }),
@@ -425,9 +434,9 @@ const buildProjectModel = async (
       const common = {
         id: clip.id,
         name: clip.id,
-        startUs: toMilliseconds(clip.timeline.start),
-        durationUs: toMilliseconds(clip.timeline.duration),
-        sourceInUs: toMilliseconds(clip.source.start),
+        startUs: toMicroseconds(clip.timeline.start),
+        durationUs: toMicroseconds(clip.timeline.duration),
+        sourceInUs: toMicroseconds(clip.source.start),
         enabled: clip.enabled
       }
       if (clip.type === 'video_clip') {
@@ -460,9 +469,9 @@ const buildProjectModel = async (
       id: caption.id,
       name: caption.text.slice(0, 32) || caption.id,
       kind: 'subtitle',
-      startUs: toMilliseconds(caption.timeline.start),
-      durationUs: toMilliseconds(caption.timeline.duration),
-      sourceInUs: toMilliseconds(caption.source.start),
+      startUs: toMicroseconds(caption.timeline.start),
+      durationUs: toMicroseconds(caption.timeline.duration),
+      sourceInUs: toMicroseconds(caption.source?.start ?? 0),
       enabled: caption.enabled,
       text: caption.text,
       style: captionStyle(caption.style)
