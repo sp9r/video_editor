@@ -400,6 +400,18 @@ const captionStyle = (style: EditProjectCaptionStyle | undefined): SubtitleClip[
   ...(style?.alignment === 8 ? { alignment: 'top' as const } : style?.alignment === 5 ? { alignment: 'middle' as const } : {})
 })
 
+const supportedCaptionStyleKeys = new Set([
+  'font_name', 'font_size', 'primary_color', 'outline_color', 'outline',
+  'alignment', 'position_x', 'position_y'
+])
+
+const collectDiagnostics = (document: EditProjectDocument): string[] => document.captions.flatMap((caption) => {
+  if (!caption.style) return []
+  return Object.keys(caption.style)
+    .filter((key) => !supportedCaptionStyleKeys.has(key))
+    .map((key) => `Unsupported caption style key: ${caption.id}.${key}`)
+})
+
 const buildProjectModel = async (
   document: EditProjectDocument,
   projectPath: string,
@@ -517,7 +529,7 @@ export const loadEditProject = async (projectPathInput: string, options: { verif
     throw error
   }
   const resolved = new Map<string, string>()
-  const diagnostics: string[] = []
+  const diagnostics = collectDiagnostics(document)
   for (const media of document.source_media) {
     const resolvedPath = resolveSourcePath(projectPath, media.path)
     try {

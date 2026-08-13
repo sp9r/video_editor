@@ -68,7 +68,7 @@ const makeDocument = (sourcePath = '../../../media/source.mp4', sha256?: string)
     { id: 'C1', kind: 'caption', clips: [] }
   ],
   captions: [
-    { id: 'caption_1', track_id: 'C1', text: 'Phase 3', timeline: { start: 0.25, duration: 0.75 }, enabled: true }
+    { id: 'caption_1', track_id: 'C1', text: 'Phase 3', timeline: { start: 0.25, duration: 0.75 }, style: { template_id: 'legacy-template' }, enabled: true }
   ]
 })
 
@@ -95,6 +95,7 @@ describe('standalone edit_project.v1 loader', () => {
       expect(loaded.project.tracks.find((track) => track.id === 'V1')?.clips.map((clip) => [clip.startUs, clip.sourceInUs])).toEqual([[0, 0], [1_000_000, 2_000_000]])
       expect(loaded.project.tracks.find((track) => track.id === 'A1')?.clips).toHaveLength(2)
       expect(loaded.project.tracks.find((track) => track.id === 'subtitle')?.clips ?? loaded.project.tracks.find((track) => track.id === 'C1')?.clips).toHaveLength(1)
+      expect(loaded.diagnostics).toContain('Unsupported caption style key: caption_1.template_id')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
