@@ -4,15 +4,13 @@ import {
   addMediaAssets,
   createClipForAsset,
   createSubtitleClip,
-  deleteClips,
-  moveClip,
   projectDurationUs,
   relinkMediaAsset,
   replaceTrack,
-  splitClip,
-  trimClip,
   updateClip
 } from '../../shared/project'
+import { deleteLinkedClips, EditingOperationError, moveLinkedClip, splitLinkedClip, splitSelectedRoots, trimLinkedClip } from '../../shared/editing/operations'
+import { linkedClipIds } from '../../shared/editing/links'
 import type { MediaAsset, ProjectFile, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
 import { createDemoProject } from './demo'
 
@@ -34,9 +32,14 @@ interface EditorState {
   dirty: boolean
   lastSavedAt: Date | null
   notice: Notice | null
+  savedFingerprint: string
+  transactionBase: ProjectFile | null
   applyProject(project: ProjectFile, options?: { selectClipId?: string; preserveHistory?: boolean }): void
   loadProject(project: ProjectFile): void
   markSaved(project?: ProjectFile): void
+  beginEditTransaction(): void
+  commitEditTransaction(): void
+  cancelEditTransaction(): void
   selectClip(id: string | null, additive?: boolean): void
   selectAsset(id: string | null): void
   setPlayhead(value: TimeUs): void
@@ -64,6 +67,12 @@ interface EditorState {
 const HISTORY_LIMIT = 80
 
 const cloneProject = (project: ProjectFile): ProjectFile => structuredClone(project)
+const projectFingerprint = (project: ProjectFile): string => {
+  const normalized = cloneProject(project)
+  normalized.updatedAt = ''
+  return JSON.stringify(normalized)
+}
+const initialProject = createDemoProject()
 
 const compatibleTrack = (asset: MediaAsset, track: TimelineTrack): boolean => {
   if (asset.kind === 'audio') return track.kind === 'audio'
@@ -71,7 +80,7 @@ const compatibleTrack = (asset: MediaAsset, track: TimelineTrack): boolean => {
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
-  project: createDemoProject(),
+  project: initialProject,
   past: [],
   future: [],
   selectedClipIds: [],
@@ -84,16 +93,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   zoomPxPerSecond: 72,
   dirty: false,
   lastSavedAt: null,
+  savedFingerprint: projectFingerprint(initialProject),
+  transactionBase: null,
   notice: null,
   applyProject: (project, options = {}) => {
     const current = get().project
     if (project === current) return
     set((state) => ({
       project,
-      past: options.preserveHistory ? state.past : [...state.past, cloneProject(current)].slice(-HISTORY_LIMIT),
-      future: options.preserveHistory ? state.future : [],
+      past: options.preserveHistory || state.transactionBase ? state.past : [...state.past, cloneProject(current)].slice(-HISTORY_LIMIT),
+      future: options.preserveHistory || state.transactionBase ? state.future : [],
       selectedClipIds: options.selectClipId ? [options.selectClipId] : state.selectedClipIds,
-      dirty: true
+      dirty: projectFingerprint(project) !== state.savedFingerprint
     }))
   },
   loadProject: (project) =>
@@ -106,14 +117,41 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       playheadUs: 0,
       playing: false,
       dirty: false,
-      lastSavedAt: new Date()
+      lastSavedAt: new Date(),
+      savedFingerprint: projectFingerprint(project),
+      transactionBase: null
     }),
-  markSaved: (project) => set({ project: project ? cloneProject(project) : get().project, dirty: false, lastSavedAt: new Date() }),
+  markSaved: (project) => {
+    const saved = project ? cloneProject(project) : get().project
+    set({ project: saved, dirty: false, lastSavedAt: new Date(), savedFingerprint: projectFingerprint(saved), transactionBase: null })
+  },
+  beginEditTransaction: () => {
+    if (!get().transactionBase) set({ transactionBase: cloneProject(get().project) })
+  },
+  commitEditTransaction: () => {
+    const base = get().transactionBase
+    if (!base) return
+    const current = get().project
+    const changed = projectFingerprint(base) !== projectFingerprint(current)
+    set((state) => ({
+      past: changed ? [...state.past, base].slice(-HISTORY_LIMIT) : state.past,
+      future: changed ? [] : state.future,
+      dirty: projectFingerprint(current) !== state.savedFingerprint,
+      transactionBase: null
+    }))
+  },
+  cancelEditTransaction: () => {
+    const base = get().transactionBase
+    if (!base) return
+    set((state) => ({ project: base, dirty: projectFingerprint(base) !== state.savedFingerprint, transactionBase: null }))
+  },
   selectClip: (id, additive = false) => {
     if (!id) return set({ selectedClipIds: [] })
     const selected = get().selectedClipIds
-    if (!additive) return set({ selectedClipIds: [id] })
-    set({ selectedClipIds: selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id] })
+    const group = linkedClipIds(get().project, id)
+    if (!additive) return set({ selectedClipIds: group })
+    const toggledOff = group.some((item) => selected.includes(item))
+    set({ selectedClipIds: toggledOff ? selected.filter((item) => !group.includes(item)) : [...selected, ...group.filter((item) => !selected.includes(item))] })
   },
   selectAsset: (id) => set({ selectedAssetId: id }),
   setPlayhead: (playheadUs) => set({ playheadUs: Math.max(0, playheadUs) }),
@@ -144,64 +182,56 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   patchClip: (clipId, patcher) => get().applyProject(updateClip(get().project, clipId, patcher)),
   moveSelected: (clipId, trackId, atUs) => {
-    const { project } = get()
-    const sourceTrack = project.tracks.find((track) => track.clips.some((clip) => clip.id === clipId))
-    const targetTrack = project.tracks.find((track) => track.id === trackId)
-    const clip = sourceTrack?.clips.find((item) => item.id === clipId)
-    if (!sourceTrack || !targetTrack || !clip || sourceTrack.locked || targetTrack.locked) return
-    if ((clip.kind === 'audio' && targetTrack.kind !== 'audio') ||
-      ((clip.kind === 'video' || clip.kind === 'image') && targetTrack.kind !== 'video') ||
-      (clip.kind === 'subtitle' && targetTrack.kind !== 'subtitle')) return
-    let next = moveClip(project, clipId, atUs)
-    if (sourceTrack.id !== targetTrack.id) {
-      const copy = cloneProject(next)
-      const from = copy.tracks.find((track) => track.id === sourceTrack.id)
-      const to = copy.tracks.find((track) => track.id === targetTrack.id)
-      const moved = from?.clips.find((item) => item.id === clipId)
-      if (from && to && moved) {
-        from.clips = from.clips.filter((item) => item.id !== clipId)
-        to.clips.push(moved)
-        to.clips.sort((a, b) => a.startUs - b.startUs)
-        next = copy
-      }
-    }
-    get().applyProject(next)
+    try { get().applyProject(moveLinkedClip(get().project, clipId, trackId, atUs)) }
+    catch (error) { if (error instanceof EditingOperationError) get().showNotice(error.message, 'warning'); else throw error }
   },
-  trim: (clipId, edge, atUs) => get().applyProject(trimClip(get().project, clipId, edge, atUs)),
+  trim: (clipId, edge, atUs) => {
+    try { get().applyProject(trimLinkedClip(get().project, clipId, edge, atUs)) }
+    catch (error) { if (error instanceof EditingOperationError) get().showNotice(error.message, 'warning'); else throw error }
+  },
   splitSelected: () => {
     const { project, selectedClipIds, playheadUs } = get()
     let next = project
-    for (const id of selectedClipIds) next = splitClip(next, id, playheadUs)
+    for (const id of splitSelectedRoots(project, selectedClipIds)) next = splitLinkedClip(next, id, playheadUs)
     if (next === project) get().showNotice('再生ヘッドをクリップの内側へ移動してください。', 'warning')
     else get().applyProject(next)
   },
   deleteSelected: (ripple) => {
     const ids = get().selectedClipIds
     if (!ids.length) return
-    get().applyProject(deleteClips(get().project, ids, ripple ?? get().rippleMode))
-    set({ selectedClipIds: [] })
+    try {
+      get().applyProject(deleteLinkedClips(get().project, ids, ripple ?? get().rippleMode))
+      set({ selectedClipIds: [] })
+    } catch (error) {
+      if (error instanceof EditingOperationError) get().showNotice(error.message, 'warning')
+      else throw error
+    }
   },
   patchTrack: (track) => get().applyProject(replaceTrack(get().project, track)),
   undo: () => {
+    if (get().transactionBase) get().commitEditTransaction()
     const { past, project } = get()
     const previous = past.at(-1)
     if (!previous) return
-    set((state) => ({ project: cloneProject(previous), past: state.past.slice(0, -1), future: [cloneProject(project), ...state.future], dirty: true }))
+    set((state) => ({ project: cloneProject(previous), past: state.past.slice(0, -1), future: [cloneProject(project), ...state.future], dirty: projectFingerprint(previous) !== state.savedFingerprint, transactionBase: null }))
   },
   redo: () => {
+    if (get().transactionBase) get().commitEditTransaction()
     const { future, project } = get()
     const next = future[0]
     if (!next) return
-    set((state) => ({ project: cloneProject(next), past: [...state.past, cloneProject(project)].slice(-HISTORY_LIMIT), future: state.future.slice(1), dirty: true }))
+    set((state) => ({ project: cloneProject(next), past: [...state.past, cloneProject(project)].slice(-HISTORY_LIMIT), future: state.future.slice(1), dirty: projectFingerprint(next) !== state.savedFingerprint, transactionBase: null }))
   },
   showNotice: (message, tone = 'info') => set({ notice: { id: Date.now(), message, tone } }),
   clearNotice: () => set({ notice: null })
 }))
 
 export const findClip = (project: ProjectFile, ids: string[]): TimelineClip | null => {
-  for (const track of project.tracks) {
-    const clip = track.clips.find((item) => ids.includes(item.id))
-    if (clip) return clip
+  for (const id of ids) {
+    for (const track of project.tracks) {
+      const clip = track.clips.find((item) => item.id === id)
+      if (clip) return clip
+    }
   }
   return null
 }

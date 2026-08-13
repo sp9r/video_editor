@@ -25,7 +25,8 @@
 - user data、実動画、contract、generated media/cacheをテストで直接変更しない。
 - fixtureまたは一時ディレクトリを使い、generated media/cacheをGitへ入れない。
 - 既存資産を削除・全面rewriteせず、KEEP/REFACTOR/REPLACE/DEFERの分類と理由を確認する。
-- Phase 3の範囲を越えてUndo/Redo、高度な手動編集、AI、旧`clip_automation` pipeline統合へ進まない。
+- Phase 4ではmanual editing correctness、linked A/V、transactional Undo/Redo、Save As/reopenだけを扱う。`edit_project.v1`へlink情報を追加せず、内部`.spectra` Project Modelの`linkGroupId`で表現する。
+- Phase 4ではclip_automation pipeline統合、AI、BGM/SE、transition、effect graph、keyframe、tracking、publishingへ進まない。
 - 変更前後で`npm.cmd run check`と必要なbuild/E2Eを実行する。
 - 変更は小さいcommitへ分け、test PASS後にpushする。
 - force push、history rewrite、既存remoteの無断変更を禁止する。

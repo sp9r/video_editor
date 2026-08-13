@@ -1,6 +1,6 @@
 # アーキテクチャ
 
-更新日: 2026-08-12  
+更新日: 2026-08-13
 対象: Spectra Video Studio 0.1.x
 
 ## clip_automationとの境界（Phase 3）
@@ -17,7 +17,7 @@ flowchart LR
   RP --> HR["headless / final FFmpeg render"]
 ```
 
-`caption_project.v2.json`と`transcript_words.json`は字幕・transcriptモデルとしてclip_automation側に残り、video_editorへは変換済みの`edit_project.v1`だけを渡す。既存`.spectra` Project Model、Timeline、Undo / Redoは互換・fallbackとして維持し、Phase 3ではmanual editingや旧pipeline統合を追加しない。
+`caption_project.v2.json`と`transcript_words.json`は字幕・transcriptモデルとしてclip_automation側に残り、video_editorへは変換済みの`edit_project.v1`だけを渡す。内部の`linkGroupId`は`.spectra` Project Modelにのみ存在し、正式contractへ逆輸出しない。Phase 4ではcontract import時の厳密なV/A pair推論と手動linked editingを実装するが、旧pipeline統合は行わない。
 
 ## 設計目標
 
@@ -64,7 +64,8 @@ flowchart LR
 
 - 時刻の正本は整数マイクロ秒。UI表示時だけフレーム／秒へ変換する。
 - 素材ファイル自体を変更せず、`sourceInUs`、`startUs`、`durationUs`と効果パラメーターを保存する。
-- Video clipは元動画の音声を内包でき、Audio clipはBGMやナレーションを表す。
+- legacy `.spectra`のVideo clipは`sourceAudioEnabled`未指定なら元動画の音声を内包できる。contract importのVideo clipは映像のみで、Audio clipが音声を表す。V/Aの手動同期関係は内部`linkGroupId`で管理する。
+- linked move／trim／split／deleteは共有domain operationでatomicに処理し、相手trackがlockedなら全体を拒否する。rippleは削除intervalをmergeし、同一区間のV/Aを二重countしない。
 - Cropは入力寸法に対する0.0〜0.49の正規化比率、Positionは出力中心からのpixel、Scaleは倍率。
 - 保存時は素材の絶対パスとプロジェクト基準相対パスを保持し、読込時は相対パスを優先する。
 - 素材不明時はofflineにし、元ファイルを削除せず再リンクを促す。

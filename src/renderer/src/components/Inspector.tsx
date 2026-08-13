@@ -14,8 +14,15 @@ const hasTransform = (clip: TimelineClip): clip is Extract<TimelineClip, { kind:
 const hasAudio = (clip: TimelineClip): clip is Extract<TimelineClip, { kind: 'video' | 'audio' }> =>
   clip.kind === 'video' || clip.kind === 'audio'
 
+const useEditTransaction = (): { onFocus: () => void; onBlur: () => void } => {
+  const begin = useEditorStore((state) => state.beginEditTransaction)
+  const commit = useEditorStore((state) => state.commitEditTransaction)
+  return { onFocus: begin, onBlur: commit }
+}
+
 function TransformEditor({ clip }: { clip: Extract<TimelineClip, { kind: 'video' | 'image' }> }): React.JSX.Element {
   const patchClip = useEditorStore((state) => state.patchClip)
+  const transaction = useEditTransaction()
   const patch = (values: Partial<TransformSettings>): void =>
     patchClip(clip.id, (current) => (hasTransform(current) ? { ...current, transform: { ...current.transform, ...values } } : current))
   const crop = (key: keyof TransformSettings['crop'], percent: number): void =>
@@ -24,11 +31,11 @@ function TransformEditor({ clip }: { clip: Extract<TimelineClip, { kind: 'video'
     <>
       <Section title="変形">
         <div className="field-grid">
-          <NumberField label="位置 X" suffix="px" value={clip.transform.positionX} onChange={(event) => patch({ positionX: numberValue(event.target.value) })} />
-          <NumberField label="位置 Y" suffix="px" value={clip.transform.positionY} onChange={(event) => patch({ positionY: numberValue(event.target.value) })} />
-          <NumberField label="拡大率" suffix="%" min={1} max={800} value={Math.round(clip.transform.scale * 100)} onChange={(event) => patch({ scale: Math.max(0.01, numberValue(event.target.value, 100) / 100) })} />
-          <NumberField label="回転" suffix="°" value={clip.transform.rotation} onChange={(event) => patch({ rotation: numberValue(event.target.value) })} />
-          <NumberField label="不透明度" suffix="%" min={0} max={100} value={Math.round(clip.transform.opacity * 100)} onChange={(event) => patch({ opacity: Math.min(1, Math.max(0, numberValue(event.target.value) / 100)) })} />
+          <NumberField {...transaction} label="位置 X" suffix="px" value={clip.transform.positionX} onChange={(event) => patch({ positionX: numberValue(event.target.value) })} />
+          <NumberField {...transaction} label="位置 Y" suffix="px" value={clip.transform.positionY} onChange={(event) => patch({ positionY: numberValue(event.target.value) })} />
+          <NumberField {...transaction} label="拡大率" suffix="%" min={1} max={800} value={Math.round(clip.transform.scale * 100)} onChange={(event) => patch({ scale: Math.max(0.01, numberValue(event.target.value, 100) / 100) })} />
+          <NumberField {...transaction} label="回転" suffix="°" value={clip.transform.rotation} onChange={(event) => patch({ rotation: numberValue(event.target.value) })} />
+          <NumberField {...transaction} label="不透明度" suffix="%" min={0} max={100} value={Math.round(clip.transform.opacity * 100)} onChange={(event) => patch({ opacity: Math.min(1, Math.max(0, numberValue(event.target.value) / 100)) })} />
         </div>
       </Section>
       <Section title="クロップ">
@@ -42,6 +49,7 @@ function TransformEditor({ clip }: { clip: Extract<TimelineClip, { kind: 'video'
               max={49}
               step={0.1}
               value={Math.round(clip.transform.crop[key] * 1000) / 10}
+              {...transaction}
               onChange={(event) => crop(key, numberValue(event.target.value))}
             />
           ))}
@@ -53,19 +61,20 @@ function TransformEditor({ clip }: { clip: Extract<TimelineClip, { kind: 'video'
 
 function AudioEditor({ clip }: { clip: Extract<TimelineClip, { kind: 'video' | 'audio' }> }): React.JSX.Element {
   const patchClip = useEditorStore((state) => state.patchClip)
+  const transaction = useEditTransaction()
   const patch = (values: Partial<AudioSettings>): void =>
     patchClip(clip.id, (current) => (hasAudio(current) ? { ...current, audio: { ...current.audio, ...values } } : current))
   return (
     <Section title="音声">
       <div className="range-field">
         <span>音量</span>
-        <input type="range" min={-60} max={12} step={0.5} value={clip.audio.volumeDb} onChange={(event) => patch({ volumeDb: numberValue(event.target.value) })} />
+        <input {...transaction} type="range" min={-60} max={12} step={0.5} value={clip.audio.volumeDb} onChange={(event) => patch({ volumeDb: numberValue(event.target.value) })} />
         <output>{clip.audio.volumeDb.toFixed(1)} dB</output>
       </div>
       <div className="field-grid">
-        <NumberField label="パン" min={-100} max={100} value={clip.audio.pan} onChange={(event) => patch({ pan: numberValue(event.target.value) })} />
-        <NumberField label="フェードイン" suffix="秒" min={0} step={0.1} value={clip.audio.fadeInUs / 1_000_000} onChange={(event) => patch({ fadeInUs: Math.max(0, numberValue(event.target.value) * 1_000_000) })} />
-        <NumberField label="フェードアウト" suffix="秒" min={0} step={0.1} value={clip.audio.fadeOutUs / 1_000_000} onChange={(event) => patch({ fadeOutUs: Math.max(0, numberValue(event.target.value) * 1_000_000) })} />
+        <NumberField {...transaction} label="パン" min={-100} max={100} value={clip.audio.pan} onChange={(event) => patch({ pan: numberValue(event.target.value) })} />
+        <NumberField {...transaction} label="フェードイン" suffix="秒" min={0} step={0.1} value={clip.audio.fadeInUs / 1_000_000} onChange={(event) => patch({ fadeInUs: Math.max(0, numberValue(event.target.value) * 1_000_000) })} />
+        <NumberField {...transaction} label="フェードアウト" suffix="秒" min={0} step={0.1} value={clip.audio.fadeOutUs / 1_000_000} onChange={(event) => patch({ fadeOutUs: Math.max(0, numberValue(event.target.value) * 1_000_000) })} />
       </div>
     </Section>
   )
@@ -73,23 +82,24 @@ function AudioEditor({ clip }: { clip: Extract<TimelineClip, { kind: 'video' | '
 
 function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
   const patchClip = useEditorStore((state) => state.patchClip)
+  const transaction = useEditTransaction()
   const patchStyle = (values: Partial<SubtitleStyle>): void =>
     patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, style: { ...current.style, ...values } } : current)
   return (
     <>
       <Section title="字幕テキスト">
         <Field label="本文" wide>
-          <textarea value={clip.text} rows={4} onChange={(event) => patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, text: event.target.value } : current)} />
+          <textarea {...transaction} value={clip.text} rows={4} onChange={(event) => patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, text: event.target.value } : current)} />
         </Field>
       </Section>
       <Section title="文字スタイル">
-        <SelectField label="フォント" value={clip.style.fontFamily} onChange={(event) => patchStyle({ fontFamily: event.target.value })}>
+        <SelectField {...transaction} label="フォント" value={clip.style.fontFamily} onChange={(event) => patchStyle({ fontFamily: event.target.value })}>
           <option>Noto Sans JP</option><option>Yu Gothic UI</option><option>Meiryo</option><option>Arial</option>
         </SelectField>
         <div className="field-grid">
-          <NumberField label="サイズ" suffix="px" min={8} max={240} value={clip.style.fontSize} onChange={(event) => patchStyle({ fontSize: numberValue(event.target.value, 54) })} />
-          <NumberField label="字間" suffix="px" min={-5} max={30} step={0.5} value={clip.style.letterSpacing} onChange={(event) => patchStyle({ letterSpacing: numberValue(event.target.value) })} />
-          <NumberField label="行間" min={0.6} max={3} step={0.05} value={clip.style.lineHeight} onChange={(event) => patchStyle({ lineHeight: numberValue(event.target.value, 1.15) })} />
+          <NumberField {...transaction} label="サイズ" suffix="px" min={8} max={240} value={clip.style.fontSize} onChange={(event) => patchStyle({ fontSize: numberValue(event.target.value, 54) })} />
+          <NumberField {...transaction} label="字間" suffix="px" min={-5} max={30} step={0.5} value={clip.style.letterSpacing} onChange={(event) => patchStyle({ letterSpacing: numberValue(event.target.value) })} />
+          <NumberField {...transaction} label="行間" min={0.6} max={3} step={0.05} value={clip.style.lineHeight} onChange={(event) => patchStyle({ lineHeight: numberValue(event.target.value, 1.15) })} />
         </div>
         <div className="toggle-row">
           <button type="button" className={clip.style.bold ? 'is-active' : ''} onClick={() => patchStyle({ bold: !clip.style.bold })}><strong>B</strong> 太字</button>
@@ -126,6 +136,7 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
 
 export default function Inspector(): React.JSX.Element {
   const { project, selectedClipIds } = useEditorStore()
+  const transaction = useEditTransaction()
   const clip = findClip(project, selectedClipIds)
   return (
     <aside className="panel inspector" aria-label="インスペクタ">
@@ -141,10 +152,10 @@ export default function Inspector(): React.JSX.Element {
             {clip.kind === 'subtitle' ? <Captions size={18} /> : clip.kind === 'audio' ? <Volume2 size={18} /> : <ImageIcon size={18} />}
           </div>
           <Section title="クリップ">
-            <label className="check-field"><input type="checkbox" checked={clip.enabled} onChange={(event) => useEditorStore.getState().patchClip(clip.id, (current) => ({ ...current, enabled: event.target.checked }))} />表示／再生を有効にする</label>
+            <label className="check-field"><input {...transaction} type="checkbox" checked={clip.enabled} onChange={(event) => useEditorStore.getState().patchClip(clip.id, (current) => ({ ...current, enabled: event.target.checked }))} />表示／再生を有効にする</label>
             <div className="field-grid">
-              <NumberField label="開始" suffix="秒" min={0} step={0.1} value={(clip.startUs / 1_000_000).toFixed(2)} onChange={(event) => useEditorStore.getState().moveSelected(clip.id, project.tracks.find((track) => track.clips.some((item) => item.id === clip.id))?.id ?? '', numberValue(event.target.value) * 1_000_000)} />
-              <NumberField label="長さ" suffix="秒" min={0.03} step={0.1} value={(clip.durationUs / 1_000_000).toFixed(2)} onChange={(event) => useEditorStore.getState().patchClip(clip.id, (current) => ({ ...current, durationUs: Math.max(33_333, numberValue(event.target.value) * 1_000_000) }))} />
+              <NumberField {...transaction} label="開始" suffix="秒" min={0} step={0.1} value={(clip.startUs / 1_000_000).toFixed(2)} onChange={(event) => useEditorStore.getState().moveSelected(clip.id, project.tracks.find((track) => track.clips.some((item) => item.id === clip.id))?.id ?? '', numberValue(event.target.value) * 1_000_000)} />
+              <NumberField {...transaction} label="長さ" suffix="秒" min={0.03} step={0.1} value={(clip.durationUs / 1_000_000).toFixed(2)} onChange={(event) => useEditorStore.getState().trim(clip.id, 'end', clip.startUs + Math.max(33_333, numberValue(event.target.value) * 1_000_000))} />
             </div>
           </Section>
           {hasTransform(clip) && <TransformEditor clip={clip} />}

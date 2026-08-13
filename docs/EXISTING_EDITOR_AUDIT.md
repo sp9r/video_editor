@@ -98,3 +98,14 @@ edit_project.json
 契約の入力形状は`clip_automation` Phase 2.5時点の`edit_project.v1`（監査時点のsource commit: `569bfbf`）を正本として扱った。`caption_project.v2.json`や`transcript_words.json`をvideo_editorへimportする処理は追加せず、loaderは`edit_project.v1`だけを受け取る。
 
 2026-08-13の実行結果: `npm.cmd run typecheck`成功、`npm.cmd test`成功（14 files / 60 tests）、`npm.cmd run build`成功、contract sourceを同梱FFmpegでMP4へheadless renderしffprobe検証成功。GitHub `sp9r/video_editor`の`main`へpush済み。実Electron画面の手動受入と別PC受入は未完了。
+
+## Phase 4 implementation audit
+
+- `BaseClip.linkGroupId`は内部Project Model／`.spectra`専用。正式な`edit_project.v1`のschemaは変更していない。
+- contract adapterは、同一`source_media_id`・timeline start/duration・source start/durationがmicrosecond変換後に一致するvideo 1件とaudio 1件だけを決定的にlinkする。複数候補は推測せずdiagnosticとしてunlinkedのままにする。
+- linked move／trim／split／deleteは`src/shared/editing/operations.ts`のReact/Electron非依存domain operationでatomicに処理する。counterpartがlockedなら警告付きで全体を拒否し、track移動では相手をaudio/videoの同種trackへ移さず時刻だけ同期する。
+- ripple deleteは削除区間をinterval mergeし、非連続区間とlinked pairを重複countしない。既存の単一clip APIも同じinterval処理を使用する。
+- Storeはsnapshot historyを維持し、Inspectorのfocus/blurをtransaction境界にしてgesture単位でcommitする。保存済みfingerprintと比較してdirtyを計算し、undo後にsaved stateへ戻った場合も正しくcleanへ戻す。
+- contractを開いた状態の保存は既存の`projectFormat === edit_project_v1`分岐によりSave Asへ進み、元JSONを上書きしない。linkGroupId、sourceAudioEnabled、clip IDs、時刻、transform、audio、captionは`.spectra`へ保持する。
+
+Phase 4で再利用した既存コードも完成品とは扱わず、domain tests、loader/render regression、Store history testsで確認できた範囲だけを保証する。Electron画面の実操作による視覚的manual acceptanceは、GUI環境での別受入として未実施の場合は未実施と記録する。

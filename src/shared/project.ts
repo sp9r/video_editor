@@ -159,6 +159,7 @@ export const updateClip = (
       track.clips[index] = updater(current)
       track.clips.sort((a, b) => a.startUs - b.startUs)
       next.updatedAt = new Date().toISOString()
+      validateProject(next)
       return next
     }
   }
@@ -224,15 +225,23 @@ export const deleteClips = (project: ProjectFile, clipIds: string[], ripple = fa
   const selected = new Set(clipIds)
   const removed = next.tracks.flatMap((track) => track.clips.filter((clip) => selected.has(clip.id)))
   if (removed.length === 0) return project
-  const rippleStart = Math.min(...removed.map((clip) => clip.startUs))
-  const rippleEnd = Math.max(...removed.map((clip) => clip.startUs + clip.durationUs))
-  const rippleGap = rippleEnd - rippleStart
+  if (next.tracks.some((track) => track.locked && track.clips.some((clip) => selected.has(clip.id)))) return project
+  const intervals = removed
+    .map((clip) => [clip.startUs, clip.startUs + clip.durationUs] as const)
+    .sort(([left], [right]) => left - right)
+    .reduce<Array<readonly [number, number]>>((merged, interval) => {
+      const previous = merged.at(-1)
+      if (!previous || interval[0] > previous[1]) merged.push(interval)
+      else merged[merged.length - 1] = [previous[0], Math.max(previous[1], interval[1])]
+      return merged
+    }, [])
   for (const track of next.tracks) {
     if (track.locked) continue
     track.clips = track.clips.filter((clip) => !selected.has(clip.id))
     if (ripple) {
       for (const clip of track.clips) {
-        if (clip.startUs >= rippleEnd) clip.startUs -= rippleGap
+        const shift = intervals.reduce((total, [start, end]) => total + (clip.startUs >= end ? end - start : 0), 0)
+        if (shift > 0) clip.startUs -= shift
       }
     }
   }
@@ -265,9 +274,21 @@ export const validateProject = (input: unknown): ProjectFile => {
   for (const track of project.tracks) {
     if (!track.id || !Array.isArray(track.clips)) throw new Error('トラック形式が不正です。')
     for (const clip of track.clips) {
-      if (!clip.id || clip.startUs < 0 || clip.durationUs <= 0 || clip.sourceInUs < 0) {
+      if (!clip.id || !Number.isFinite(clip.startUs) || !Number.isFinite(clip.durationUs) || !Number.isFinite(clip.sourceInUs) || clip.startUs < 0 || clip.durationUs <= 0 || clip.sourceInUs < 0) {
         throw new Error(`クリップ形式が不正です: ${clip.id ?? 'unknown'}`)
       }
+      if ((clip.kind === 'video' || clip.kind === 'image') && (
+        !Number.isFinite(clip.transform.positionX) || !Number.isFinite(clip.transform.positionY) ||
+        !Number.isFinite(clip.transform.scale) || clip.transform.scale <= 0 ||
+        !Number.isFinite(clip.transform.rotation) || !Number.isFinite(clip.transform.opacity) ||
+        clip.transform.opacity < 0 || clip.transform.opacity > 1 ||
+        Object.values(clip.transform.crop).some((value) => !Number.isFinite(value) || value < 0 || value >= 0.5)
+      )) throw new Error(`クリップの変形値が不正です: ${clip.id}`)
+      if ((clip.kind === 'video' || clip.kind === 'audio') && (
+        !Number.isFinite(clip.audio.volumeDb) || !Number.isFinite(clip.audio.pan) ||
+        !Number.isFinite(clip.audio.fadeInUs) || !Number.isFinite(clip.audio.fadeOutUs) ||
+        clip.audio.fadeInUs < 0 || clip.audio.fadeOutUs < 0
+      )) throw new Error(`クリップの音声値が不正です: ${clip.id}`)
     }
   }
   return clone(project as ProjectFile)

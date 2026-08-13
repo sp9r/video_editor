@@ -3,6 +3,7 @@ import {
   Captions,
   Eye,
   EyeOff,
+  Link2,
   Lock,
   LockOpen,
   Magnet,
@@ -240,7 +241,7 @@ export default function Timeline(): React.JSX.Element {
                       title={`${clip.name}\n${seconds(clip.durationUs).toFixed(2)} 秒`}
                     >
                       <button type="button" className="trim-handle trim-start" aria-label="開始位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-start', track.id)} />
-                      <span className="clip-content">{clipGlyph(clip)}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
+                      <span className="clip-content">{clipGlyph(clip)}{clip.linkGroupId ? <Link2 size={12} aria-label="リンクされたクリップ" /> : null}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
                       {clip.kind === 'audio' || clip.kind === 'video' ? <span className="waveform" aria-hidden="true" /> : null}
                       <button type="button" className="trim-handle trim-end" aria-label="終了位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-end', track.id)} />
                     </div>
