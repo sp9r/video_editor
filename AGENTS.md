@@ -10,6 +10,15 @@
 - PreviewとFinal Renderは同じProject ModelとRender Planを共有する。別々のtimeline解釈を作らない。
 - FFmpeg出力は`partial → validation → atomic promote`の順で公開する。
 
+## 開発前提
+
+- このrepositoryはPhase 3以前、作りかけで実用機能が完成していない試作品だった。既存コードを完成資産として信頼しない。
+- `KEEP`は「そのまま信頼して使う」という意味ではなく、再利用候補として監査・test・E2E・必要なmanual acceptanceで確認する対象を意味する。
+- 自動test、E2E、manual acceptanceで確認されていない既存挙動は保証しない。
+- 既存architectureはcontract、Project Model、Render Planの境界とcorrectness・保守性を優先して変更してよい。既存だから残すとは限らない。
+- ただし理由なく全削除・ゼロからの全面rewriteはせず、変更理由と代替範囲を文書化する。
+- Phase 4以降も、既存資産の継続はcorrectnessと保守性で判断する。
+
 ## 安全な変更
 
 - user data、実動画、contract、generated media/cacheをテストで直接変更しない。
@@ -19,4 +28,3 @@
 - 変更前後で`npm.cmd run check`と必要なbuild/E2Eを実行する。
 - 変更は小さいcommitへ分け、test PASS後にpushする。
 - force push、history rewrite、既存remoteの無断変更を禁止する。
-

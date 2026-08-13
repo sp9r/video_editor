@@ -15,6 +15,8 @@
 
 ## KEEP
 
+`KEEP`は完成資産の認定ではなく、再利用候補の分類である。既存挙動は自動test、E2E、必要なmanual acceptanceで確認された範囲だけを信頼する。
+
 - `src/shared/types.ts`の内部Project Model、microsecond timebase、track/clipモデル
 - `src/main/ffmpeg/render-plan.ts`のFFmpeg filter graph生成。既存UIのFinal RenderとPhase 3のheadless renderで共有する
 - `src/main/ffmpeg/service.ts`のargv実行、encoder probe、partial output、ffprobe/decode validation、atomic promote
@@ -58,6 +60,14 @@ edit_project.json
 
 この監査後も`clip_automation`のsource run、旧editor、旧pipeline、既存生成mediaは変更しない。
 
+## 開発前提の更新
+
+- Phase 3以前の`video_editor`は、実用機能が完成していない作りかけの試作品として扱う。
+- 既存architecture、Project Model、Render Plan、FFmpeg service、UIは再利用候補であり、未検証の挙動を保証しない。
+- contract、Project Model、Render Planの境界、correctness、保守性を優先し、必要なら大幅なREFACTOR/REPLACEを行う。
+- 理由のない全削除・ゼロからの全面rewriteは避け、既存資産を再利用候補として検証した上で変更範囲を決める。
+- Phase 4以降も「既存だから残す」ではなく、test・E2E・manual acceptanceに基づくcorrectnessと保守性で継続利用を判断する。
+
 ## Phase 3実装結果
 
 - independent validator / loader / adapter: `src/main/standalone/edit-project.ts`
@@ -66,6 +76,15 @@ edit_project.json
 - contract open compatibility: `src/main/project-service.ts`
 - Phase 3 tests: `tests/main/standalone/edit-project.test.ts`、`tests/main/standalone/headless-render.test.ts`
 
+## Phase 3.5 contract compliance
+
+- Transform validatorを`finite`、`positive`、`non-negative`、`opacity 0..1`の意味別helperへ分離。x/y/rotation/anchorは負数を許可し、scaleは`> 0`、volumeは`>= 0`とする。
+- strict `edit_project.v1` loaderでは`source_media[].path`をportable relative path（JSON内`/` separator）のみに限定。Windows drive、UNC、Unix absolute path、backslash pathは拒否し、resolutionは常に`path.resolve(dirname(edit_project.json), contractPath)`で行う。
+- legacy `.spectra` path handlingとcontract loaderのpath policyを混同しない。absolute pathをcontractの互換性として復活させない。
+- 既存実装は完成品ではなく再利用候補として扱う方針をAGENTSと本監査文書へ明記した。未検証挙動は保証せず、contract／Project Model／Render Planの境界、correctness、保守性を優先する。
+
+2026-08-13 Phase 3.5の実行結果: `npm.cmd run check`成功（14 files / 62 tests）、`npm.cmd run build`成功。GitHub `sp9r/video_editor`の`main`へpush済み。
+
 契約の入力形状は`clip_automation` Phase 2.5時点の`edit_project.v1`（監査時点のsource commit: `569bfbf`）を正本として扱った。`caption_project.v2.json`や`transcript_words.json`をvideo_editorへimportする処理は追加せず、loaderは`edit_project.v1`だけを受け取る。
 
-2026-08-13の実行結果: `npm.cmd run typecheck`成功、`npm.cmd test`成功（14 files / 60 tests）、`npm.cmd run build`成功、contract sourceを同梱FFmpegでMP4へheadless renderしffprobe検証成功。実Electron画面の手動受入、別PC受入、GitHub private repository作成・pushは未完了。
+2026-08-13の実行結果: `npm.cmd run typecheck`成功、`npm.cmd test`成功（14 files / 60 tests）、`npm.cmd run build`成功、contract sourceを同梱FFmpegでMP4へheadless renderしffprobe検証成功。GitHub `sp9r/video_editor`の`main`へpush済み。実Electron画面の手動受入と別PC受入は未完了。
