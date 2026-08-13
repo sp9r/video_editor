@@ -81,6 +81,8 @@ interface BaseClip {
   durationUs: TimeUs
   sourceInUs: TimeUs
   enabled: boolean
+  /** Internal .spectra relationship; never serialized into edit_project.v1. */
+  linkGroupId?: string
 }
 
 export interface VideoClip extends BaseClip {

@@ -94,6 +94,10 @@ describe('standalone edit_project.v1 loader', () => {
       expect(loaded.project.projectFormat).toBe('edit_project_v1')
       expect(loaded.project.tracks.find((track) => track.id === 'V1')?.clips.map((clip) => [clip.startUs, clip.sourceInUs])).toEqual([[0, 0], [1_000_000, 2_000_000]])
       expect(loaded.project.tracks.find((track) => track.id === 'A1')?.clips).toHaveLength(2)
+      expect(loaded.project.tracks.find((track) => track.id === 'V1')?.clips[0]?.linkGroupId)
+        .toBe(loaded.project.tracks.find((track) => track.id === 'A1')?.clips[0]?.linkGroupId)
+      expect(loaded.project.tracks.find((track) => track.id === 'V1')?.clips[1]?.linkGroupId)
+        .toBe(loaded.project.tracks.find((track) => track.id === 'A1')?.clips[1]?.linkGroupId)
       expect(loaded.project.tracks.find((track) => track.id === 'subtitle')?.clips ?? loaded.project.tracks.find((track) => track.id === 'C1')?.clips).toHaveLength(1)
       expect(loaded.diagnostics).toContain('Unsupported caption style key: caption_1.template_id')
     } finally {

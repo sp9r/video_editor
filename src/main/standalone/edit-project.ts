@@ -16,6 +16,7 @@ import {
   type VideoClip
 } from '../../shared/types.js'
 import { validateProject } from '../../shared/project.js'
+import { inferLinkedAudioPairs } from '../../shared/editing/links.js'
 
 export const EDIT_PROJECT_SCHEMA_VERSION = 'edit_project.v1' as const
 
@@ -579,8 +580,15 @@ export const loadEditProject = async (projectPathInput: string, options: { verif
     }
     resolved.set(media.id, resolvedPath)
   }
-  const project = await buildProjectModel(document, projectPath, resolved)
-  return { projectPath, document, resolvedSourceMedia: resolved, project, diagnostics }
+  const builtProject = await buildProjectModel(document, projectPath, resolved)
+  const linked = inferLinkedAudioPairs(builtProject)
+  return {
+    projectPath,
+    document,
+    resolvedSourceMedia: resolved,
+    project: linked.project,
+    diagnostics: [...diagnostics, ...linked.diagnostics.map((item) => item.message)]
+  }
 }
 
 export const isEditProjectDocument = (input: unknown): boolean => isRecord(input) && input.schema_version === EDIT_PROJECT_SCHEMA_VERSION
