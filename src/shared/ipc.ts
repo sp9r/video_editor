@@ -13,6 +13,7 @@ export const IPC = {
   fontFamilies: 'fonts:families',
   previewPlan: 'preview:plan',
   previewAccurateFrame: 'preview:accurate-frame',
+  previewSubtitleOverlay: 'preview:subtitle-overlay',
   subtitlesImport: 'subtitles:import',
   encodersDetect: 'encoders:detect',
   exportChoosePath: 'export:choose-path',

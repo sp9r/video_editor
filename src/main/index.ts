@@ -9,7 +9,7 @@ import { validateProject } from '../shared/project'
 import type { ExportSettings, ProjectFile } from '../shared/types'
 import { enumerateFontFamilies } from './fonts'
 import { generateAss } from './ffmpeg/subtitles'
-import { buildSubtitleRenderSpec, subtitleAnchorTransform } from '../shared/subtitle-render'
+import { buildSubtitleRenderSpec } from '../shared/subtitle-render'
 import { createSubtitleParityFixture } from '../shared/subtitle-parity-fixture'
 
 registerPrivilegedSchemes()
@@ -139,6 +139,14 @@ const registerIpcHandlers = (): void => {
     return await requireService().renderAccurateFrame(validateProject(projectInput), timeUs)
   })
 
+  ipcMain.handle(IPC.previewSubtitleOverlay, async (event, projectInput: ProjectFile, timeUs: unknown) => {
+    assertTrustedSender(event)
+    if (typeof timeUs !== 'number' || !Number.isFinite(timeUs) || timeUs < 0) {
+      throw new Error('字幕overlayの時刻が不正です。')
+    }
+    return await requireService().renderSubtitleOverlay(validateProject(projectInput), timeUs)
+  })
+
   ipcMain.handle(IPC.waveformPeaks, async (event, request) => {
     assertTrustedSender(event)
     return await requireService().getWaveformPeaks(request)
@@ -221,44 +229,20 @@ const runSubtitleParitySmoke = async (window: BrowserWindow): Promise<void> => {
   const spec = buildSubtitleRenderSpec(subtitle, fixture.sequence)
   const previewPath = path.resolve(process.env.SPECTRA_PARITY_PREVIEW_PATH ?? path.join(app.getPath('temp'), 'spectra-subtitle-preview.png'))
   const assPath = path.resolve(process.env.SPECTRA_PARITY_ASS_PATH ?? path.join(app.getPath('temp'), 'spectra-subtitle-captions.ass'))
-  const injectedSpec = JSON.stringify(spec)
-  const domReport = await window.webContents.executeJavaScript(`(() => {
-    const spec = ${injectedSpec}
-    const scene = document.querySelector('.preview-scene')
-    if (!(scene instanceof HTMLElement)) throw new Error('Preview scene is missing')
-    for (const child of Array.from(scene.children)) child.style.visibility = 'hidden'
-    scene.style.background = '#242a31'
-    const outer = document.createElement('div')
-    outer.className = 'preview-subtitle subtitle-none anchor-bottom parity-probe'
-    Object.assign(outer.style, {
-      left: spec.xPx + 'px', top: spec.yPx + 'px', width: spec.maxWidthPx + 'px',
-      transform: '${subtitleAnchorTransform(spec.anchor)}', animation: 'none', visibility: 'visible'
-    })
-    const inner = document.createElement('span')
-    inner.className = 'preview-subtitle-text'
-    inner.textContent = spec.wrappedText
-    Object.assign(inner.style, {
-      color: spec.color, fontFamily: spec.fontFamily, fontSize: spec.fontSizePx + 'px',
-      fontWeight: spec.bold ? '700' : '400', fontStyle: spec.italic ? 'italic' : 'normal',
-      letterSpacing: spec.letterSpacingPx + 'px', lineHeight: String(spec.lineHeight),
-      WebkitTextStroke: spec.outlineWidthPx + 'px ' + spec.outlineColor, paintOrder: 'stroke fill',
-      textShadow: spec.shadowOffsetXPx + 'px ' + spec.shadowOffsetYPx + 'px ' + spec.shadowBlurPx + 'px ' + spec.shadowColor,
-      background: 'color-mix(in srgb, ' + spec.backgroundColor + ' ' + (spec.backgroundOpacity * 100) + '%, transparent)'
-    })
-    outer.append(inner)
-    scene.append(outer)
-    const rect = (value) => ({ x: value.x, y: value.y, width: value.width, height: value.height, top: value.top, left: value.left, right: value.right, bottom: value.bottom })
-    return { viewport: { width: window.innerWidth, height: window.innerHeight }, sceneRect: rect(scene.getBoundingClientRect()), outerRect: rect(outer.getBoundingClientRect()), textRect: rect(inner.getBoundingClientRect()) }
-  })()`)
-  const screenshot = await window.webContents.capturePage()
-  await writeFile(previewPath, screenshot.toPNG())
+  const overlay = await requireService().renderSubtitleOverlay(fixture, 500_000)
+  await writeFile(previewPath, await readFile(overlay.framePath))
   await writeFile(assPath, generateAss(fixture), 'utf8')
   console.log(`SPECTRA_SUBTITLE_PARITY_REPORT ${JSON.stringify({
     previewPath,
     assPath,
     sequence: fixture.sequence,
     spec,
-    ...domReport
+    overlayFramePath: overlay.framePath,
+    overlayFrameIndex: overlay.frameIndex,
+    overlayStateFingerprint: overlay.subtitleStateFingerprint,
+    viewport: { width: fixture.sequence.width, height: fixture.sequence.height },
+    sceneRect: { x: 0, y: 0, width: fixture.sequence.width, height: fixture.sequence.height },
+    textRect: null
   })}`)
 }
 
@@ -275,7 +259,7 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const detail = JSON.stringify({ project, timeUs: 500_000 })
   await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${detail} }))`)
   console.log('SPECTRA_ACCURATE_PREVIEW_STAGE project-dispatched')
-  const readDom = async (): Promise<{ viewport: { width: number; height: number }; overlay: boolean; overlayReady: boolean; quality: string; playButton: boolean; overlayCount: number; overlaySrc: string; subtitleMain: { x: number; y: number; width: number; height: number }; subtitleStack: { x: number; y: number; width: number; height: number }; visual: { x: number; y: number; width: number; height: number } }> => await window.webContents.executeJavaScript(`(() => {
+  const readDom = async (): Promise<{ viewport: { width: number; height: number }; overlay: boolean; overlayReady: boolean; fastSubtitleOverlay: boolean; fastSubtitleOverlayReady: boolean; cssFallbackCount: number; quality: string; playButton: boolean; overlayCount: number; overlaySrc: string; fastSubtitleOverlaySrc: string; subtitleMain: { x: number; y: number; width: number; height: number }; subtitleStack: { x: number; y: number; width: number; height: number }; visual: { x: number; y: number; width: number; height: number } }> => await window.webContents.executeJavaScript(`(() => {
     const rect = (element) => {
       const value = element?.getBoundingClientRect()
       return value ? { x: value.x, y: value.y, width: value.width, height: value.height } : { x: 0, y: 0, width: 0, height: 0 }
@@ -284,6 +268,9 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
     viewport: { width: window.innerWidth, height: window.innerHeight },
     overlay: document.querySelector('.accurate-preview-overlay') !== null,
     overlayReady: (() => { const image = document.querySelector('.accurate-preview-overlay'); return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0 })(),
+    fastSubtitleOverlay: document.querySelector('.fast-authoritative-subtitle-overlay') !== null,
+    fastSubtitleOverlayReady: (() => { const image = document.querySelector('.fast-authoritative-subtitle-overlay'); return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0 })(),
+    cssFallbackCount: document.querySelectorAll('[data-subtitle-renderer="css-fallback"]').length,
     quality: document.querySelector('.viewer-quality')?.textContent ?? '',
     playButton: document.querySelector('.play-button') !== null,
     overlayCount: document.querySelectorAll('.accurate-preview-overlay').length,
@@ -314,9 +301,27 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const accurateScreenshotPath = path.join(app.getPath('temp'), `spectra-accurate-preview-phase4r2${screenshotSuffix}.png`)
   await waitForPaint()
   await writeFile(accurateScreenshotPath, (await window.webContents.capturePage()).toPNG())
+  await requireService().clearSubtitleOverlayCache()
+  const coldOverlayStartedAt = performance.now()
+  const coldSubtitleOverlay = await requireService().renderSubtitleOverlay(project, 500_000)
+  const subtitleOverlayColdMs = performance.now() - coldOverlayStartedAt
+  const cacheHitStartedAt = performance.now()
+  const cachedSubtitleOverlay = await requireService().renderSubtitleOverlay(project, 500_000)
+  const subtitleOverlayCacheHitMs = performance.now() - cacheHitStartedAt
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
-  const fastFixture = await until((dom) => !dom.overlay && dom.quality.includes('高速'))
+  const fastFixture = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.fastSubtitleOverlay && dom.fastSubtitleOverlayReady)
   const fastFixtureDom = await readDom()
+  const playbackFrameSample = await window.webContents.executeJavaScript(`new Promise((resolve) => {
+    const started = performance.now()
+    let frames = 0
+    const tick = () => {
+      frames += 1
+      const elapsedMs = performance.now() - started
+      if (elapsedMs >= 200) resolve({ frames, elapsedMs, fps: frames / elapsedMs * 1000 })
+      else requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })`)
   const fastScreenshotPath = path.join(app.getPath('temp'), `spectra-fast-preview-phase4r2${screenshotSuffix}.png`)
   await waitForPaint()
   await writeFile(fastScreenshotPath, (await window.webContents.capturePage()).toPNG())
@@ -330,13 +335,15 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const pendingDom = await readDom()
   const editPendingPreservesOverlay = pendingDom.overlay && pendingDom.overlaySrc === initialOverlaySrc && pendingDom.quality.includes('更新中')
   const editedFrameReady = await until((dom) => dom.overlay && dom.overlayReady && dom.overlaySrc !== initialOverlaySrc && dom.quality.includes('正確プレビュー'))
+  const cueSwitchStartedAt = performance.now()
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
-  const fastDuringPlay = await until((dom) => !dom.overlay && dom.quality.includes('高速'))
+  const fastDuringPlay = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.fastSubtitleOverlay && dom.fastSubtitleOverlayReady)
+  const subtitleOverlayCueSwitchMs = performance.now() - cueSwitchStartedAt
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
   const overlayImmediatelyAfterPause = (await readDom()).overlay
   const accurateAfterResume = overlayImmediatelyAfterPause && await until((dom) => dom.overlay && dom.overlayReady)
   const finalDom = await readDom()
-  const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, sequence: { width: project.sequence.width, height: project.sequence.height }, subtitleSpec, fastFixture, accurateFixtureAfterResume, editPendingPreservesOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastSubtitleStack: fastFixtureDom.subtitleStack, accurateSubtitleStack: initialDom.subtitleStack, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
+  const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, sequence: { width: project.sequence.width, height: project.sequence.height }, subtitleSpec, fastFixture, fastSubtitleOverlay: fastFixtureDom.fastSubtitleOverlay, fastSubtitleOverlayReady: fastFixtureDom.fastSubtitleOverlayReady, fastSubtitleOverlaySrc: fastFixtureDom.fastSubtitleOverlaySrc, fastCssFallbackCount: fastFixtureDom.cssFallbackCount, playbackFrameSample, subtitleOverlayFramePath: cachedSubtitleOverlay.framePath, subtitleOverlayFrameIndex: cachedSubtitleOverlay.frameIndex, subtitleOverlayStateFingerprint: cachedSubtitleOverlay.subtitleStateFingerprint, subtitleOverlayColdMs, subtitleOverlayCacheHitMs, subtitleOverlayCueSwitchMs, coldOverlayFramePath: coldSubtitleOverlay.framePath, accurateFixtureAfterResume, editPendingPreservesOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastSubtitleStack: fastFixtureDom.subtitleStack, accurateSubtitleStack: initialDom.subtitleStack, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
   return { ...startup, ...report }
 }
 

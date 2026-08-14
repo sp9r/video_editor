@@ -252,6 +252,25 @@ export const buildAccurateFrameFilterGraph = (
   return authoritative.statements.join(';\n')
 }
 
+export const buildSubtitleOverlayFilterGraph = (
+  width: number,
+  height: number,
+  fpsNumerator: number,
+  fpsDenominator: number,
+  renderedTimeUs: number,
+  assFileName: string
+): string => {
+  validateAssFileName(assFileName)
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 16 || height < 16) throw new Error('Subtitle overlay dimensions are invalid')
+  if (!Number.isInteger(fpsNumerator) || !Number.isInteger(fpsDenominator) || fpsNumerator <= 0 || fpsDenominator <= 0) throw new Error('Subtitle overlay frame rate is invalid')
+  if (!Number.isFinite(renderedTimeUs) || renderedTimeUs < 0) throw new Error('Subtitle overlay time is invalid')
+  const frameDurationUs = Math.ceil(fpsDenominator * 1_000_000 / fpsNumerator)
+  const fps = fpsText(fpsNumerator, fpsDenominator)
+  return [
+    `color=c=black@0.0:s=${width}x${height}:r=${fps}:d=${seconds(frameDurationUs)},format=rgba,setpts=PTS+${seconds(renderedTimeUs)}/TB,ass=filename='${assFileName}':alpha=1,setpts=PTS-${seconds(renderedTimeUs)}/TB,format=rgba[vout]`
+  ].join(';\n')
+}
+
 export const createRenderPlan = (project: ProjectFile, settings: ExportSettings): RenderPlan => {
   const width = even(settings.width)
   const height = even(settings.height)
@@ -356,9 +375,10 @@ export const createRenderPlan = (project: ProjectFile, settings: ExportSettings)
 }
 
 /**
- * Fast Preview consumes the same validated ProjectFile and RenderPlan inputs
- * as final render, but is an approximate presentation backend. Accurate
- * Preview and Final render use buildAuthoritativeVideoGraph as their authority.
+ * Fast Preview consumes the same validated ProjectFile and subtitle ASS
+ * authority as Final, while its video/image presentation remains approximate.
+ * Accurate Preview and Final render use buildAuthoritativeVideoGraph for the
+ * complete frame; subtitle-only Fast overlays use generateAss plus libass.
  */
 export const createPreviewPlan = (project: ProjectFile, settings: ExportSettings): PreviewPlan => {
   const renderPlan = createRenderPlan(project, settings)

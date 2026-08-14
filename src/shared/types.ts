@@ -201,6 +201,12 @@ export interface AccuratePreviewFrameResult {
   projectFingerprint: string
 }
 
+export interface SubtitleOverlayResult {
+  framePath: string
+  frameIndex: number
+  subtitleStateFingerprint: string
+}
+
 export interface WaveformRequest {
   mediaPath: string
   sourceInUs: TimeUs
@@ -313,6 +319,7 @@ export interface DesktopApi {
   listFontFamilies(): Promise<string[]>
   createPreviewPlan(project: ProjectFile): Promise<PreviewPlan>
   renderAccuratePreviewFrame(project: ProjectFile, timeUs: TimeUs): Promise<AccuratePreviewFrameResult>
+  renderSubtitleOverlay(project: ProjectFile, timeUs: TimeUs): Promise<SubtitleOverlayResult>
   detectEncoders(force?: boolean): Promise<EncoderReport>
   chooseExportPath(defaultName: string): Promise<string | null>
   startExport(project: ProjectFile, settings: ExportSettings): Promise<StartExportResult>

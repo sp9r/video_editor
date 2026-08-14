@@ -2,17 +2,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-react'
 import { formatTimecode, projectDurationUs } from '../../../shared/project'
 import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
-import { buildSubtitleRenderSpec, subtitleAnchorTransform } from '../../../shared/subtitle-render'
+import { activeSubtitleClips, buildSubtitleRenderSpec, subtitleAnchorTransform, subtitleVisualStateKey } from '../../../shared/subtitle-render'
 import { canonicalShadowBlurRadius } from '../../../shared/subtitle-shadow'
-import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip } from '../../../shared/types'
+import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip, SubtitleOverlayResult } from '../../../shared/types'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
-
-const FAST_SUBTITLE_FONT_METRIC_SCALE = 0.67
-const FAST_SUBTITLE_FALLBACK_FONT_METRIC_SCALE = 0.9
-
-const fastSubtitleFontMetricScale = (fontFamily: string): number =>
-  /Noto Sans JP/iu.test(fontFamily) ? FAST_SUBTITLE_FONT_METRIC_SCALE : FAST_SUBTITLE_FALLBACK_FONT_METRIC_SCALE
 
 const activeAt = (clip: { startUs: number; durationUs: number; enabled: boolean }, timeUs: number): boolean =>
   clip.enabled && clip.startUs <= timeUs && clip.startUs + clip.durationUs > timeUs
@@ -95,13 +89,28 @@ export default function Preview(): React.JSX.Element {
   const [accurateFrame, setAccurateFrame] = useState<AccuratePreviewFrameResult | null>(null)
   const [accurateRendering, setAccurateRendering] = useState(false)
   const [accurateError, setAccurateError] = useState<string | null>(null)
+  const [subtitleOverlay, setSubtitleOverlay] = useState<SubtitleOverlayResult | null>(null)
+  const [subtitleOverlayRendering, setSubtitleOverlayRendering] = useState(false)
+  const [subtitleOverlayError, setSubtitleOverlayError] = useState<string | null>(null)
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
   const requestRef = useRef<number | null>(null)
   const lastFrameRef = useRef<number>(0)
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const audioRefs = useRef(new Map<string, HTMLAudioElement>())
   const accurateRequestSequence = useRef(0)
+  const subtitleOverlayRequestSequence = useRef(0)
+  const playheadRef = useRef(playheadUs)
+  playheadRef.current = playheadUs
   const durationUs = Math.max(renderPlan?.durationUs ?? projectDurationUs(project), 1_000_000)
+
+  const activeSubtitleState = useMemo(() => {
+    const active = activeSubtitleClips(project, playheadUs)
+    return {
+      active,
+      hasAnimated: active.some(({ clip }) => clip.style.animation !== 'none'),
+      key: subtitleVisualStateKey(project, playheadUs)
+    }
+  }, [playheadUs, project])
 
   useEffect(() => {
     if (!window.spectra) {
@@ -140,6 +149,33 @@ export default function Preview(): React.JSX.Element {
     }, 180)
     return () => window.clearTimeout(timeout)
   }, [playheadUs, playing, project])
+
+  useEffect(() => {
+    const sequence = ++subtitleOverlayRequestSequence.current
+    setSubtitleOverlayError(null)
+    if (!playing || !window.spectra || activeSubtitleState.active.length === 0 || activeSubtitleState.hasAnimated) {
+      setSubtitleOverlay(null)
+      setSubtitleOverlayRendering(false)
+      return
+    }
+    setSubtitleOverlay(null)
+    setSubtitleOverlayRendering(true)
+    const api = window.spectra
+    const timeout = window.setTimeout(() => {
+      void api.renderSubtitleOverlay(project, playheadRef.current)
+        .then((result) => {
+          if (sequence !== subtitleOverlayRequestSequence.current || !useEditorStore.getState().playing) return
+          setSubtitleOverlay(result)
+          setSubtitleOverlayRendering(false)
+        })
+        .catch((error: unknown) => {
+          if (sequence !== subtitleOverlayRequestSequence.current || !useEditorStore.getState().playing) return
+          setSubtitleOverlayRendering(false)
+          setSubtitleOverlayError(error instanceof Error ? error.message : '字幕overlayを生成できませんでした')
+        })
+    }, 0)
+    return () => window.clearTimeout(timeout)
+  }, [activeSubtitleState.hasAnimated, activeSubtitleState.key, activeSubtitleState.active.length, playing, project])
 
   useLayoutEffect(() => {
     const element = canvasRef.current
@@ -186,6 +222,7 @@ export default function Preview(): React.JSX.Element {
   const subtitles = useMemo(() => project.tracks
     .filter((track) => track.kind === 'subtitle' && !track.hidden && !track.muted)
     .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && activeAt(clip, playheadUs) && (!plannedCaptionIds || plannedCaptionIds.has(clip.id)))), [plannedCaptionIds, playheadUs, project])
+  const showCssSubtitles = activeSubtitleState.hasAnimated || (!playing && !accurateFrame) || (playing && Boolean(subtitleOverlayError))
   const scale = viewportSize.width > 0 && viewportSize.height > 0
     ? Math.min(viewportSize.width / project.sequence.width, viewportSize.height / project.sequence.height)
     : 1
@@ -225,8 +262,9 @@ export default function Preview(): React.JSX.Element {
         <button type="button">ソース</button>
         <button type="button" className="is-active">完成映像</button>
         <span className="viewer-quality" aria-live="polite">
-          <i />{playing ? '高速プレビュー' : accurateRendering ? '正確プレビュー更新中…' : accurateFrame ? '正確プレビュー' : '正確プレビュー生成中…'}
+          <i />{playing ? subtitleOverlayRendering ? '高速プレビュー（字幕生成中…）' : '高速プレビュー' : accurateRendering ? '正確プレビュー更新中…' : accurateFrame ? '正確プレビュー' : '正確プレビュー生成中…'}
           {accurateError && <small className="preview-accurate-error" title={accurateError}>取得失敗</small>}
+          {subtitleOverlayError && <small className="preview-accurate-error" title={subtitleOverlayError}>字幕fallback</small>}
         </span>
       </header>
       <div className="viewer-stage">
@@ -246,12 +284,12 @@ export default function Preview(): React.JSX.Element {
             })}
             {visuals.length === 0 && <div className="viewer-placeholder"><Play size={34} /><span>再生位置に映像がありません</span></div>}
             <div className="safe-guides" aria-hidden="true"><i /></div>
-            {subtitles.map((subtitle) => (
+            {showCssSubtitles && subtitles.map((subtitle) => (
               (() => {
                 const spec = buildSubtitleRenderSpec(subtitle, project.sequence)
                 const textStyle = {
                   fontFamily: spec.fontFamily,
-                  fontSize: `${spec.fontSizePx * fastSubtitleFontMetricScale(spec.fontFamily)}px`,
+                  fontSize: `${spec.fontSizePx}px`,
                   fontWeight: spec.bold ? 700 : 400,
                   fontStyle: spec.italic ? 'italic' : 'normal' as const,
                   letterSpacing: `${spec.letterSpacingPx}px`,
@@ -263,6 +301,7 @@ export default function Preview(): React.JSX.Element {
                   type="button"
                   key={subtitle.id}
                   className={`preview-subtitle subtitle-${spec.animation} anchor-${spec.anchor}`}
+                  data-subtitle-renderer="css-fallback"
                   onClick={() => selectClip(subtitle.id)}
                   style={{
                     left: `${spec.xPx}px`,
@@ -306,6 +345,15 @@ export default function Preview(): React.JSX.Element {
                 </button>
               })()
             ))}
+            {playing && subtitleOverlay && !activeSubtitleState.hasAnimated && window.spectra && (
+              <img
+                className="fast-authoritative-subtitle-overlay"
+                data-subtitle-renderer="authoritative-libass"
+                src={window.spectra.mediaUrl(subtitleOverlay.framePath)}
+                alt=""
+                draggable={false}
+              />
+            )}
             {!playing && accurateFrame && window.spectra && (
               <img
                 className="accurate-preview-overlay"

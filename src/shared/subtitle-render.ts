@@ -1,5 +1,5 @@
 import { subtitleMaxWidthPercent, wrapSubtitleText } from './subtitle-layout.js'
-import type { SequenceSettings, SubtitleClip, SubtitleStyle } from './types.js'
+import type { ProjectFile, SequenceSettings, SubtitleClip, SubtitleStyle } from './types.js'
 
 export type SubtitleAnchor = SubtitleStyle['alignment']
 
@@ -70,3 +70,29 @@ export const subtitleAnchorTransform = (anchor: SubtitleAnchor): string => {
   if (anchor === 'middle') return 'translate(-50%, -50%)'
   return 'translate(-50%, -100%)'
 }
+
+export const activeSubtitleClips = (project: ProjectFile, timeUs: number): Array<{ clip: SubtitleClip; trackIndex: number }> => project.tracks
+  .flatMap((track, trackIndex) => track.kind === 'subtitle' && !track.hidden && !track.muted
+    ? track.clips
+      .filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && clip.enabled && clip.durationUs > 0 && clip.startUs <= timeUs && timeUs < clip.startUs + clip.durationUs && clip.text.trim().length > 0)
+      .map((clip) => ({ clip, trackIndex }))
+    : [])
+  .sort((left, right) => left.clip.startUs - right.clip.startUs || left.trackIndex - right.trackIndex || left.clip.id.localeCompare(right.clip.id))
+
+/**
+ * Cache identity for the active subtitle visual state. Media assets are deliberately
+ * excluded: a subtitle-only overlay is independent of the video source.
+ */
+export const subtitleVisualStateKey = (project: ProjectFile, timeUs: number): string => JSON.stringify({
+  sequence: {
+    width: project.sequence.width,
+    height: project.sequence.height,
+    frameRate: project.sequence.frameRate
+  },
+  active: activeSubtitleClips(project, timeUs).map(({ clip, trackIndex }) => ({
+    clipId: clip.id,
+    trackIndex,
+    text: clip.text,
+    style: clip.style
+  }))
+})

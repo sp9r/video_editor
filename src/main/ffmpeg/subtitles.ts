@@ -186,10 +186,10 @@ export const generateAss = (project: ProjectFile): string => {
       const text = `{${override}${blurOverride}}${escapeAssText(spec.wrappedText)}`
       return `Dialogue: ${eventLayer},${assTime(start)},${assTime(end, true)},${styleName},,0,0,0,,${text}`
     }
-    const shadow = hasVisibleColor(spec.shadowColor)
-      ? renderEvent(`Cue${index}Shadow`, x + Math.round(spec.shadowOffsetXPx), y + Math.round(spec.shadowOffsetYPx), layer, true)
-      : undefined
     const background = spec.backgroundOpacity > 0 ? renderEvent(`Cue${index}Background`, x, y, layer) : undefined
+    const shadow = hasVisibleColor(spec.shadowColor)
+      ? renderEvent(`Cue${index}Shadow`, x + Math.round(spec.shadowOffsetXPx), y + Math.round(spec.shadowOffsetYPx), layer + (background ? 1 : 0), true)
+      : undefined
     const main = renderEvent(`Cue${index}`, x, y, layer + (shadow ? 1 : 0) + (background ? 1 : 0))
     return [background, shadow, main].filter((event): event is string => event !== undefined)
   })

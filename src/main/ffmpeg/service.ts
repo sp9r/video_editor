@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import type {
   EncoderReport,
   AccuratePreviewFrameResult,
+  SubtitleOverlayResult,
   ExportProgress,
   ExportSettings,
   ProbeResult,
@@ -22,15 +23,17 @@ import { probeMediaFile, probeMediaFileSafe, validateRenderedOutput } from './pr
 import {
   buildRenderCommandArgs,
   buildAccurateFrameFilterGraph,
+  buildSubtitleOverlayFilterGraph,
   buildRenderFilterGraph,
   createRenderPlan,
   ffmpegSupportsFileBackedOptions,
   type RenderPlan
 } from './render-plan.js'
-import { generateSrt } from './subtitles.js'
+import { generateAss, generateSrt } from './subtitles.js'
 import { WaveformExtractor } from './waveform.js'
 import type { WaveformRequest } from '../../shared/types.js'
 import { frameIndexForTime, timeUsForFrameIndex } from '../../shared/frame-time.js'
+import { activeSubtitleClips, subtitleVisualStateKey } from '../../shared/subtitle-render.js'
 
 export interface FfmpegServiceOptions {
   ffmpegPath?: string | null
@@ -57,6 +60,10 @@ export interface ExportResult {
 export interface AccurateFrameOptions {
   width?: number
   height?: number
+  signal?: AbortSignal
+}
+
+export interface SubtitleOverlayOptions {
   signal?: AbortSignal
 }
 
@@ -116,6 +123,8 @@ export const createFfmpegProgressParser = (
 
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
+const subtitleOverlayRendererVersion = 'phase4r4-alpha-layer2'
+
 const frameDurationUs = (plan: RenderPlan): number =>
   Math.ceil(plan.frameRateDenominator * 1_000_000 / plan.frameRateNumerator)
 
@@ -135,6 +144,22 @@ const moveIntoPlace = async (temporaryPath: string, outputPath: string): Promise
       throw replacementError
     }
   }
+}
+
+const trimSubtitleOverlayDiskCache = async (directory: string, maximum = 64): Promise<void> => {
+  const entries = await readdir(directory, { withFileTypes: true })
+  const files = (await Promise.all(entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.png'))
+    .map(async (entry) => {
+      const path = join(directory, entry.name)
+      try {
+        return { path, modifiedAt: (await stat(path)).mtimeMs }
+      } catch {
+        return null
+      }
+    }))).filter((entry): entry is { path: string; modifiedAt: number } => entry !== null)
+  files.sort((left, right) => left.modifiedAt - right.modifiedAt)
+  await Promise.all(files.slice(0, Math.max(0, files.length - maximum)).map((entry) => rm(entry.path, { force: true })))
 }
 
 const assertInputFile = async (path: string): Promise<void> => {
@@ -198,6 +223,7 @@ export class FfmpegService {
   readonly vaapiDevice?: string
   readonly #jobs = new Map<string, ActiveJob>()
   readonly #accurateFrames = new Map<string, Promise<AccuratePreviewFrameResult> | AccuratePreviewFrameResult>()
+  readonly #subtitleOverlays = new Map<string, Promise<SubtitleOverlayResult> | SubtitleOverlayResult>()
 
   constructor(paths: FfmpegPaths, options: Omit<FfmpegServiceOptions, 'paths' | 'ffmpegPath' | 'ffprobePath'> = {}) {
     this.paths = paths
@@ -226,6 +252,16 @@ export class FfmpegService {
 
   async getWaveformPeaks(request: WaveformRequest): Promise<number[]> {
     return await this.waveform.getPeaks(request)
+  }
+
+  /** Test/smoke-only reset for the bounded subtitle overlay workspace. */
+  async clearSubtitleOverlayCache(): Promise<void> {
+    this.#subtitleOverlays.clear()
+    await rm(join(this.workspaceRoot, 'subtitle-overlay'), { recursive: true, force: true })
+  }
+
+  get subtitleOverlayCacheSize(): number {
+    return this.#subtitleOverlays.size
   }
 
   async renderAccurateFrame(
@@ -286,6 +322,54 @@ export class FfmpegService {
     }
   }
 
+  async renderSubtitleOverlay(
+    project: ProjectFile,
+    requestedTimeUs: number,
+    options: SubtitleOverlayOptions = {}
+  ): Promise<SubtitleOverlayResult> {
+    if (!Number.isFinite(requestedTimeUs) || requestedTimeUs < 0) throw new Error('Subtitle overlay time must be a finite non-negative number')
+    const fps = {
+      numerator: Math.max(1, Math.round(project.sequence.frameRate.numerator)),
+      denominator: Math.max(1, Math.round(project.sequence.frameRate.denominator))
+    }
+    const frameIndex = frameIndexForTime(requestedTimeUs, fps)
+    const renderedTimeUs = timeUsForFrameIndex(frameIndex, fps)
+    const active = activeSubtitleClips(project, renderedTimeUs)
+    if (active.some(({ clip }) => clip.style.animation !== 'none')) {
+      throw new Error('Animated subtitles use the CSS fallback until authoritative animation segments are implemented')
+    }
+    const subtitleStateFingerprint = createHash('sha256').update(subtitleVisualStateKey(project, renderedTimeUs)).digest('hex')
+    const cacheKey = createHash('sha256').update(JSON.stringify({
+      rendererVersion: subtitleOverlayRendererVersion,
+      width: Math.max(16, Math.round(project.sequence.width)),
+      height: Math.max(16, Math.round(project.sequence.height)),
+      fps,
+      subtitleStateFingerprint
+    })).digest('hex')
+    const cached = this.#subtitleOverlays.get(cacheKey)
+    if (cached) return await cached
+    const promise = this.#renderSubtitleOverlay(project, cacheKey, {
+      frameIndex,
+      renderedTimeUs,
+      subtitleStateFingerprint,
+      signal: options.signal
+    })
+    this.#subtitleOverlays.set(cacheKey, promise)
+    while (this.#subtitleOverlays.size > 64) {
+      const oldest = this.#subtitleOverlays.keys().next().value
+      if (!oldest || oldest === cacheKey) break
+      const value = this.#subtitleOverlays.get(oldest)
+      this.#subtitleOverlays.delete(oldest)
+      void Promise.resolve(value).then((result) => result ? rm(result.framePath, { force: true }) : undefined).catch(() => undefined)
+    }
+    try {
+      return await promise
+    } catch (error) {
+      if (this.#subtitleOverlays.get(cacheKey) === promise) this.#subtitleOverlays.delete(cacheKey)
+      throw error
+    }
+  }
+
   async #renderAccurateFrame(
     plan: RenderPlan,
     cacheKey: string,
@@ -340,6 +424,81 @@ export class FfmpegService {
       if (!rendered.isFile() || rendered.size === 0) throw new Error('Accurate preview renderer produced an empty frame')
       await moveIntoPlace(temporaryPath, outputPath)
       return { framePath: outputPath, ...metadata }
+    } finally {
+      await Promise.all([
+        rm(temporaryPath, { force: true }).catch(() => undefined),
+        rm(filterGraphPath, { force: true }).catch(() => undefined),
+        rm(assPath, { force: true }).catch(() => undefined)
+      ])
+    }
+  }
+
+  async #renderSubtitleOverlay(
+    project: ProjectFile,
+    cacheKey: string,
+    metadata: Omit<SubtitleOverlayResult, 'framePath'> & { renderedTimeUs: number; signal?: AbortSignal }
+  ): Promise<SubtitleOverlayResult> {
+    const directory = join(this.workspaceRoot, 'subtitle-overlay')
+    const outputPath = join(directory, `${cacheKey}.png`)
+    try {
+      const existing = await stat(outputPath)
+      if (existing.isFile() && existing.size > 0) {
+        return { framePath: outputPath, frameIndex: metadata.frameIndex, subtitleStateFingerprint: metadata.subtitleStateFingerprint }
+      }
+    } catch {
+      // The bounded memory/disk cache is best effort; render a missing entry again.
+    }
+    await mkdir(directory, { recursive: true })
+    const token = randomUUID()
+    const temporaryPath = join(directory, `.${cacheKey}.${token}.png`)
+    const filterGraphPath = join(directory, `.${cacheKey}.${token}.ffgraph`)
+    const assFileName = `${cacheKey}.ass`
+    const assPath = join(directory, assFileName)
+    const width = Math.max(16, Math.round(project.sequence.width))
+    const height = Math.max(16, Math.round(project.sequence.height))
+    const numerator = Math.max(1, Math.round(project.sequence.frameRate.numerator))
+    const denominator = Math.max(1, Math.round(project.sequence.frameRate.denominator))
+    try {
+      await Promise.all([
+        writeFile(filterGraphPath, buildSubtitleOverlayFilterGraph(width, height, numerator, denominator, metadata.renderedTimeUs, assFileName), 'utf8'),
+        writeFile(assPath, generateAss(project), 'utf8')
+      ])
+      await this.executor.run({
+        command: this.paths.ffmpegPath,
+        args: [
+          '-hide_banner',
+          '-y',
+          '-loglevel',
+          'warning',
+          '-f',
+          'lavfi',
+          '-i',
+          `color=c=black@0.0:s=${width}x${height}:r=${numerator}/${denominator}:d=${(Math.ceil(denominator * 1_000_000 / numerator) / 1_000_000).toFixed(6)}`,
+          '-filter_complex_script',
+          filterGraphPath,
+          '-map',
+          '[vout]',
+          '-frames:v',
+          '1',
+          '-an',
+          '-c:v',
+          'png',
+          '-pix_fmt',
+          'rgba',
+          '-f',
+          'image2',
+          temporaryPath
+        ],
+        cwd: directory,
+        signal: metadata.signal,
+        timeoutMs: 120_000,
+        maxOutputBytes: 32 * 1024 * 1024
+      })
+      const rendered = await stat(temporaryPath)
+      if (!rendered.isFile() || rendered.size === 0) throw new Error('Subtitle overlay renderer produced an empty frame')
+      await moveIntoPlace(temporaryPath, outputPath)
+      await trimSubtitleOverlayDiskCache(directory)
+      return { framePath: outputPath, frameIndex: metadata.frameIndex, subtitleStateFingerprint: metadata.subtitleStateFingerprint }
     } finally {
       await Promise.all([
         rm(temporaryPath, { force: true }).catch(() => undefined),
