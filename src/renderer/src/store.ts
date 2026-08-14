@@ -11,6 +11,7 @@ import {
   relinkMediaAsset,
   replaceTrack,
   shiftClipTimeline,
+  SubtitleCollisionError,
   validateProject,
   updateClip
 } from '../../shared/project'
@@ -252,11 +253,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   moveSelected: (clipId, trackId, atUs) => {
     try { get().applyProject(moveLinkedClip(get().project, clipId, trackId, atUs)) }
-    catch (error) { if (error instanceof EditingOperationError) get().showNotice(error.message, 'warning'); else throw error }
+    catch (error) {
+      if (error instanceof EditingOperationError || error instanceof SubtitleCollisionError) get().showNotice(error.message, 'warning')
+      else throw error
+    }
   },
   trim: (clipId, edge, atUs) => {
     try { get().applyProject(trimLinkedClip(get().project, clipId, edge, atUs)) }
-    catch (error) { if (error instanceof EditingOperationError) get().showNotice(error.message, 'warning'); else throw error }
+    catch (error) {
+      if (error instanceof EditingOperationError || error instanceof SubtitleCollisionError) get().showNotice(error.message, 'warning')
+      else throw error
+    }
   },
   splitSelected: () => {
     const { project, selectedClipIds, playheadUs } = get()

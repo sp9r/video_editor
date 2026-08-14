@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { addClipToTrack, createClipForAsset, createEmptyProject, createTrack, deleteClips } from '../../src/shared/project'
+import { addClipToTrack, createClipForAsset, createEmptyProject, createTrack, deleteClips, snapUsToFrame, SubtitleCollisionError, validateProject } from '../../src/shared/project'
 import { inferLinkedAudioPairs } from '../../src/shared/editing/links'
 import { deleteLinkedClips, EditingOperationError, moveLinkedClip, splitLinkedClip, trimLinkedClip } from '../../src/shared/editing/operations'
-import type { MediaAsset, ProjectFile } from '../../src/shared/types'
+import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
+import type { MediaAsset, ProjectFile, SubtitleClip } from '../../src/shared/types'
 
 const videoAsset: MediaAsset = {
   id: 'media-main', name: 'source.mp4', path: 'C:\\media\\source.mp4', kind: 'video', durationUs: 10_000_000,
@@ -22,6 +23,28 @@ const linkedProject = (): ProjectFile => {
   const audio = { ...createClipForAsset(audioAsset, 0, 4_000_000), id: 'audio-1', linkGroupId: 'group-1' }
   project = addClipToTrack(project, project.tracks.find((track) => track.kind === 'media')!.id, video)
   return addClipToTrack(project, project.tracks.filter((track) => track.kind === 'media')[1]!.id, audio)
+}
+
+const subtitle = (id: string, startUs: number, durationUs: number): SubtitleClip => ({
+  id,
+  name: id,
+  kind: 'subtitle',
+  startUs,
+  durationUs,
+  sourceInUs: startUs,
+  enabled: true,
+  text: id,
+  style: structuredClone(DEFAULT_SUBTITLE_STYLE)
+})
+
+const collisionProject = (): ProjectFile => {
+  const project = createEmptyProject('subtitle collision')
+  const track = project.tracks.find((candidate) => candidate.kind === 'subtitle')!
+  track.clips = [
+    subtitle('moving', 17_020_000, 1_020_000),
+    subtitle('cap_000012', 18_040_000, 2_000_000)
+  ]
+  return validateProject(project)
 }
 
 describe('contract link inference', () => {
@@ -56,6 +79,42 @@ describe('contract link inference', () => {
 })
 
 describe('linked editing operations', () => {
+  it('rejects an overlapping subtitle move atomically after frame snapping', () => {
+    const project = collisionProject()
+    const before = structuredClone(project)
+    const requestedAtUs = 17_020_000 + (20 / 72) * 1_000_000
+    const snappedStartUs = snapUsToFrame(requestedAtUs, project)
+    const moving = project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'moving')!
+    const neighbor = project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'cap_000012')!
+    const overlapUs = Math.min(snappedStartUs + moving.durationUs, neighbor.startUs + neighbor.durationUs) - Math.max(snappedStartUs, neighbor.startUs)
+
+    expect(snappedStartUs).toBe(17_300_000)
+    expect(overlapUs).toBe(280_000)
+    expect(() => moveLinkedClip(project, 'moving', project.tracks.find((track) => track.kind === 'subtitle')!.id, requestedAtUs)).toThrow(SubtitleCollisionError)
+    expect(project).toEqual(before)
+  })
+
+  it('moves a subtitle into a real gap without collision', () => {
+    const project = fixtureForMoveGap()
+    const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle')!
+    const next = moveLinkedClip(project, 'caption-a', subtitleTrack.id, 3_600_000)
+    expect(next.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'caption-a')).toMatchObject({ startUs: 3_600_000, durationUs: 1_000_000 })
+  })
+
+  it('moves a subtitle across tracks without applying same-track collision rules', () => {
+    const project = fixtureForMoveGap()
+    const secondTrack = createTrack('subtitle', 2)
+    const withSecondTrack = { ...project, tracks: [...project.tracks, secondTrack] }
+    const next = moveLinkedClip(withSecondTrack, 'caption-a', secondTrack.id, 3_600_000)
+    expect(next.tracks.find((track) => track.id === secondTrack.id)?.clips.map((clip) => clip.id)).toContain('caption-a')
+    expect(next.tracks.find((track) => track.kind === 'subtitle' && track.id !== secondTrack.id)?.clips.map((clip) => clip.id)).not.toContain('caption-a')
+  })
+
+  it('trims a subtitle in a valid direction without changing its word boundary contract', () => {
+    const next = trimLinkedClip(fixtureForMoveGap(), 'caption-a', 'end', 900_000)
+    expect(next.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'caption-a')).toMatchObject({ startUs: 0, durationUs: 900_000 })
+  })
+
   it('moves both clips while moving only the selected clip to a compatible track', () => {
     const project = linkedProject()
     const videoTracks = project.tracks.filter((track) => track.kind === 'media')
@@ -105,3 +164,14 @@ describe('linked editing operations', () => {
     expect(deleted.tracks.find((track) => track.id === trackId)!.clips.find((clip) => clip.id === 'keep')?.startUs).toBe(6_000_000)
   })
 })
+
+const fixtureForMoveGap = (): ProjectFile => {
+  const project = createEmptyProject('subtitle move gap')
+  const track = project.tracks.find((candidate) => candidate.kind === 'subtitle')!
+  track.clips = [
+    subtitle('caption-a', 0, 1_000_000),
+    subtitle('caption-b', 1_200_000, 1_000_000),
+    subtitle('caption-c', 2_400_000, 1_000_000)
+  ]
+  return validateProject(project)
+}

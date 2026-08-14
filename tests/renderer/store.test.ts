@@ -18,7 +18,32 @@ const fixture = (): ProjectFile => {
   return addClipToTrack(project, project.tracks.filter((track) => track.kind === 'media')[1]!.id, audio)
 }
 
+const collisionFixture = (): ProjectFile => {
+  const project = createEmptyProject('collision warning')
+  const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle')!
+  subtitleTrack.clips = [
+    { id: 'moving', name: 'moving', kind: 'subtitle', startUs: 17_020_000, durationUs: 1_020_000, sourceInUs: 17_020_000, enabled: true, text: 'moving', style: structuredClone(DEFAULT_SUBTITLE_STYLE) },
+    { id: 'neighbor', name: 'neighbor', kind: 'subtitle', startUs: 18_040_000, durationUs: 2_000_000, sourceInUs: 18_040_000, enabled: true, text: 'neighbor', style: structuredClone(DEFAULT_SUBTITLE_STYLE) }
+  ]
+  return project
+}
+
 describe('editor history and linked selection', () => {
+  it('turns an intentional subtitle collision into a warning without mutating editor state', () => {
+    useEditorStore.getState().loadProject(collisionFixture())
+    useEditorStore.getState().clearNotice()
+    useEditorStore.getState().selectClip('moving')
+    const before = structuredClone(useEditorStore.getState().project)
+    useEditorStore.getState().moveSelected('moving', useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.id, 17_297_777.777777776)
+    const state = useEditorStore.getState()
+    expect(state.project).toEqual(before)
+    expect(state.past).toHaveLength(0)
+    expect(state.future).toHaveLength(0)
+    expect(state.dirty).toBe(false)
+    expect(state.selectedClipIds).toEqual(['moving'])
+    expect(state.notice).toMatchObject({ tone: 'warning', message: '字幕クリップ neighbor が同じ字幕トラック上の別クリップと重なっています。' })
+  })
+
   it('selects a linked pair and coalesces an inspector session into one undo step', () => {
     const project = fixture()
     useEditorStore.getState().loadProject(project)
