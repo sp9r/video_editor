@@ -8,6 +8,12 @@ import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanCl
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
 
+const FAST_SUBTITLE_FONT_METRIC_SCALE = 0.67
+const FAST_SUBTITLE_FALLBACK_FONT_METRIC_SCALE = 0.9
+
+const fastSubtitleFontMetricScale = (fontFamily: string): number =>
+  /Noto Sans JP/iu.test(fontFamily) ? FAST_SUBTITLE_FONT_METRIC_SCALE : FAST_SUBTITLE_FALLBACK_FONT_METRIC_SCALE
+
 const activeAt = (clip: { startUs: number; durationUs: number; enabled: boolean }, timeUs: number): boolean =>
   clip.enabled && clip.startUs <= timeUs && clip.startUs + clip.durationUs > timeUs
 
@@ -245,7 +251,7 @@ export default function Preview(): React.JSX.Element {
                 const spec = buildSubtitleRenderSpec(subtitle, project.sequence)
                 const textStyle = {
                   fontFamily: spec.fontFamily,
-                  fontSize: `${spec.fontSizePx}px`,
+                  fontSize: `${spec.fontSizePx * fastSubtitleFontMetricScale(spec.fontFamily)}px`,
                   fontWeight: spec.bold ? 700 : 400,
                   fontStyle: spec.italic ? 'italic' : 'normal' as const,
                   letterSpacing: `${spec.letterSpacingPx}px`,

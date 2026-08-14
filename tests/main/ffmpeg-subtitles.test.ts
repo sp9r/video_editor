@@ -103,7 +103,7 @@ describe('subtitle serialization', () => {
     }
     if (stylePatch.backgroundOpacity > 0) {
       const backgroundStyle = ass.split('\n').find((line) => line.startsWith('Style: Cue0Background,'))
-      expect(backgroundStyle).toContain(',3,0.00,0.00,2,')
+      expect(backgroundStyle).toContain(',3,14.00,0.00,2,')
       expect(mainStyle).toContain(',1,')
     } else expect(mainStyle).toContain(',1,')
   })
@@ -137,7 +137,7 @@ describe('subtitle serialization', () => {
     const mainStyle = ass.split('\n').find((line) => line.startsWith('Style: Cue0,'))
     expect(spec).toMatchObject({ fontSizePx: 123, xPx: 960, yPx: 928.8, outlineWidthPx: 14, shadowBlurPx: 24, backgroundOpacity: 0.15 })
     const backgroundStyle = ass.split('\n').find((line) => line.startsWith('Style: Cue0Background,'))
-    expect(backgroundStyle).toContain(',3,0.00,0.00,2,')
+    expect(backgroundStyle).toContain(',3,14.00,0.00,2,')
     expect(mainStyle).toContain(',1,14.00,0.00,2,')
     expect(ass).toContain('Style: Cue0Shadow,')
     expect(ass.match(/Dialogue:/gu)).toHaveLength(3)

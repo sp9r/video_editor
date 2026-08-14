@@ -107,9 +107,10 @@ type AssStyleRole = 'main' | 'shadow' | 'background'
 const styleLine = (spec: SubtitleRenderSpec, index: number, role: AssStyleRole = 'main'): string => {
   const isShadow = role === 'shadow'
   const isBackground = role === 'background'
-  const primaryColor = isShadow ? assColor(spec.shadowColor) : isBackground ? assColor('#00000000') : assColor(spec.color)
-  const outlineColor = isShadow || isBackground ? assColor('#00000000') : assColor(spec.outlineColor)
-  const backColor = isBackground ? assColor(spec.backgroundColor, spec.backgroundOpacity) : assColor('#00000000')
+  const backgroundColor = assColor(spec.backgroundColor, spec.backgroundOpacity)
+  const primaryColor = isShadow ? assColor(spec.shadowColor) : isBackground ? backgroundColor : assColor(spec.color)
+  const outlineColor = isBackground ? backgroundColor : isShadow ? assColor('#00000000') : assColor(spec.outlineColor)
+  const backColor = isBackground ? backgroundColor : assColor('#00000000')
   return [
     `Style: Cue${index}${isShadow ? 'Shadow' : isBackground ? 'Background' : ''}`,
     safeFont(spec.fontFamily),
@@ -127,7 +128,7 @@ const styleLine = (spec: SubtitleRenderSpec, index: number, role: AssStyleRole =
     spec.letterSpacingPx.toFixed(2),
     0,
     isBackground ? 3 : 1,
-    isShadow || isBackground ? '0.00' : spec.outlineWidthPx.toFixed(2),
+    isShadow ? '0.00' : isBackground ? Math.max(1, spec.outlineWidthPx).toFixed(2) : spec.outlineWidthPx.toFixed(2),
     '0.00',
     assAlignment(spec.anchor),
     10,
