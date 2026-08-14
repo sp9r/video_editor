@@ -20,12 +20,29 @@ import {
   ZoomOut
 } from 'lucide-react'
 import { formatTimecode, layoutSubtitleTracks, makeId } from '../../../shared/project'
-import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type TimelineClip, type TimelineTrack } from '../../../shared/types'
+import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type SubtitleClip, type SubtitleWord, type TimelineClip, type TimelineTrack } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
 import { Button, IconButton } from './Controls'
 import { peakCountForPixelWidth, Waveform } from './Waveform'
 
 const seconds = (timeUs: number): number => timeUs / 1_000_000
+
+export interface SubtitleWordGeometry {
+  leftPercent: number
+  widthPercent: number
+}
+
+/** Maps a word's absolute timeline timing to its containing subtitle clip. */
+export const subtitleWordGeometry = (
+  clip: Pick<SubtitleClip, 'startUs' | 'durationUs'>,
+  word: Pick<SubtitleWord, 'startUs' | 'endUs'>
+): SubtitleWordGeometry => ({
+  leftPercent: ((word.startUs - clip.startUs) / clip.durationUs) * 100,
+  widthPercent: ((word.endUs - word.startUs) / clip.durationUs) * 100
+})
+
+export const subtitleWordGeometries = (clip: SubtitleClip): Array<SubtitleWordGeometry & { word: SubtitleWord }> =>
+  (clip.words ?? []).map((word) => ({ word, ...subtitleWordGeometry(clip, word) }))
 
 export const isTextEditingTarget = (target: EventTarget | null): boolean => {
   const element = target as HTMLElement | null
@@ -376,6 +393,21 @@ export default function Timeline(): React.JSX.Element {
                       title={`${clip.name}\n${seconds(clip.durationUs).toFixed(2)} 秒\n右クリックで編集操作`}
                     >
                       <button type="button" className="trim-handle trim-start" aria-label="開始位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-start', track.id)} />
+                      {clip.kind === 'subtitle' && clip.words?.length ? (
+                        <div className="subtitle-word-layer" aria-hidden="true">
+                          {subtitleWordGeometries(clip).map(({ word, leftPercent, widthPercent }) => (
+                            <span
+                              key={word.id}
+                              className="subtitle-word-unit"
+                              data-word-id={word.id}
+                              style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
+                              title={`${word.text}\n${seconds(word.startUs).toFixed(3)}–${seconds(word.endUs).toFixed(3)} 秒`}
+                            >
+                              {word.text}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                       <span className="clip-content">{clipGlyph(clip)}{clip.linkGroupId ? <Link2 size={12} aria-label="リンクされたクリップ" /> : null}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
                       {clip.kind === 'audio' || clip.kind === 'video' ? <Waveform asset={project.media.find((asset) => asset.id === clip.assetId)} clip={clip} peakCount={peakCountForPixelWidth(visualWidth)} /> : null}
                       <button type="button" className="trim-handle trim-end" aria-label="終了位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-end', track.id)} />

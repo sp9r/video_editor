@@ -672,6 +672,9 @@ select {
 .timeline-clip.is-selected { z-index: 3; border-color: #f5fffc; box-shadow: 0 0 0 2px var(--mint), 0 3px 10px rgb(0 0 0 / .45); }
 .timeline-clip.is-disabled { opacity: .35; filter: grayscale(.65); }
 .timeline-clip.is-dragging { z-index: 8; opacity: .85; box-shadow: 0 6px 16px rgb(0 0 0 / .5); }
+.subtitle-word-layer { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.subtitle-word-unit { position: absolute; top: 0; bottom: 0; overflow: hidden; min-width: 0; padding: 20px 2px 2px; color: rgb(255 240 216 / .72); font-size: 7px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; border-left: 1px solid rgb(255 240 216 / .58); }
+.subtitle-word-unit:first-child { border-left: 0; }
 .clip-content { position: relative; z-index: 2; display: flex; align-items: center; gap: 5px; padding: 4px 7px; pointer-events: none; }
 .clip-content strong { overflow: hidden; font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .film-glyph { font-size: 10px; }
