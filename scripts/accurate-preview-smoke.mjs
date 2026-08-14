@@ -69,7 +69,7 @@ try {
   if (!line) throw new Error(`Accurate Preview report was not emitted.\n${output}`)
   const report = JSON.parse(line.slice('SPECTRA_ACCURATE_PREVIEW_REPORT '.length))
   if (exitCode !== 0 || report.error) throw new Error(`Accurate Preview smoke failed.\n${JSON.stringify(report)}\n${output}`)
-  if (!report.accurateInitial || !report.fastDuringPlay || !report.accurateAfterResume || report.overlayCount !== 1 || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone) {
+  if (!report.accurateInitial || !report.editPendingPreservesOverlay || !report.editedFrameReady || !report.fastDuringPlay || !report.overlayImmediatelyAfterPause || !report.accurateAfterResume || report.overlayCount !== 1 || report.initialOverlaySrc === report.editedOverlaySrc || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone) {
     throw new Error(`Accurate Preview DOM gate failed.\n${JSON.stringify(report)}\n${output}`)
   }
   console.log(JSON.stringify(report, null, 2))

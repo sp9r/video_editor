@@ -110,7 +110,6 @@ export default function Preview(): React.JSX.Element {
 
   useEffect(() => {
     const sequence = ++accurateRequestSequence.current
-    setAccurateFrame(null)
     setAccurateError(null)
     if (playing || !window.spectra) {
       setAccurateRendering(false)
@@ -219,7 +218,7 @@ export default function Preview(): React.JSX.Element {
         <button type="button">ソース</button>
         <button type="button" className="is-active">完成映像</button>
         <span className="viewer-quality" aria-live="polite">
-          <i />{playing ? '高速プレビュー' : accurateRendering ? '正確プレビュー生成中…' : accurateFrame ? '正確プレビュー' : '正確プレビュー待機'}
+          <i />{playing ? '高速プレビュー' : accurateRendering ? '正確プレビュー更新中…' : accurateFrame ? '正確プレビュー' : '正確プレビュー生成中…'}
           {accurateError && <small className="preview-accurate-error" title={accurateError}>取得失敗</small>}
         </span>
       </header>

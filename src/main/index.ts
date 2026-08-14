@@ -273,11 +273,12 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const detail = JSON.stringify({ project, timeUs: 500_000 })
   await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${detail} }))`)
   console.log('SPECTRA_ACCURATE_PREVIEW_STAGE project-dispatched')
-  const readDom = async (): Promise<{ overlay: boolean; quality: string; playButton: boolean; overlayCount: number }> => await window.webContents.executeJavaScript(`(() => ({
+  const readDom = async (): Promise<{ overlay: boolean; quality: string; playButton: boolean; overlayCount: number; overlaySrc: string }> => await window.webContents.executeJavaScript(`(() => ({
     overlay: document.querySelector('.accurate-preview-overlay') !== null,
     quality: document.querySelector('.viewer-quality')?.textContent ?? '',
     playButton: document.querySelector('.play-button') !== null,
-    overlayCount: document.querySelectorAll('.accurate-preview-overlay').length
+    overlayCount: document.querySelectorAll('.accurate-preview-overlay').length,
+    overlaySrc: document.querySelector('.accurate-preview-overlay')?.getAttribute('src') ?? ''
   }))()`)
   console.log('SPECTRA_ACCURATE_PREVIEW_STAGE dom-poll-start')
   const wait = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -293,12 +294,21 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const accurateInitial = await until((dom) => dom.overlay)
   const initialDom = await readDom()
   if (!initialDom.playButton) throw new Error('Preview play button is missing')
+  const initialOverlaySrc = initialDom.overlaySrc
+  const editedProject = structuredClone(project)
+  const editedSubtitle = editedProject.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === 'subtitle')
+  if (editedSubtitle?.kind === 'subtitle') editedSubtitle.text = 'Accurate Preview edited'
+  await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${JSON.stringify({ project: editedProject, timeUs: 500_000 })} }))`)
+  const pendingDom = await readDom()
+  const editPendingPreservesOverlay = pendingDom.overlay && pendingDom.overlaySrc === initialOverlaySrc && pendingDom.quality.includes('更新中')
+  const editedFrameReady = await until((dom) => dom.overlay && dom.overlaySrc !== initialOverlaySrc && dom.quality.includes('正確プレビュー'))
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
   const fastDuringPlay = await until((dom) => !dom.overlay && dom.quality.includes('高速'))
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
-  const accurateAfterResume = await until((dom) => dom.overlay)
+  const overlayImmediatelyAfterPause = (await readDom()).overlay
+  const accurateAfterResume = overlayImmediatelyAfterPause && await until((dom) => dom.overlay)
   const finalDom = await readDom()
-  const report = { accurateInitial, initialQuality: initialDom.quality, fastDuringPlay, accurateAfterResume, overlayCount: finalDom.overlayCount }
+  const report = { accurateInitial, initialQuality: initialDom.quality, editPendingPreservesOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount }
   return { ...startup, ...report }
 }
 
