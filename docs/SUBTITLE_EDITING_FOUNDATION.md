@@ -34,6 +34,8 @@ SubtitleClipには、利用可能な場合だけ`.spectra`内部拡張として`
 
 `edit_project.v1`のcaptionには、optionalな`words` editor metadataを追加できる。`words[].timeline`は最終sequence timeline上の秒であり、readerが絶対`startUs` / `endUs`へ変換する。単語タイミングがなければInspectorは「単語タイミング情報なし」と表示し、単語境界分割を無効にする。単語情報がある場合は、Inspectorのトークン間の「分割」ボタンだけが分割操作を開始する。wordsはrender必須ではなく、既存のwordsなしcontractは従来どおり読み込める。
 
+`edit_project.v1` wordsのreader validationは、serialized numberの`Number.toString()`表現から構成する内部Decimal value semantics（coefficient/scale）でcaption・wordの範囲を比較する。JSONの値は補正せず、quantizeやepsilon toleranceも使わないため、真のsub-microsecond overlapも拒否する。Project Modelへの変換は従来どおりmicrosecondsへ行う。
+
 clip_automationのwriterは`transcript_words.json`の決定的な`word_id`を`source-word:<word_id>`へ変換し、既存のcaption runと`map_timeline_interval_to_sequence()`でsequence timingを生成する。削除境界を跨ぐwordは従来どおりerrorとし、本文とword textの連結が一致する場合だけwordsを付与する。不一致時はcaptionをrender可能なままwordsをomitし、warning diagnosticを残す。source/original timeはこのbridgeで推測せず、`source_word_ids`の既存first/last range semanticsも維持する。
 
 分割時の規則:
