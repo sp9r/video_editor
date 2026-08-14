@@ -267,13 +267,15 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   if (!projectPath) throw new Error('SPECTRA_PREVIEW_E2E_PROJECT is required')
   console.log('SPECTRA_ACCURATE_PREVIEW_STAGE project-read')
   const project = validateProject(JSON.parse(await readFile(projectPath, 'utf8')) as ProjectFile)
+  const smokeSubtitle = project.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === 'subtitle')
+  const subtitleSpec = smokeSubtitle?.kind === 'subtitle' ? buildSubtitleRenderSpec(smokeSubtitle, project.sequence) : null
   const startup = await waitForRendererStartup(window)
   console.log('SPECTRA_ACCURATE_PREVIEW_STAGE renderer-ready')
   await new Promise((resolve) => setTimeout(resolve, 100))
   const detail = JSON.stringify({ project, timeUs: 500_000 })
   await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${detail} }))`)
   console.log('SPECTRA_ACCURATE_PREVIEW_STAGE project-dispatched')
-  const readDom = async (): Promise<{ viewport: { width: number; height: number }; overlay: boolean; overlayReady: boolean; quality: string; playButton: boolean; overlayCount: number; overlaySrc: string; subtitleMain: { x: number; y: number; width: number; height: number }; visual: { x: number; y: number; width: number; height: number } }> => await window.webContents.executeJavaScript(`(() => {
+  const readDom = async (): Promise<{ viewport: { width: number; height: number }; overlay: boolean; overlayReady: boolean; quality: string; playButton: boolean; overlayCount: number; overlaySrc: string; subtitleMain: { x: number; y: number; width: number; height: number }; subtitleStack: { x: number; y: number; width: number; height: number }; visual: { x: number; y: number; width: number; height: number } }> => await window.webContents.executeJavaScript(`(() => {
     const rect = (element) => {
       const value = element?.getBoundingClientRect()
       return value ? { x: value.x, y: value.y, width: value.width, height: value.height } : { x: 0, y: 0, width: 0, height: 0 }
@@ -287,6 +289,7 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
     overlayCount: document.querySelectorAll('.accurate-preview-overlay').length,
     overlaySrc: document.querySelector('.accurate-preview-overlay')?.getAttribute('src') ?? '',
     subtitleMain: rect(document.querySelector('.preview-subtitle-main')),
+    subtitleStack: rect(document.querySelector('.preview-subtitle-stack')),
     visual: rect(document.querySelector('.preview-visual'))
     }
   })()`)
@@ -306,13 +309,15 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const initialDom = await readDom()
   if (!initialDom.playButton) throw new Error('Preview play button is missing')
   const initialOverlaySrc = initialDom.overlaySrc
-  const accurateScreenshotPath = path.join(app.getPath('temp'), 'spectra-accurate-preview-phase4r2.png')
+  const screenshotTag = (process.env.SPECTRA_ACCURATE_PREVIEW_TAG ?? '').replace(/[^a-z0-9_-]/giu, '').slice(0, 48)
+  const screenshotSuffix = screenshotTag ? `-${screenshotTag}` : ''
+  const accurateScreenshotPath = path.join(app.getPath('temp'), `spectra-accurate-preview-phase4r2${screenshotSuffix}.png`)
   await waitForPaint()
   await writeFile(accurateScreenshotPath, (await window.webContents.capturePage()).toPNG())
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
   const fastFixture = await until((dom) => !dom.overlay && dom.quality.includes('高速'))
   const fastFixtureDom = await readDom()
-  const fastScreenshotPath = path.join(app.getPath('temp'), 'spectra-fast-preview-phase4r2.png')
+  const fastScreenshotPath = path.join(app.getPath('temp'), `spectra-fast-preview-phase4r2${screenshotSuffix}.png`)
   await waitForPaint()
   await writeFile(fastScreenshotPath, (await window.webContents.capturePage()).toPNG())
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
@@ -331,7 +336,7 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const overlayImmediatelyAfterPause = (await readDom()).overlay
   const accurateAfterResume = overlayImmediatelyAfterPause && await until((dom) => dom.overlay && dom.overlayReady)
   const finalDom = await readDom()
-  const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, fastFixture, accurateFixtureAfterResume, editPendingPreservesOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
+  const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, sequence: { width: project.sequence.width, height: project.sequence.height }, subtitleSpec, fastFixture, accurateFixtureAfterResume, editPendingPreservesOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastSubtitleStack: fastFixtureDom.subtitleStack, accurateSubtitleStack: initialDom.subtitleStack, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
   return { ...startup, ...report }
 }
 

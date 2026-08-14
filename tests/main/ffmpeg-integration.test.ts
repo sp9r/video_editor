@@ -9,6 +9,121 @@ import { generateAss } from '../../src/main/ffmpeg/subtitles.js'
 import { makeExportSettings, makeProject } from './ffmpeg-fixtures.js'
 
 describe('bundled FFmpeg integration', () => {
+  it('renders BorderStyle 3 background deterministically in an independent bright-canvas A/B fixture', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-subtitle-background-ab-'))
+    try {
+      const paths = await resolveFfmpegPaths()
+      const project = makeProject()
+      project.sequence = {
+        width: 640,
+        height: 360,
+        frameRate: { numerator: 30, denominator: 1 },
+        sampleRate: 48_000,
+        backgroundColor: '#2090e0'
+      }
+      const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+      if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+      subtitle.text = '字幕を入力'
+      subtitle.startUs = 0
+      subtitle.durationUs = 1_000_000
+      subtitle.style = {
+        ...subtitle.style,
+        fontFamily: 'Noto Sans JP',
+        fontSize: 64,
+        color: '#ffffff',
+        outlineColor: '#111318',
+        outlineWidth: 6,
+        shadowColor: '#00000000',
+        shadowBlur: 0,
+        backgroundColor: '#000000',
+        backgroundOpacity: 0,
+        bold: true,
+        alignment: 'bottom',
+        positionX: 50,
+        positionY: 86,
+        maxWidthPercent: 80,
+        animation: 'none',
+        animationDurationUs: 0
+      }
+      const renderAss = async (name: string, ass: string): Promise<Buffer> => {
+        const assPath = join(root, `${name}.ass`)
+        const framePath = join(root, `${name}.rgb`)
+        await writeFile(assPath, ass, 'utf8')
+        await executeProcess({
+          command: paths.ffmpegPath,
+          args: [
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'color=c=0x2090e0:s=640x360:r=30:d=1',
+            '-vf', `ass=filename='${name}.ass'`,
+            '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', `${name}.rgb`
+          ],
+          cwd: root,
+          timeoutMs: 30_000
+        })
+        return readFile(framePath)
+      }
+      const render = async (name: string, backgroundOpacity: number): Promise<Buffer> => {
+        subtitle.style.backgroundOpacity = backgroundOpacity
+        return renderAss(name, generateAss(project))
+      }
+      const withoutBackground = await render('without-background', 0)
+      const withBackground = await render('with-background', 0.15)
+      let changed = 0
+      let minX = 640
+      let minY = 360
+      let maxX = -1
+      let maxY = -1
+      for (let y = 0; y < 360; y += 1) {
+        for (let x = 0; x < 640; x += 1) {
+          const offset = (y * 640 + x) * 3
+          const delta = Math.abs((withoutBackground[offset] ?? 0) - (withBackground[offset] ?? 0))
+            + Math.abs((withoutBackground[offset + 1] ?? 0) - (withBackground[offset + 1] ?? 0))
+            + Math.abs((withoutBackground[offset + 2] ?? 0) - (withBackground[offset + 2] ?? 0))
+          if (delta <= 8) continue
+          changed += 1
+          minX = Math.min(minX, x)
+          minY = Math.min(minY, y)
+          maxX = Math.max(maxX, x)
+          maxY = Math.max(maxY, y)
+        }
+      }
+      expect(generateAss(project)).toContain('Style: Cue0Background,')
+      expect(changed, 'backgroundOpacity 0.15 must change bright-canvas pixels').toBeGreaterThan(100)
+      expect(maxX - minX).toBeGreaterThan(20)
+      expect(maxY - minY).toBeGreaterThan(10)
+      expect(minY).toBeGreaterThan(200)
+
+      const matrixAss = (primary: string, outline: string, back: string, outlineWidth: number): string => [
+        '[Script Info]', 'ScriptType: v4.00+', 'WrapStyle: 2', 'PlayResX: 640', 'PlayResY: 360', '',
+        '[V4+ Styles]',
+        'Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding',
+        `Style: Matrix,Noto Sans JP,64,${primary},${primary},${outline},${back},-1,0,0,0,100,100,0,0,3,${outlineWidth},0,2,10,10,10,1`,
+        '', '[Events]', 'Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text',
+        'Dialogue: 0,0:00:00.00,0:00:01.00,Matrix,,0,0,0,,{\\pos(320,310)}字幕を入力', ''
+      ].join('\n')
+      const matrix = await Promise.all([
+        renderAss('matrix-primary-transparent', matrixAss('&HFF000000', '&HFF000000', '&HFF000000', 0)),
+        renderAss('matrix-back-colour', matrixAss('&HFF000000', '&HFF000000', '&HD9000000', 0)),
+        renderAss('matrix-primary-colour', matrixAss('&HD9000000', '&HFF000000', '&HFF000000', 0)),
+        renderAss('matrix-outline-and-back', matrixAss('&HFF000000', '&HD9000000', '&HD9000000', 14))
+      ])
+      const changedFromBlue = (frame: Buffer): number => {
+        let changedPixels = 0
+        for (let offset = 0; offset < frame.length; offset += 3) {
+          const delta = Math.abs((frame[offset] ?? 0) - 32) + Math.abs((frame[offset + 1] ?? 0) - 144) + Math.abs((frame[offset + 2] ?? 0) - 224)
+          if (delta > 8) changedPixels += 1
+        }
+        return changedPixels
+      }
+      const matrixChanged = matrix.map(changedFromBlue)
+      expect(matrixChanged[1], 'bundled libass does not draw BorderStyle 3 from BackColour alone').toBe(0)
+      expect(matrixChanged[2], 'bundled libass draws BorderStyle 3 from PrimaryColour').toBeGreaterThan(100)
+      expect(matrixChanged[3], 'BorderStyle 3 Outline/BackColour matrix must render a box').toBeGreaterThan(100)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 90_000)
+
   it('matches Accurate Preview with the same canonical frame from Final render', async () => {
     const root = await mkdtemp(join(tmpdir(), 'spectra-accurate-preview-'))
     try {

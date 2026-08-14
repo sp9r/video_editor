@@ -88,9 +88,24 @@ const findBox = (image, predicate, region) => {
   return right < 0 ? null : { left, top, right, bottom, width: right - left + 1, height: bottom - top + 1, centerX: (left + right) / 2, centerY: (top + bottom) / 2 }
 }
 
-const whiteGlyph = (r, g, b, a) => a > 180 && r > 190 && g > 190 && b > 190
+const whiteGlyph = (r, g, b, a) => a > 180 && r > 150 && g > 150 && b > 150
 const redShadow = (r, g, b, a) => a > 120 && r > g + 5 && r > b + 2
 const darkBackground = (r, g, b, a) => a > 180 && r < 45 && g < 45 && b < 45
+const outlinePixel = (r, g, b, a) => a > 120 && Math.abs(r - 17) + Math.abs(g - 19) + Math.abs(b - 24) <= 45
+
+const anchorPoint = (box, anchor) => {
+  if (!box) return null
+  return { x: box.centerX, y: anchor === 'top' ? box.top : anchor === 'middle' ? box.centerY : box.bottom }
+}
+
+const thickness = (white, outline) => white && outline ? {
+  left: Math.max(0, white.left - outline.left),
+  right: Math.max(0, outline.right - white.right),
+  top: Math.max(0, white.top - outline.top),
+  bottom: Math.max(0, outline.bottom - white.bottom),
+  horizontal: (Math.max(0, white.left - outline.left) + Math.max(0, outline.right - white.right)) / 2,
+  vertical: (Math.max(0, white.top - outline.top) + Math.max(0, outline.bottom - white.bottom)) / 2
+} : null
 
 const analyzeScreenshots = (fastBuffer, accurateBuffer, report) => {
   const fast = decodePng(fastBuffer)
@@ -106,27 +121,55 @@ const analyzeScreenshots = (fastBuffer, accurateBuffer, report) => {
   const fastWhite = findBox(fast, whiteGlyph, scene)
   const accurateWhite = findBox(accurate, whiteGlyph, scene)
   const ring = (box) => box ? { x: box.left - 80 * scaleX, y: box.top - 80 * scaleY, width: box.width + 160 * scaleX, height: box.height + 160 * scaleY } : scene
+  const outlineRing = (box) => box ? { x: box.left - 18 * scaleX, y: box.top - 18 * scaleY, width: box.width + 36 * scaleX, height: box.height + 36 * scaleY } : scene
   const fastShadow = findBox(fast, redShadow, ring(fastWhite))
   const accurateShadow = findBox(accurate, redShadow, ring(accurateWhite))
   const fastBackground = findBox(fast, darkBackground, ring(fastWhite))
   const accurateBackground = findBox(accurate, darkBackground, ring(accurateWhite))
+  const fastOutline = findBox(fast, outlinePixel, outlineRing(fastWhite))
+  const accurateOutline = findBox(accurate, outlinePixel, outlineRing(accurateWhite))
   const widthDeltaRatio = fastWhite && accurateWhite ? Math.abs(fastWhite.width - accurateWhite.width) / Math.max(1, accurateWhite.width) : Infinity
   const heightDeltaRatio = fastWhite && accurateWhite ? Math.abs(fastWhite.height - accurateWhite.height) / Math.max(1, accurateWhite.height) : Infinity
   const centerDeltaPx = fastWhite && accurateWhite ? Math.hypot(fastWhite.centerX - accurateWhite.centerX, fastWhite.centerY - accurateWhite.centerY) : Infinity
+  const fastAnchor = anchorPoint(fastWhite, report.subtitleSpec?.anchor)
+  const accurateAnchor = anchorPoint(accurateWhite, report.subtitleSpec?.anchor)
+  const anchorDeltaX = fastAnchor && accurateAnchor ? Math.abs(fastAnchor.x - accurateAnchor.x) : Infinity
+  const anchorDeltaY = fastAnchor && accurateAnchor ? Math.abs(fastAnchor.y - accurateAnchor.y) : Infinity
+  const expectedAnchor = report.subtitleSpec && report.sequence ? {
+    x: scene.x + report.subtitleSpec.xPx / report.sequence.width * scene.width,
+    y: scene.y + report.subtitleSpec.yPx / report.sequence.height * scene.height
+  } : null
+  const fastAnchorToSpec = fastAnchor && expectedAnchor ? { x: fastAnchor.x - expectedAnchor.x, y: fastAnchor.y - expectedAnchor.y } : null
+  const accurateAnchorToSpec = accurateAnchor && expectedAnchor ? { x: accurateAnchor.x - expectedAnchor.x, y: accurateAnchor.y - expectedAnchor.y } : null
   const shadowWithinLimit = Boolean(fastShadow && accurateShadow && fastShadow.width <= fastWhite.width * 2 && accurateShadow.width <= accurateWhite.width * 2)
+  const heightTolerance = Number(report.subtitleSpec?.fontSizePx ?? 0) < 64 ? 0.25 : 0.15
   const result = {
     scene,
-    fast: { white: fastWhite, shadow: fastShadow, background: fastBackground },
-    accurate: { white: accurateWhite, shadow: accurateShadow, background: accurateBackground },
+    fast: { white: fastWhite, outline: fastOutline, outlineThickness: thickness(fastWhite, fastOutline), shadow: fastShadow, background: fastBackground },
+    accurate: { white: accurateWhite, outline: accurateOutline, outlineThickness: thickness(accurateWhite, accurateOutline), shadow: accurateShadow, background: accurateBackground },
     centerDeltaPx,
     widthDeltaRatio,
     heightDeltaRatio,
+    heightTolerance,
+    anchorDeltaX,
+    anchorDeltaY,
+    expectedAnchor,
+    fastAnchorToSpec,
+    accurateAnchorToSpec,
+    outlineThicknessDelta: fastOutline && accurateOutline && thickness(fastWhite, fastOutline) && thickness(accurateWhite, accurateOutline) ? {
+      horizontal: Math.abs(thickness(fastWhite, fastOutline).horizontal - thickness(accurateWhite, accurateOutline).horizontal),
+      vertical: Math.abs(thickness(fastWhite, fastOutline).vertical - thickness(accurateWhite, accurateOutline).vertical)
+    } : null,
+    backgroundExpected: Number(report.subtitleSpec?.backgroundOpacity ?? 0) > 0,
+    shadowExpected: Boolean(report.subtitleSpec?.shadowColor && !/^#(?:0{6}|0{8})$/iu.test(report.subtitleSpec.shadowColor)),
     shadowPresent: Boolean(fastShadow && accurateShadow),
     shadowWithinLimit,
     backgroundPresent: Boolean(fastBackground && accurateBackground),
     videoGeometryStable: JSON.stringify(report.fastVisual) === JSON.stringify(report.accurateVisual)
   }
-  if (!fastWhite || !accurateWhite || centerDeltaPx > 20 || widthDeltaRatio > 0.1 || heightDeltaRatio > 0.15 || !result.shadowPresent || !shadowWithinLimit || !result.backgroundPresent || !result.videoGeometryStable) {
+  const outlineGate = Number(report.subtitleSpec?.fontSizePx ?? 0) >= 64 ? Boolean(fastOutline && accurateOutline) : true
+  const shadowGate = result.shadowExpected ? Boolean(result.shadowPresent && shadowWithinLimit) : true
+  if (!fastWhite || !accurateWhite || centerDeltaPx > 20 || widthDeltaRatio > 0.1 || heightDeltaRatio > heightTolerance || anchorDeltaX > 10 || anchorDeltaY > 10 || !outlineGate || !shadowGate || (result.backgroundExpected && !result.backgroundPresent) || !result.videoGeometryStable) {
     throw new Error(`Fast/accurate screenshot parity gate failed: ${JSON.stringify(result)}`)
   }
   return result
@@ -146,25 +189,33 @@ const run = (command, args, options = {}) => new Promise((resolve, reject) => {
 
 const root = await mkdtemp(path.join(require('node:os').tmpdir(), 'spectra-accurate-preview-smoke-'))
 try {
+  const fixtureOverrides = process.env.SPECTRA_SUBTITLE_FIXTURE_JSON ? JSON.parse(process.env.SPECTRA_SUBTITLE_FIXTURE_JSON) : {}
+  const sourceColor = process.env.SPECTRA_PREVIEW_SOURCE_COLOR
   const sourcePath = path.join(root, 'source.png')
   const projectPath = path.join(root, 'project.json')
   await run(ffmpegPath, [
     '-hide_banner', '-loglevel', 'error', '-y',
-    '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=30:duration=1',
+    '-f', 'lavfi', '-i', sourceColor ? `color=c=${sourceColor}:s=1920x1080:r=30:d=1` : 'testsrc2=size=320x180:rate=30:duration=1',
     '-frames:v', '1', sourcePath
   ])
+  const mediaWidth = sourceColor ? 1920 : 320
+  const mediaHeight = sourceColor ? 1080 : 180
+  const defaultSubtitleStyle = { fontFamily: 'Noto Sans JP', fontSize: 123, color: '#ffffff', outlineColor: '#111318', outlineWidth: 14, shadowColor: '#ff0000', shadowBlur: 24, backgroundColor: '#000000', backgroundOpacity: 0.15, bold: true, italic: false, letterSpacing: 0, lineHeight: 1.15, alignment: 'bottom', positionX: 50, positionY: 86, maxWidthPercent: 80, animation: 'none', animationDurationUs: 0 }
+  const subtitleStyle = { ...defaultSubtitleStyle, ...(fixtureOverrides.style ?? {}) }
+  const subtitleText = typeof fixtureOverrides.text === 'string' ? fixtureOverrides.text : '字幕を入力'
+  const fixtureTag = typeof fixtureOverrides.tag === 'string' ? fixtureOverrides.tag : 'base'
   const project = {
     schemaVersion: 1,
     appVersion: '0.1.0',
-    id: 'accurate-preview-smoke',
-    name: 'Accurate Preview Smoke',
+    id: `accurate-preview-smoke-${fixtureTag}`,
+    name: `Accurate Preview Smoke ${fixtureTag}`,
     createdAt: '2026-08-14T00:00:00.000Z',
     updatedAt: '2026-08-14T00:00:00.000Z',
     sequence: { width: 1920, height: 1080, frameRate: { numerator: 30, denominator: 1 }, sampleRate: 48000, backgroundColor: '#102030' },
-    media: [{ id: 'source', name: 'source.png', path: sourcePath, kind: 'image', durationUs: 0, width: 320, height: 180, hasAudio: false, fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false }],
+    media: [{ id: 'source', name: 'source.png', path: sourcePath, kind: 'image', durationUs: 0, width: mediaWidth, height: mediaHeight, hasAudio: false, fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false }],
     tracks: [
-      { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: 'image', assetId: 'source', startUs: 0, durationUs: 1000000, sourceInUs: 0, enabled: true, transform: { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
-      { id: 'subtitle', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: [{ id: 'caption-1', name: 'Caption', kind: 'subtitle', text: '字幕を入力', startUs: 200000, durationUs: 600000, sourceInUs: 0, enabled: true, style: { fontFamily: 'Noto Sans JP', fontSize: 123, color: '#ffffff', outlineColor: '#111318', outlineWidth: 14, shadowColor: '#ff0000', shadowBlur: 24, backgroundColor: '#000000', backgroundOpacity: 0.15, bold: true, italic: false, letterSpacing: 0, lineHeight: 1.15, alignment: 'bottom', positionX: 50, positionY: 86, maxWidthPercent: 80, animation: 'none', animationDurationUs: 0 } }] }
+      { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: 'image', assetId: 'source', startUs: 0, durationUs: 1000000, sourceInUs: 0, enabled: true, transform: fixtureOverrides.transform ?? { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
+      { id: 'subtitle', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: [{ id: 'caption-1', name: 'Caption', kind: 'subtitle', text: subtitleText, startUs: 200000, durationUs: 600000, sourceInUs: 0, enabled: true, style: subtitleStyle }] }
     ]
   }
   await writeFile(projectPath, JSON.stringify(project), 'utf8')
