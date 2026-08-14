@@ -66,6 +66,27 @@ interface PointerEdit {
   targetTrackId: string
 }
 
+export const POINTER_EDIT_DRAG_THRESHOLD_PX = 3
+
+export const shouldCommitPointerEdit = ({
+  mode,
+  initialX,
+  pointerUpX,
+  initialTrackId,
+  targetTrackId,
+  threshold = POINTER_EDIT_DRAG_THRESHOLD_PX
+}: {
+  mode: PointerEdit['mode']
+  initialX: number
+  pointerUpX: number
+  initialTrackId: string
+  targetTrackId: string
+  threshold?: number
+}): boolean => {
+  if (mode === 'move' && targetTrackId !== initialTrackId) return true
+  return Math.abs(pointerUpX - initialX) >= threshold
+}
+
 function TrackControls({ track, tracks }: { track: TimelineTrack; tracks: TimelineTrack[] }): React.JSX.Element {
   const patchTrack = useEditorStore((state) => state.patchTrack)
   const renameTrack = useEditorStore((state) => state.renameTrack)
@@ -216,9 +237,19 @@ export default function Timeline(): React.JSX.Element {
     const up = (pointerEvent: PointerEvent): void => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      const latestTrackId = document.elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)?.closest('.track-lane')?.getAttribute('data-track-id') ?? start.targetTrackId
+      if (!shouldCommitPointerEdit({
+        mode,
+        initialX: start.initialX,
+        pointerUpX: pointerEvent.clientX,
+        initialTrackId: start.targetTrackId,
+        targetTrackId: latestTrackId
+      })) {
+        setPointerEdit(null)
+        return
+      }
       const deltaUs = ((pointerEvent.clientX - start.initialX) / zoomPxPerSecond) * 1_000_000
-      const latestLane = document.elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)?.closest('.track-lane') as HTMLElement | null
-      if (mode === 'move') moveSelected(clip.id, latestLane?.dataset.trackId ?? start.targetTrackId, start.initialStartUs + deltaUs)
+      if (mode === 'move') moveSelected(clip.id, latestTrackId, start.initialStartUs + deltaUs)
       else if (mode === 'trim-start') trim(clip.id, 'start', start.initialStartUs + deltaUs)
       else trim(clip.id, 'end', start.initialStartUs + start.initialDurationUs + deltaUs)
       setPointerEdit(null)
