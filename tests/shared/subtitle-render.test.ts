@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSubtitleRenderSpec, subtitleAnchorTransform } from '../../src/shared/subtitle-render.js'
+import { activeSubtitleClips, buildSubtitleRenderSpec, subtitleAnchorTransform, subtitleVisualStateKey } from '../../src/shared/subtitle-render.js'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types.js'
 
 const caption = (style: Partial<typeof DEFAULT_SUBTITLE_STYLE> = {}, text = 'alpha beta\n日本語'): Parameters<typeof buildSubtitleRenderSpec>[0] => ({
@@ -34,5 +34,21 @@ describe('canonical subtitle render spec', () => {
     expect(spec.yPx).toBe(1620)
     expect(spec.wrappedText).toContain('\n')
     expect(spec).toMatchObject({ fontFamily: 'Test Family', fontSizePx: 64, bold: false, italic: true, color: '#123456', outlineColor: '#654321', outlineWidthPx: 7, letterSpacingPx: 3, lineHeight: 1.4, shadowColor: '#abcdef', shadowBlurPx: 8, shadowOffsetXPx: 0, shadowOffsetYPx: 2, backgroundColor: '#fedcba', backgroundOpacity: 0.4 })
+  })
+
+  it('keys multiple active subtitle tracks by their complete visual state', () => {
+    const first = caption({}, 'one')
+    const second = { ...caption({ positionY: 20 }, 'two'), id: 'caption-2' }
+    const project = {
+      sequence: { width: 1920, height: 1080, frameRate: { numerator: 30, denominator: 1 } },
+      tracks: [
+        { kind: 'subtitle' as const, hidden: false, muted: false, clips: [first] },
+        { kind: 'subtitle' as const, hidden: false, muted: false, clips: [second] }
+      ]
+    } as Parameters<typeof activeSubtitleClips>[0]
+    expect(activeSubtitleClips(project, 500_000).map(({ clip }) => clip.id)).toEqual(['caption', 'caption-2'])
+    const before = subtitleVisualStateKey(project, 500_000)
+    second.text = 'changed'
+    expect(subtitleVisualStateKey(project, 500_000)).not.toBe(before)
   })
 })

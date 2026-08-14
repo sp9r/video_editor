@@ -119,25 +119,25 @@ const main = async () => {
     if (!reportLine) throw new Error(`Parity report was not emitted\n${electron.stdout}\n${electron.stderr}`)
     const report = JSON.parse(reportLine.slice('SPECTRA_SUBTITLE_PARITY_REPORT '.length))
     await run(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x242a31:s=1920x1080:r=1:d=1', '-vf', `ass='${path.basename(assPath)}'`, '-frames:v', '1', finalPath], { cwd: work })
-    const preview = decodePng(await readFile(previewPath))
+    const overlay = decodePng(await readFile(previewPath))
     const final = decodePng(await readFile(finalPath))
-    const scaleX = preview.width / report.viewport.width
-    const scaleY = preview.height / report.viewport.height
+    const scaleX = overlay.width / report.viewport.width
+    const scaleY = overlay.height / report.viewport.height
     const scene = { x: report.sceneRect.x * scaleX, y: report.sceneRect.y * scaleY, width: report.sceneRect.width * scaleX, height: report.sceneRect.height * scaleY }
-    const previewWhitePixels = box(preview, white, scene)
-    const previewRedPixels = box(preview, red, scene)
+    const overlayWhitePixels = box(overlay, white, scene)
+    const overlayRedPixels = box(overlay, red, scene)
     const finalWhitePixels = box(final, white)
     const finalRedPixels = box(final, red)
     const finalBackground = box(final, (r, g, b, a) => a > 180 && r < 34 && g < 40 && b < 46)
     const normalize = (value, axis, size) => (value - (axis === 'x' ? scene.x : scene.y)) / (axis === 'x' ? scene.width : scene.height) * size
-    const previewWhite = previewWhitePixels && { ...previewWhitePixels, centerX: normalize(previewWhitePixels.centerX, 'x', 1920), centerY: normalize(previewWhitePixels.centerY, 'y', 1080) }
+    const overlayWhite = overlayWhitePixels && { ...overlayWhitePixels, centerX: normalize(overlayWhitePixels.centerX, 'x', 1920), centerY: normalize(overlayWhitePixels.centerY, 'y', 1080) }
     const finalWhite = finalWhitePixels && { ...finalWhitePixels, centerX: finalWhitePixels.centerX, centerY: finalWhitePixels.centerY }
     const comparison = {
-      preview: { scene, textRect: report.textRect, white: previewWhite, red: previewRedPixels },
+      overlay: { scene, textRect: report.textRect, white: overlayWhite, red: overlayRedPixels },
       final: { white: finalWhitePixels, red: finalRedPixels },
-      whiteCenterDeltaPx: previewWhite && finalWhite ? Math.hypot(previewWhite.centerX - finalWhite.centerX, previewWhite.centerY - finalWhite.centerY) : null,
-      whiteGlyphReadable: Boolean(previewWhite && finalWhite && previewWhite.width > 3 && finalWhite.width > 3),
-      redShadowPresent: Boolean(previewRedPixels && finalRedPixels),
+      whiteCenterDeltaPx: overlayWhite && finalWhite ? Math.hypot(overlayWhite.centerX - finalWhite.centerX, overlayWhite.centerY - finalWhite.centerY) : null,
+      whiteGlyphReadable: Boolean(overlayWhite && finalWhite && overlayWhite.width > 3 && finalWhite.width > 3),
+      redShadowPresent: Boolean(overlayRedPixels && finalRedPixels),
       backgroundGeometry: { previewTextRect: report.textRect, finalBackground, finalWhiteBox: finalWhitePixels }
     }
     if (!comparison.whiteGlyphReadable || !comparison.redShadowPresent || (comparison.whiteCenterDeltaPx ?? Infinity) > 180) {

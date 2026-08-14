@@ -40,6 +40,98 @@ const validationJson = JSON.stringify({
 })
 
 describe('FFmpeg export service', () => {
+  it('reuses static subtitle overlay PNGs by active visual state and keeps authoritative render options', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-subtitle-overlay-cache-'))
+    try {
+      const project = makeProject()
+      const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+      if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+      subtitle.startUs = 0
+      subtitle.durationUs = 2_000_000
+      subtitle.style = { ...subtitle.style, animation: 'none', animationDurationUs: 0 }
+      let renderCalls = 0
+      const graphs: string[] = []
+      const executor: ProcessExecutor = {
+        async run(request) {
+          if (request.args.includes('-filter_complex_script')) {
+            renderCalls += 1
+            const graphPath = request.args[request.args.indexOf('-filter_complex_script') + 1]
+            if (!graphPath) throw new Error('Missing subtitle overlay graph')
+            graphs.push(await readFile(graphPath, 'utf8'))
+            const outputPath = request.args.at(-1)
+            if (!outputPath) throw new Error('Missing subtitle overlay output')
+            await writeFile(outputPath, `overlay-${renderCalls}`)
+          }
+          return success(request)
+        }
+      }
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor, workspaceRoot: join(root, 'workspace') })
+      const [first, concurrent] = await Promise.all([
+        service.renderSubtitleOverlay(project, 500_000),
+        service.renderSubtitleOverlay(project, 500_000)
+      ])
+      expect(concurrent).toEqual(first)
+      const cacheHit = await service.renderSubtitleOverlay(project, 500_001)
+      expect(renderCalls).toBe(1)
+      expect(cacheHit).toEqual(first)
+      expect(graphs[0]).toContain("ass=filename='")
+      expect(graphs[0]).toContain(':alpha=1')
+      const changedProject = structuredClone(project)
+      const changedSubtitle = changedProject.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+      if (!changedSubtitle || changedSubtitle.kind !== 'subtitle') throw new Error('changed subtitle fixture missing')
+      changedSubtitle.style = { ...changedSubtitle.style, color: '#00ff00' }
+      const invalidated = await service.renderSubtitleOverlay(changedProject, 500_000)
+      expect(renderCalls).toBe(2)
+      expect(invalidated.framePath).not.toBe(first.framePath)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects animated subtitle overlay requests so the renderer can use its explicit CSS fallback', async () => {
+    const project = makeProject()
+    const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+    if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+    subtitle.startUs = 0
+    subtitle.durationUs = 2_000_000
+    subtitle.style = { ...subtitle.style, animation: 'fade', animationDurationUs: 200_000 }
+    const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { workspaceRoot: join(tmpdir(), 'spectra-subtitle-overlay-animation-test') })
+    await expect(service.renderSubtitleOverlay(project, 500_000)).rejects.toThrow(/CSS fallback/u)
+  })
+
+  it('bounds the subtitle overlay cache while cycling through 100 visual states', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-subtitle-overlay-100-cues-'))
+    try {
+      const project = makeProject()
+      const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+      if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+      subtitle.startUs = 0
+      subtitle.durationUs = 2_000_000
+      subtitle.style = { ...subtitle.style, animation: 'none', animationDurationUs: 0 }
+      const executor: ProcessExecutor = {
+        async run(request) {
+          if (request.args.includes('-filter_complex_script')) {
+            const outputPath = request.args.at(-1)
+            if (!outputPath) throw new Error('Missing subtitle overlay output')
+            await writeFile(outputPath, 'overlay')
+          }
+          return success(request)
+        }
+      }
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor, workspaceRoot: join(root, 'workspace') })
+      for (let index = 0; index < 100; index += 1) {
+        const next = structuredClone(project)
+        const clip = next.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+        if (!clip || clip.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+        clip.style = { ...clip.style, positionX: 10 + index }
+        await service.renderSubtitleOverlay(next, 500_000)
+      }
+      expect(service.subtitleOverlayCacheSize).toBeLessThanOrEqual(64)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 30_000)
+
   it('renders an authoritative single frame and shares bounded cache entries', async () => {
     const root = await mkdtemp(join(tmpdir(), 'spectra-accurate-frame-'))
     try {

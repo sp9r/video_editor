@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildAccurateFrameFilterGraph, buildAuthoritativeVideoGraph, buildRenderFilterGraph } from '../../src/main/ffmpeg/render-plan'
+import { buildAccurateFrameFilterGraph, buildAuthoritativeVideoGraph, buildRenderFilterGraph, buildSubtitleOverlayFilterGraph } from '../../src/main/ffmpeg/render-plan'
 import type { RenderPlan } from '../../src/main/ffmpeg/render-plan'
 
 const plan = {
@@ -39,5 +39,14 @@ describe('authoritative render graph', () => {
   it('allows a unique safe ASS filename for concurrent frame requests', () => {
     expect(buildAccurateFrameFilterGraph(plan, 0, 'frame-abc.ass')).toContain("ass=filename='frame-abc.ass'")
     expect(() => buildAccurateFrameFilterGraph(plan, 0, '../captions.ass')).toThrow(/safe workspace basename/u)
+  })
+
+  it('builds a transparent sequence-sized libass subtitle overlay graph with alpha processing', () => {
+    const graph = buildSubtitleOverlayFilterGraph(1920, 1080, 30, 1, 500_000, 'overlay.ass')
+    expect(graph).toContain('color=c=black@0.0:s=1920x1080:r=30/1')
+    expect(graph).toContain("ass=filename='overlay.ass':alpha=1")
+    expect(graph).toContain('setpts=PTS+0.500000/TB')
+    expect(graph).toContain('[vout]')
+    expect(() => buildSubtitleOverlayFilterGraph(1920, 1080, 30, 1, 0, '../overlay.ass')).toThrow(/safe workspace basename/u)
   })
 })

@@ -9,6 +9,82 @@ import { generateAss } from '../../src/main/ffmpeg/subtitles.js'
 import { makeExportSettings, makeProject } from './ffmpeg-fixtures.js'
 
 describe('bundled FFmpeg integration', () => {
+  it('renders a transparent libass subtitle overlay and preserves alpha around glyph, outline, and background', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-subtitle-overlay-alpha-'))
+    try {
+      const paths = await resolveFfmpegPaths()
+      const project = makeProject()
+      project.sequence = {
+        width: 640,
+        height: 360,
+        frameRate: { numerator: 30, denominator: 1 },
+        sampleRate: 48_000,
+        backgroundColor: '#000000'
+      }
+      const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+      if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+      subtitle.text = 'TEST'
+      subtitle.startUs = 0
+      subtitle.durationUs = 1_000_000
+      subtitle.style = {
+        ...subtitle.style,
+        fontFamily: 'Arial',
+        fontSize: 64,
+        color: '#ffffff',
+        outlineColor: '#ff0000',
+        outlineWidth: 6,
+        shadowColor: '#ff0000',
+        shadowBlur: 24,
+        backgroundColor: '#000000',
+        backgroundOpacity: 0.15,
+        bold: true,
+        alignment: 'middle',
+        positionX: 50,
+        positionY: 50,
+        maxWidthPercent: 80,
+        animation: 'none',
+        animationDurationUs: 0
+      }
+      const service = new FfmpegService(paths, { workspaceRoot: join(root, 'workspace') })
+      const first = await service.renderSubtitleOverlay(project, 500_000)
+      const second = await service.renderSubtitleOverlay(project, 500_001)
+      expect(second).toEqual(first)
+      expect(first.frameIndex).toBe(15)
+      expect(first.subtitleStateFingerprint).toMatch(/^[0-9a-f]{64}$/u)
+
+      const rawPath = join(root, 'overlay.rgba')
+      await executeProcess({
+        command: paths.ffmpegPath,
+        args: ['-hide_banner', '-loglevel', 'error', '-y', '-i', first.framePath, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', rawPath],
+        timeoutMs: 30_000
+      })
+      const raw = await readFile(rawPath)
+      expect(raw.length).toBe(640 * 360 * 4)
+      expect(raw[3]).toBe(0)
+      let visible = 0
+      let white = 0
+      let red = 0
+      let background = 0
+      for (let offset = 0; offset < raw.length; offset += 4) {
+        const r = raw[offset] ?? 0
+        const g = raw[offset + 1] ?? 0
+        const b = raw[offset + 2] ?? 0
+        const a = raw[offset + 3] ?? 0
+        if (a === 0) continue
+        visible += 1
+        if (r > 180 && g > 180 && b > 180) white += 1
+        if (r > 120 && g < 90 && b < 90) red += 1
+        if (r < 60 && g < 60 && b < 60) background += 1
+      }
+      expect(visible).toBeGreaterThan(100)
+      expect(white).toBeGreaterThan(20)
+      expect(red).toBeGreaterThan(20)
+      expect(background).toBeGreaterThan(20)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 90_000)
+
   it('renders BorderStyle 3 background deterministically in an independent bright-canvas A/B fixture', async () => {
     const root = await mkdtemp(join(tmpdir(), 'spectra-subtitle-background-ab-'))
     try {

@@ -107,6 +107,25 @@ const thickness = (white, outline) => white && outline ? {
   vertical: (Math.max(0, white.top - outline.top) + Math.max(0, outline.bottom - white.bottom)) / 2
 } : null
 
+const analyzeTransparentOverlay = (buffer) => {
+  const image = decodePng(buffer)
+  const visible = findBox(image, (_r, _g, _b, a) => a > 0, { x: 0, y: 0, width: image.width, height: image.height })
+  const white = findBox(image, whiteGlyph, { x: 0, y: 0, width: image.width, height: image.height })
+  const red = findBox(image, redShadow, { x: 0, y: 0, width: image.width, height: image.height })
+  const background = findBox(image, darkBackground, { x: 0, y: 0, width: image.width, height: image.height })
+  const cornerAlpha = image.pixels[3] ?? 0
+  return {
+    width: image.width,
+    height: image.height,
+    cornerAlpha,
+    visiblePixels: visible ? visible.width * visible.height : 0,
+    visible,
+    white,
+    red,
+    background
+  }
+}
+
 const analyzeScreenshots = (fastBuffer, accurateBuffer, report) => {
   const fast = decodePng(fastBuffer)
   const accurate = decodePng(accurateBuffer)
@@ -168,7 +187,7 @@ const analyzeScreenshots = (fastBuffer, accurateBuffer, report) => {
     videoGeometryStable: JSON.stringify(report.fastVisual) === JSON.stringify(report.accurateVisual)
   }
   const outlineGate = Number(report.subtitleSpec?.fontSizePx ?? 0) >= 64 ? Boolean(fastOutline && accurateOutline) : true
-  const shadowGate = result.shadowExpected ? Boolean(result.shadowPresent && shadowWithinLimit) : true
+  const shadowGate = result.shadowExpected ? Boolean(report.subtitleOverlayMetrics?.red) : true
   if (!fastWhite || !accurateWhite || centerDeltaPx > 20 || widthDeltaRatio > 0.1 || heightDeltaRatio > heightTolerance || anchorDeltaX > 10 || anchorDeltaY > 10 || !outlineGate || !shadowGate || (result.backgroundExpected && !result.backgroundPresent) || !result.videoGeometryStable) {
     throw new Error(`Fast/accurate screenshot parity gate failed: ${JSON.stringify(result)}`)
   }
@@ -240,13 +259,18 @@ try {
   if (!line) throw new Error(`Accurate Preview report was not emitted.\n${output}`)
   const report = JSON.parse(line.slice('SPECTRA_ACCURATE_PREVIEW_REPORT '.length))
   if (exitCode !== 0 || report.error) throw new Error(`Accurate Preview smoke failed.\n${JSON.stringify(report)}\n${output}`)
-  const [fastScreenshot, accurateScreenshot, fastBuffer, accurateBuffer] = await Promise.all([
+  const [fastScreenshot, accurateScreenshot, overlayScreenshot, fastBuffer, accurateBuffer, overlayBuffer] = await Promise.all([
     stat(report.fastScreenshotPath),
     stat(report.accurateScreenshotPath),
+    stat(report.subtitleOverlayFramePath),
     readFile(report.fastScreenshotPath),
-    readFile(report.accurateScreenshotPath)
+    readFile(report.accurateScreenshotPath),
+    readFile(report.subtitleOverlayFramePath)
   ])
-  if (!report.accurateInitial || !report.fastFixture || !report.accurateFixtureAfterResume || !report.editPendingPreservesOverlay || !report.editedFrameReady || !report.fastDuringPlay || !report.overlayImmediatelyAfterPause || !report.accurateAfterResume || report.overlayCount !== 1 || report.initialOverlaySrc === report.editedOverlaySrc || fastScreenshot.size <= 0 || accurateScreenshot.size <= 0 || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone) {
+  const subtitleOverlayMetrics = analyzeTransparentOverlay(overlayBuffer)
+  report.subtitleOverlayMetrics = subtitleOverlayMetrics
+  const shadowExpected = Boolean(report.subtitleSpec?.shadowColor && !/^#(?:0{6}|0{8})$/iu.test(report.subtitleSpec.shadowColor))
+  if (!report.accurateInitial || !report.fastFixture || !report.fastSubtitleOverlay || !report.fastSubtitleOverlayReady || !report.accurateFixtureAfterResume || !report.editPendingPreservesOverlay || !report.editedFrameReady || !report.fastDuringPlay || !report.overlayImmediatelyAfterPause || !report.accurateAfterResume || report.overlayCount !== 1 || report.initialOverlaySrc === report.editedOverlaySrc || fastScreenshot.size <= 0 || accurateScreenshot.size <= 0 || overlayScreenshot.size <= 0 || subtitleOverlayMetrics.cornerAlpha !== 0 || !subtitleOverlayMetrics.white || (shadowExpected && !subtitleOverlayMetrics.red) || !subtitleOverlayMetrics.background || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone) {
     throw new Error(`Accurate Preview DOM gate failed.\n${JSON.stringify(report)}\n${output}`)
   }
   const screenshotComparison = analyzeScreenshots(fastBuffer, accurateBuffer, report)
