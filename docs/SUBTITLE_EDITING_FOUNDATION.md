@@ -45,6 +45,16 @@ SubtitleClipには、利用可能な場合だけ`.spectra`内部拡張として`
 
 単語タイミング付き字幕を再生位置の任意位置で`Ctrl+K`分割することは、単語メタデータを壊すため禁止している。Inspectorの単語境界操作を使用する。
 
+## word metadata integrity
+
+`words.startUs` / `words.endUs`はsequence timeline上の絶対時刻である。字幕全体のmove、ripple、copy/pasteではclipの実移動deltaをwordsにも適用する。別subtitle trackへの移動で時刻deltaが0ならwordsも変更しない。
+
+trimはword metadataを自動削除しない。字幕開始はfirst word以前、終了はlast word以後に限り変更でき、単語の内側へ縮める操作は「単語タイミングより内側には字幕を縮められません。」として拒否する。将来のword単位trimは別機能とする。
+
+本文を編集して`clip.text`とword本文の連結が一致しなくなった場合、wordsは削除せず、単語境界分割だけを無効化する。分割操作層でも同じ不一致を拒否する。両字幕に一致するword metadataがある場合のみ結合後へ順序を保って統合し、片方だけ、または本文不一致の場合はmerged wordsを`undefined`にする。
+
+word IDは現行`.spectra`内部では字幕clip内で一意であることを検証する。copy/pasteでは既存IDを維持し、clip IDだけを新しくする。将来global unique semanticsへ変更する場合は別途仕様化する。
+
 ## 結合
 
 結合対象は同一字幕トラック上の直前または直後の字幕だけである。結合後は本文を時間順に連結し、開始・終了を外側へ広げ、両方にword metadataがある場合はIDと順序を連結する。非隣接クリップは結合しない。
