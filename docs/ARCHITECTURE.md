@@ -28,6 +28,8 @@ Previewには二つのモードがある。再生中のFast PreviewはReact/HTML
 
 停止後のrequestは180ms debounceし、latest sequenceだけを表示する。再生開始時はAccurate overlayを隠してFast Previewへ戻る。失敗時はFast Previewを残し、Previewの小さな診断表示だけを出す。export pipelineは影響を受けない。
 
+Fast Previewの字幕描画はFinalのASS layer semanticsに合わせ、background、shadow duplicate、main glyphを別DOM layerとして持つ。main glyphは常にsharpで、shared `canonicalShadowBlurRadius()`を使うshadowだけをsoftenする。Chromiumとlibassのfont metric差はFast側のstack renderer scale（現在0.67、Noto Sans JPの1920x1080 fixtureで実測）で正規化し、論理font sizeやwrapの正本は`SubtitleRenderSpec`に残す。これによりFast Previewはpixel authorityではないまま、字幕styleを別デザインに見せない編集判断用のsemantic parityを確保する。
+
 ## 設計目標
 
 1. Windows / macOS / Linuxへ移植できること。

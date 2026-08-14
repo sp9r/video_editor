@@ -7,6 +7,13 @@
 - Accurate PreviewのPNG memory cacheは64件。大規模disk cache、GPU decode、HDR/color managementは未実装。
 - Accurate frame extractionは1 requestにつきFFmpegを起動するため、長い連続seekの最適化や共有workerは将来検討する。
 
+## Phase 4R.2 - Fast Preview semantic parity
+
+- Fast Preview subtitle DOMはbackground / duplicate shadow / sharp main glyphの3層。Final/Accurateのauthoritative rendererは引き続きFFmpeg/libass。
+- `canonicalShadowBlurRadius()`をPreviewとASSで共有し、CSS shadowの過大表示を避ける。CSS/libassのrasterization、font fallback、exact blur shapeは許容差として残る。
+- Fast側のsubtitle stackはChromium/libassのfont metric差を実測したrenderer-only scale（現在0.67）で吸収する。論理font size、wrap、positionはshared specのまま保持する。
+- production smokeは実Project/PreviewからFast screenshotとAccurate screenshotを取得し、字幕・visual transform fixtureを検証する。実PNGからcenter、glyph width/height、shadow/background存在、video geometryを測定する。
+
 ## Phase 4.11 subtitle visual parity stabilization
 
 - Canonical shadow offset is `(0px, 2px)` in `SubtitleRenderSpec`; blur controls softness only and no longer changes the shadow position.
