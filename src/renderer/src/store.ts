@@ -15,7 +15,7 @@ import {
   validateProject,
   updateClip
 } from '../../shared/project'
-import { deleteLinkedClips, EditingOperationError, mergeSubtitleWithNext, mergeSubtitleWithPrevious, moveLinkedClip, splitLinkedClip, splitSelectedRoots, splitSubtitleAtWordBoundary, trimLinkedClip } from '../../shared/editing/operations'
+import { deleteLinkedClips, EditingOperationError, isSubtitleWordBoundarySplitAvailable, mergeSubtitleWithNext, mergeSubtitleWithPrevious, moveLinkedClip, nearestSubtitleWordBoundaryIndex, splitLinkedClip, splitSelectedRoots, splitSubtitleAtWordBoundary, trimLinkedClip } from '../../shared/editing/operations'
 import { linkedClipIds } from '../../shared/editing/links'
 import { isMediaTrack } from '../../shared/types'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
@@ -66,6 +66,7 @@ interface EditorState {
   mergeSubtitleWithNext(clipId: string): void
   moveSelected(clipId: string, trackId: string, atUs: TimeUs): void
   trim(clipId: string, edge: 'start' | 'end', atUs: TimeUs): void
+  splitSelectedAt(atUs: TimeUs): void
   splitSelected(): void
   deleteSelected(ripple?: boolean): void
   copySelected(): void
@@ -265,20 +266,40 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       else throw error
     }
   },
-  splitSelected: () => {
-    const { project, selectedClipIds, playheadUs } = get()
-    const selectedSubtitle = selectedClipIds.length === 1
-      ? project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === selectedClipIds[0] && clip.kind === 'subtitle')
-      : undefined
-    if (selectedSubtitle?.kind === 'subtitle' && selectedSubtitle.words?.length) {
-      get().showNotice('単語タイミングがある字幕は、インスペクタの単語境界から分割してください。', 'warning')
+  splitSelectedAt: (atUs) => {
+    const { project, selectedClipIds } = get()
+    const selected = project.tracks.flatMap((track) => track.clips).filter((clip) => selectedClipIds.includes(clip.id))
+    const selectedSubtitles = selected.filter((clip) => clip.kind === 'subtitle')
+    if (selectedSubtitles.length) {
+      if (selected.length !== 1 || selectedSubtitles.length !== 1) {
+        get().showNotice('単語境界字幕の分割は字幕を1つだけ選択して実行してください。', 'warning')
+        return
+      }
+      const subtitle = selectedSubtitles[0]
+      if (!subtitle) return
+      if (subtitle.kind !== 'subtitle' || !subtitle.words?.length) {
+        get().showNotice('単語境界情報がないため分割できません。', 'warning')
+        return
+      }
+      if (!isSubtitleWordBoundarySplitAvailable(subtitle)) {
+        get().showNotice('字幕本文と単語情報が一致しないため分割できません。', 'warning')
+        return
+      }
+      const boundaryIndex = nearestSubtitleWordBoundaryIndex(subtitle, atUs)
+      if (boundaryIndex === null) {
+        get().showNotice('再生ヘッドを字幕の内側へ移動してください。', 'warning')
+        return
+      }
+      get().splitSubtitleAtWordBoundary(subtitle.id, boundaryIndex)
       return
     }
+
     let next = project
-    for (const id of splitSelectedRoots(project, selectedClipIds)) next = splitLinkedClip(next, id, playheadUs)
+    for (const id of splitSelectedRoots(project, selectedClipIds)) next = splitLinkedClip(next, id, atUs)
     if (next === project) get().showNotice('再生ヘッドをクリップの内側へ移動してください。', 'warning')
     else get().applyProject(next)
   },
+  splitSelected: () => get().splitSelectedAt(get().playheadUs),
   deleteSelected: (ripple) => {
     const ids = get().selectedClipIds
     if (!ids.length) return

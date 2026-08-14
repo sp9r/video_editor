@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createEmptyProject, validateProject } from '../../src/shared/project'
-import { mergeSubtitleWithNext, mergeSubtitleWithPrevious, splitSubtitleAtWordBoundary, EditingOperationError } from '../../src/shared/editing/operations'
+import { isSubtitleWordBoundarySplitAvailable, mergeSubtitleWithNext, mergeSubtitleWithPrevious, nearestSubtitleWordBoundaryIndex, splitSubtitleAtWordBoundary, EditingOperationError } from '../../src/shared/editing/operations'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
 import type { ProjectFile, SubtitleClip, SubtitleWord } from '../../src/shared/types'
 
@@ -40,6 +40,31 @@ const fixture = (): ProjectFile => {
 const captions = (project: ProjectFile): SubtitleClip[] => project.tracks.flatMap((track) => track.clips).filter((clip): clip is SubtitleClip => clip.kind === 'subtitle')
 
 describe('subtitle editing foundation', () => {
+  it('finds the nearest boundary, treats gaps as boundary regions, and breaks ties to the left', () => {
+    const project = fixture()
+    const track = project.tracks.find((item) => item.kind === 'subtitle')!
+    const clip = track.clips[0]
+    if (clip?.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+    expect(nearestSubtitleWordBoundaryIndex(clip, 450_000)).toBe(1)
+    expect(nearestSubtitleWordBoundaryIndex(clip, 650_000)).toBe(1)
+    expect(nearestSubtitleWordBoundaryIndex(clip, 400_000)).toBe(0)
+    expect(nearestSubtitleWordBoundaryIndex(clip, 0)).toBe(0)
+    expect(nearestSubtitleWordBoundaryIndex(clip, 1_000_000)).toBe(null)
+  })
+
+  it('selects a gap as zero-distance and rejects invalid split metadata', () => {
+    const project = fixture()
+    const track = project.tracks.find((item) => item.kind === 'subtitle')!
+    const clip = track.clips[0]
+    if (clip?.kind !== 'subtitle' || !clip.words) throw new Error('subtitle fixture missing')
+    clip.words[1]!.startUs = 600_000
+    expect(nearestSubtitleWordBoundaryIndex(clip, 550_000)).toBe(0)
+    const mismatch = structuredClone(clip)
+    mismatch.text = '別の本文'
+    expect(isSubtitleWordBoundarySplitAvailable(mismatch)).toBe(false)
+    expect(nearestSubtitleWordBoundaryIndex(mismatch, 500_000)).toBe(null)
+    expect(nearestSubtitleWordBoundaryIndex({ ...clip, words: [clip.words[0]!] }, 500_000)).toBe(null)
+  })
   it('splits at a word boundary with exact text and timestamps', () => {
     const next = splitSubtitleAtWordBoundary(fixture(), 'caption-a', 1)
     const result = captions(next)

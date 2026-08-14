@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { addClipToTrack, createClipForAsset, createEmptyProject, createTrack } from '../../src/shared/project'
-import { DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile } from '../../src/shared/types'
+import { DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile, type TimelineClip } from '../../src/shared/types'
 import { useEditorStore } from '../../src/renderer/src/store'
 
 const asset: MediaAsset = {
@@ -179,6 +179,102 @@ describe('editor history and linked selection', () => {
     useEditorStore.getState().mergeSubtitleWithNext('caption-edit')
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips).toHaveLength(2)
     expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'subtitle').map((clip) => clip.text)).toEqual(['字幕を入力', '次'])
+  })
+
+  it('splits a selected subtitle at the nearest word boundary and restores it through undo/redo', () => {
+    const project = createEmptyProject('timeline subtitle split')
+    const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle')!
+    subtitleTrack.clips.push({
+      id: 'timeline-caption', name: 'タイムライン字幕', kind: 'subtitle', startUs: 10_000_000, durationUs: 2_000_000, sourceInUs: 0,
+      enabled: true, text: '字幕を入力', style: structuredClone(DEFAULT_SUBTITLE_STYLE), words: [
+        { id: 'timeline-word-1', text: '字幕', startUs: 10_100_000, endUs: 10_400_000 },
+        { id: 'timeline-word-2', text: 'を', startUs: 10_600_000, endUs: 10_800_000 },
+        { id: 'timeline-word-3', text: '入力', startUs: 11_000_000, endUs: 11_500_000 }
+      ]
+    })
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('timeline-caption')
+    useEditorStore.getState().setPlayhead(10_550_000)
+    useEditorStore.getState().splitSelected()
+    const split = useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips
+    expect(split.map((clip) => clip.kind === 'subtitle' ? [clip.text, clip.startUs, clip.durationUs, clip.words?.map((word) => word.id)] : [])).toEqual([
+      ['字幕', 10_000_000, 400_000, ['timeline-word-1']],
+      ['を入力', 10_600_000, 1_400_000, ['timeline-word-2', 'timeline-word-3']]
+    ])
+    expect(useEditorStore.getState().selectedClipIds).toHaveLength(2)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips).toHaveLength(1)
+    useEditorStore.getState().redo()
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips).toHaveLength(2)
+  })
+
+  it.each([
+    ['words-none', (clip: Extract<TimelineClip, { kind: 'subtitle' }>) => { clip.words = undefined }],
+    ['text-mismatch', (clip: Extract<TimelineClip, { kind: 'subtitle' }>) => { clip.text = '不一致' }],
+    ['one-word', (clip: Extract<TimelineClip, { kind: 'subtitle' }>) => { clip.words = [{ id: 'only', text: clip.text, startUs: clip.startUs, endUs: clip.startUs + 500_000 }] }]
+  ])('rejects %s subtitle split without mutating project or history', (_name, mutate) => {
+    const project = createEmptyProject('invalid timeline subtitle split')
+    const track = project.tracks.find((item) => item.kind === 'subtitle')!
+    track.clips.push({
+      id: 'invalid-caption', name: 'invalid', kind: 'subtitle', startUs: 1_000_000, durationUs: 1_000_000, sourceInUs: 0,
+      enabled: true, text: '字幕を入力', style: structuredClone(DEFAULT_SUBTITLE_STYLE), words: [
+        { id: 'one', text: '字幕', startUs: 1_000_000, endUs: 1_300_000 },
+        { id: 'two', text: 'を入力', startUs: 1_400_000, endUs: 1_800_000 }
+      ]
+    })
+    const clip = track.clips[0]
+    if (!clip || clip.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+    mutate(clip)
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('invalid-caption')
+    const before = structuredClone(useEditorStore.getState().project)
+    useEditorStore.getState().setPlayhead(1_500_000)
+    useEditorStore.getState().splitSelected()
+    const state = useEditorStore.getState()
+    expect(state.project).toEqual(before)
+    expect(state.past).toHaveLength(0)
+    expect(state.future).toHaveLength(0)
+    expect(state.dirty).toBe(false)
+    expect(state.selectedClipIds).toEqual(['invalid-caption'])
+  })
+
+  it('rejects a playhead outside a valid subtitle without mutating the project', () => {
+    const project = createEmptyProject('outside timeline subtitle split')
+    const track = project.tracks.find((item) => item.kind === 'subtitle')!
+    track.clips.push({
+      id: 'outside-caption', name: 'outside', kind: 'subtitle', startUs: 2_000_000, durationUs: 1_000_000, sourceInUs: 0,
+      enabled: true, text: '字幕を入力', style: structuredClone(DEFAULT_SUBTITLE_STYLE), words: [
+        { id: 'outside-1', text: '字幕', startUs: 2_000_000, endUs: 2_300_000 },
+        { id: 'outside-2', text: 'を入力', startUs: 2_400_000, endUs: 2_800_000 }
+      ]
+    })
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('outside-caption')
+    const before = structuredClone(useEditorStore.getState().project)
+    useEditorStore.getState().setPlayhead(1_000_000)
+    useEditorStore.getState().splitSelected()
+    expect(useEditorStore.getState().project).toEqual(before)
+    expect(useEditorStore.getState().past).toHaveLength(0)
+  })
+
+  it('rejects a multi-selection containing a subtitle without partially splitting media', () => {
+    const project = fixture()
+    const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle')!
+    subtitleTrack.clips.push({
+      id: 'multi-caption', name: 'multi', kind: 'subtitle', startUs: 0, durationUs: 1_000_000, sourceInUs: 0,
+      enabled: true, text: '字幕を入力', style: structuredClone(DEFAULT_SUBTITLE_STYLE), words: [
+        { id: 'multi-1', text: '字幕', startUs: 0, endUs: 300_000 },
+        { id: 'multi-2', text: 'を入力', startUs: 400_000, endUs: 800_000 }
+      ]
+    })
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('video')
+    useEditorStore.getState().selectClip('multi-caption', true)
+    const before = structuredClone(useEditorStore.getState().project)
+    useEditorStore.getState().setPlayhead(500_000)
+    useEditorStore.getState().splitSelected()
+    expect(useEditorStore.getState().project).toEqual(before)
+    expect(useEditorStore.getState().past).toHaveLength(0)
   })
 
   it('adds, renames, reorders, and undoes empty track operations', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit } from '../../src/renderer/src/components/Timeline'
+import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
 
 describe('timeline interaction guards', () => {
   it('leaves native clipboard behavior to editable controls', () => {
@@ -43,5 +43,13 @@ describe('timeline interaction guards', () => {
     expect(shouldCommitPointerEdit({
       mode: 'trim-end', initialX: 100, pointerUpX: 104, initialTrackId: 'C1', targetTrackId: 'C1'
     })).toBe(true)
+  })
+
+  it('only enables context-menu splitting for word-backed subtitles', () => {
+    expect(timelineSplitMenuState(undefined)).toEqual({ disabled: true, label: '分割対象がありません' })
+    expect(timelineSplitMenuState({ kind: 'subtitle', words: undefined } as never)).toEqual({ disabled: true, label: '単語境界情報がないため分割不可' })
+    expect(timelineSplitMenuState({ kind: 'subtitle', text: '字幕', words: [{ id: 'w1', text: '字幕', startUs: 0, endUs: 1 }, { id: 'w2', text: 'を', startUs: 1, endUs: 2 }] } as never)).toEqual({ disabled: true, label: '単語境界情報がないため分割不可' })
+    expect(timelineSplitMenuState({ kind: 'subtitle', text: '字幕を', words: [{ id: 'w1', text: '字幕', startUs: 0, endUs: 1 }, { id: 'w2', text: 'を', startUs: 1, endUs: 2 }] } as never)).toEqual({ disabled: false, label: 'ここで字幕を分割（単語境界）' })
+    expect(timelineSplitMenuState({ kind: 'image' } as never)).toEqual({ disabled: false, label: '再生位置で分割' })
   })
 })

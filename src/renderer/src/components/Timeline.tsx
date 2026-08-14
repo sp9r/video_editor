@@ -20,6 +20,7 @@ import {
   ZoomOut
 } from 'lucide-react'
 import { formatTimecode, layoutSubtitleTracks, makeId } from '../../../shared/project'
+import { isSubtitleWordBoundarySplitAvailable } from '../../../shared/editing/operations'
 import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type SubtitleClip, type SubtitleWord, type TimelineClip, type TimelineTrack } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
 import { Button, IconButton } from './Controls'
@@ -43,6 +44,16 @@ export const subtitleWordGeometry = (
 
 export const subtitleWordGeometries = (clip: SubtitleClip): Array<SubtitleWordGeometry & { word: SubtitleWord }> =>
   (clip.words ?? []).map((word) => ({ word, ...subtitleWordGeometry(clip, word) }))
+
+export const timelineSplitMenuState = (clip: TimelineClip | undefined): { disabled: boolean; label: string } => {
+  if (!clip) return { disabled: true, label: '分割対象がありません' }
+  if (clip.kind === 'subtitle') {
+    return isSubtitleWordBoundarySplitAvailable(clip)
+      ? { disabled: false, label: 'ここで字幕を分割（単語境界）' }
+      : { disabled: true, label: '単語境界情報がないため分割不可' }
+  }
+  return { disabled: false, label: '再生位置で分割' }
+}
 
 export const isTextEditingTarget = (target: EventTarget | null): boolean => {
   const element = target as HTMLElement | null
@@ -147,6 +158,7 @@ export default function Timeline(): React.JSX.Element {
     addMediaTrack,
     addSubtitleTrack,
     splitSelected,
+    splitSelectedAt,
     deleteSelected,
     moveSelected,
     trim,
@@ -164,6 +176,8 @@ export default function Timeline(): React.JSX.Element {
   const durationUs = editorDurationUs(project)
   const timelineWidth = Math.max(900, seconds(durationUs) * zoomPxPerSecond)
   const ticks = useMemo(() => ticksFor(durationUs, zoomPxPerSecond), [durationUs, zoomPxPerSecond])
+  const contextClip = contextMenu ? project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === contextMenu.clipId) : undefined
+  const contextSplitMenu = timelineSplitMenuState(contextClip)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -422,7 +436,16 @@ export default function Timeline(): React.JSX.Element {
       </div>
       {contextMenu && (
         <div ref={contextMenuRef} className="timeline-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
-          <button type="button" onClick={() => { setPlayhead(timeFromPointer(contextMenu.x, viewportRef.current!)); splitSelected(); setContextMenu(null) }}>再生位置で分割</button>
+          <button
+            type="button"
+            disabled={contextSplitMenu.disabled}
+            onClick={() => {
+              const atUs = timeFromPointer(contextMenu.x, viewportRef.current!)
+              setPlayhead(atUs)
+              splitSelectedAt(atUs)
+              setContextMenu(null)
+            }}
+          >{contextSplitMenu.label}</button>
           <button type="button" onClick={() => { deleteSelected(false); setContextMenu(null) }}>削除</button>
           <button type="button" onClick={() => { deleteSelected(true); setContextMenu(null) }}>リップル削除</button>
           <button type="button" onClick={() => { copySelected(); setContextMenu(null) }}>コピー</button>

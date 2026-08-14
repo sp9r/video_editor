@@ -106,6 +106,40 @@ const subtitleTextFromWords = (words: SubtitleClip['words']): string | null => {
   return words.map((word) => word.text).join('')
 }
 
+/** Returns whether a subtitle has enough trusted metadata for a timeline split. */
+export const isSubtitleWordBoundarySplitAvailable = (clip: TimelineClip): clip is SubtitleClip =>
+  clip.kind === 'subtitle' && Boolean(clip.words && clip.words.length >= 2) && subtitleWordsMatchText(clip)
+
+/**
+ * Finds the closest internal subtitle word boundary without changing timestamps.
+ * A gap between adjacent words is one boundary region with zero distance.
+ */
+export const nearestSubtitleWordBoundaryIndex = (clip: SubtitleClip, atUs: TimeUs): number | null => {
+  if (!isSubtitleWordBoundarySplitAvailable(clip) || !Number.isFinite(atUs)) return null
+  const words = clip.words
+  if (!words) return null
+  const clipEndUs = clip.startUs + clip.durationUs
+  if (atUs < clip.startUs || atUs >= clipEndUs) return null
+
+  let nearest: number | null = null
+  let nearestDistance = Number.POSITIVE_INFINITY
+  for (let index = 0; index < words.length - 1; index += 1) {
+    const leftWord = words[index]
+    const rightWord = words[index + 1]
+    if (!leftWord || !rightWord) continue
+    const distance = atUs < leftWord.endUs
+      ? leftWord.endUs - atUs
+      : atUs > rightWord.startUs
+        ? atUs - rightWord.startUs
+        : 0
+    if (distance < nearestDistance) {
+      nearest = index
+      nearestDistance = distance
+    }
+  }
+  return nearest
+}
+
 /** Split a caption only at a word boundary with timestamp metadata. */
 export const splitSubtitleAtWordBoundary = (project: ProjectFile, clipId: string, boundaryIndex: number): ProjectFile => {
   const location = subtitleLocation(project, clipId)
