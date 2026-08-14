@@ -198,6 +198,7 @@ export default function Timeline(): React.JSX.Element {
       return
     }
     selectClip(clip.id, event.ctrlKey || event.metaKey)
+    if (mode === 'move') setPlayhead(clip.startUs)
     const start: PointerEdit = {
       clipId: clip.id,
       mode,

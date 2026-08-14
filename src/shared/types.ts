@@ -109,10 +109,21 @@ export interface AudioClip extends BaseClip {
   audio: AudioSettings
 }
 
+/** Optional internal word timing metadata for subtitle editing.
+ * This is a .spectra editor extension and is not part of edit_project.v1.
+ */
+export interface SubtitleWord {
+  id: string
+  text: string
+  startUs: TimeUs
+  endUs: TimeUs
+}
+
 export interface SubtitleClip extends BaseClip {
   kind: 'subtitle'
   text: string
   style: SubtitleStyle
+  words?: SubtitleWord[]
 }
 
 export type TimelineClip = VideoClip | ImageClip | AudioClip | SubtitleClip

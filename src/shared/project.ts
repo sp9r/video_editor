@@ -345,6 +345,17 @@ export const validateProject = (input: unknown): ProjectFile => {
         !Number.isFinite(clip.audio.fadeInUs) || !Number.isFinite(clip.audio.fadeOutUs) ||
         clip.audio.fadeInUs < 0 || clip.audio.fadeOutUs < 0
       )) throw new Error(`クリップの音声値が不正です: ${clip.id}`)
+      if (clip.kind === 'subtitle' && clip.words) {
+        const wordIds = new Set<string>()
+        let previousEnd = clip.startUs
+        for (const word of clip.words) {
+          if (!word.id || wordIds.has(word.id) || typeof word.text !== 'string' || !Number.isFinite(word.startUs) || !Number.isFinite(word.endUs) || word.startUs < clip.startUs || word.endUs <= word.startUs || word.endUs > clip.startUs + clip.durationUs || word.startUs < previousEnd) {
+            throw new Error(`字幕の単語タイミングが不正です: ${clip.id}`)
+          }
+          wordIds.add(word.id)
+          previousEnd = word.endUs
+        }
+      }
     }
   }
   return clone(project as ProjectFile)

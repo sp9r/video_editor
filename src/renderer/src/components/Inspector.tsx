@@ -84,7 +84,7 @@ function AudioEditor({ clip }: { clip: Extract<TimelineClip, { kind: 'video' | '
 }
 
 function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
-  const patchClip = useEditorStore((state) => state.patchClip)
+  const { project, patchClip, selectClip, setPlayhead, splitSubtitleAtWordBoundary, mergeSubtitleWithPrevious, mergeSubtitleWithNext } = useEditorStore()
   const transaction = useEditTransaction()
   const [fontFamilies, setFontFamilies] = useState(FALLBACK_FONTS)
   useEffect(() => {
@@ -95,12 +95,46 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
   }, [clip.style.fontFamily])
   const patchStyle = (values: Partial<SubtitleStyle>): void =>
     patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, style: { ...current.style, ...values } } : current)
+  const captions = project.tracks
+    .filter((track) => track.kind === 'subtitle')
+    .flatMap((track) => track.clips.filter((item): item is SubtitleClip => item.kind === 'subtitle'))
+    .sort((left, right) => left.startUs - right.startUs || left.id.localeCompare(right.id))
+  const captionIndex = captions.findIndex((item) => item.id === clip.id)
+  const previous = captionIndex > 0 ? captions[captionIndex - 1] : undefined
+  const next = captionIndex >= 0 ? captions[captionIndex + 1] : undefined
+  const selectContext = (item: SubtitleClip): void => {
+    selectClip(item.id)
+    setPlayhead(item.startUs)
+  }
   return (
     <>
+      <Section title="字幕の流れ">
+        <div className="subtitle-context" aria-label="前後の字幕">
+          {previous && <button type="button" onClick={() => selectContext(previous)}><small>前</small><span>{previous.text}</span></button>}
+          <button type="button" className="is-current" onClick={() => selectContext(clip)}><small>現在</small><span>{clip.text}</span></button>
+          {next && <button type="button" onClick={() => selectContext(next)}><small>次</small><span>{next.text}</span></button>}
+        </div>
+        <div className="field-grid">
+          <Button className="subtle-button" disabled={!previous} onClick={() => mergeSubtitleWithPrevious(clip.id)}>← 前の字幕と結合</Button>
+          <Button className="subtle-button" disabled={!next} onClick={() => mergeSubtitleWithNext(clip.id)}>次の字幕と結合 →</Button>
+        </div>
+      </Section>
       <Section title="字幕テキスト">
         <Field label="本文" wide>
           <textarea {...transaction} value={clip.text} rows={4} onChange={(event) => patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, text: event.target.value } : current)} />
         </Field>
+        {clip.words?.length ? (
+          <Field label="単語境界" wide>
+            <div className="subtitle-word-boundaries" aria-label="単語境界で分割">
+              {clip.words.map((word, index) => (
+                <span className="subtitle-word-boundary" key={word.id}>
+                  <span className="subtitle-word-token" title={`${(word.startUs / 1_000_000).toFixed(2)}–${(word.endUs / 1_000_000).toFixed(2)}秒`}>{word.text}</span>
+                  {index < clip.words!.length - 1 && <button type="button" aria-label={`「${word.text}」の後で分割`} onClick={() => splitSubtitleAtWordBoundary(clip.id, index)}>分割</button>}
+                </span>
+              ))}
+            </div>
+          </Field>
+        ) : <p className="field-hint">単語タイミング情報がない字幕は、単語境界分割を利用できません。</p>}
       </Section>
       <Section title="文字スタイル">
         <Field label="フォント">
@@ -169,6 +203,7 @@ export default function Inspector(): React.JSX.Element {
             <div className="field-grid">
               <NumberField {...transaction} label="開始" suffix="秒" min={0} step={0.1} value={(clip.startUs / 1_000_000).toFixed(2)} onChange={(event) => useEditorStore.getState().moveSelected(clip.id, project.tracks.find((track) => track.clips.some((item) => item.id === clip.id))?.id ?? '', numberValue(event.target.value) * 1_000_000)} />
               <NumberField {...transaction} label="長さ" suffix="秒" min={0.03} step={0.1} value={(clip.durationUs / 1_000_000).toFixed(2)} onChange={(event) => useEditorStore.getState().trim(clip.id, 'end', clip.startUs + Math.max(33_333, numberValue(event.target.value) * 1_000_000))} />
+              {clip.kind === 'subtitle' && <NumberField {...transaction} label="終了" suffix="秒" min={0.03} step={0.1} value={((clip.startUs + clip.durationUs) / 1_000_000).toFixed(2)} onChange={(event) => useEditorStore.getState().trim(clip.id, 'end', Math.max(clip.startUs + 33_333, numberValue(event.target.value) * 1_000_000))} />}
             </div>
           </Section>
           {hasTransform(clip) && <TransformEditor clip={clip} />}

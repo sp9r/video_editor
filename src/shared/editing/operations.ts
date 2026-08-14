@@ -1,8 +1,13 @@
 import { assertSubtitleTrackHasNoOverlap, framesToUs, snapUsToFrame, splitClip, trimClip } from '../project'
-import type { ProjectFile, TimelineClip, TimelineTrack, TimeUs } from '../types'
+import type { ProjectFile, SubtitleClip, TimelineClip, TimelineTrack, TimeUs } from '../types'
 import { linkedClipIds, uniqueLinkedRoots } from './links'
 
-export type EditingOperationCode = 'linked_track_locked' | 'track_incompatible' | 'clip_locked'
+export type EditingOperationCode =
+  | 'linked_track_locked'
+  | 'track_incompatible'
+  | 'clip_locked'
+  | 'subtitle_invalid_boundary'
+  | 'subtitle_no_adjacent'
 
 export class EditingOperationError extends Error {
   readonly code: EditingOperationCode
@@ -74,6 +79,113 @@ const moveTrack = (project: ProjectFile, clipId: string, targetTrackId: string):
 }
 
 const updateTimestamp = (project: ProjectFile): void => { project.updatedAt = new Date().toISOString() }
+
+const subtitleLocation = (project: ProjectFile, clipId: string): { clip: SubtitleClip; track: TimelineTrack; index: number } | null => {
+  for (const track of project.tracks) {
+    if (track.kind !== 'subtitle') continue
+    const index = track.clips.findIndex((clip) => clip.id === clipId && clip.kind === 'subtitle')
+    const clip = track.clips[index]
+    if (clip?.kind === 'subtitle') return { clip, track, index }
+  }
+  return null
+}
+
+const allClipIds = (project: ProjectFile): Set<string> => new Set(project.tracks.flatMap((track) => track.clips.map((clip) => clip.id)))
+
+const splitSubtitleId = (clipId: string, splitAtUs: TimeUs, usedIds: Set<string>): string => {
+  const base = `${clipId}:subtitle-right:${splitAtUs}`
+  let candidate = base
+  let suffix = 2
+  while (usedIds.has(candidate)) candidate = `${base}:${suffix++}`
+  return candidate
+}
+
+const subtitleTextFromWords = (words: SubtitleClip['words']): string | null => {
+  if (!words?.length) return null
+  return words.map((word) => word.text).join('')
+}
+
+/** Split a caption only at a word boundary with timestamp metadata. */
+export const splitSubtitleAtWordBoundary = (project: ProjectFile, clipId: string, boundaryIndex: number): ProjectFile => {
+  const location = subtitleLocation(project, clipId)
+  if (!location || location.track.locked) throw new EditingOperationError('clip_locked', '字幕トラックがロックされています。', [clipId])
+  const words = location.clip.words
+  const leftWord = words?.[boundaryIndex]
+  const rightWord = words?.[boundaryIndex + 1]
+  const combinedText = subtitleTextFromWords(words)
+  if (!words || !leftWord || !rightWord || combinedText !== location.clip.text || boundaryIndex < 0 || boundaryIndex >= words.length - 1) {
+    throw new EditingOperationError('subtitle_invalid_boundary', '単語タイミング情報がないか、選択した位置で分割できません。', [clipId])
+  }
+  const splitAtUs = rightWord.startUs
+  const leftEndUs = leftWord.endUs
+  const originalEndUs = location.clip.startUs + location.clip.durationUs
+  if (!Number.isFinite(splitAtUs) || !Number.isFinite(leftEndUs) || leftEndUs <= location.clip.startUs || splitAtUs < leftEndUs || splitAtUs >= originalEndUs || rightWord.endUs <= splitAtUs) {
+    throw new EditingOperationError('subtitle_invalid_boundary', '単語の時間範囲が字幕の範囲内にありません。', [clipId])
+  }
+  const next = clone(project)
+  const nextLocation = subtitleLocation(next, clipId)
+  if (!nextLocation) return project
+  const usedIds = allClipIds(next)
+  const rightId = splitSubtitleId(clipId, splitAtUs, usedIds)
+  const left: SubtitleClip = {
+    ...nextLocation.clip,
+    text: words.slice(0, boundaryIndex + 1).map((word) => word.text).join(''),
+    durationUs: leftEndUs - nextLocation.clip.startUs,
+    words: words.slice(0, boundaryIndex + 1).map((word) => ({ ...word }))
+  }
+  const right: SubtitleClip = {
+    ...nextLocation.clip,
+    id: rightId,
+    name: `${nextLocation.clip.name} (後半)`,
+    startUs: splitAtUs,
+    text: words.slice(boundaryIndex + 1).map((word) => word.text).join(''),
+    durationUs: originalEndUs - splitAtUs,
+    sourceInUs: nextLocation.clip.sourceInUs + (splitAtUs - nextLocation.clip.startUs),
+    words: words.slice(boundaryIndex + 1).map((word) => ({ ...word }))
+  }
+  nextLocation.track.clips.splice(nextLocation.index, 1, left, right)
+  nextLocation.track.clips.sort((a, b) => a.startUs - b.startUs || a.id.localeCompare(b.id))
+  assertSubtitleTrackHasNoOverlap(nextLocation.track)
+  updateTimestamp(next)
+  return next
+}
+
+const mergeSubtitle = (project: ProjectFile, clipId: string, direction: 'previous' | 'next'): ProjectFile => {
+  const location = subtitleLocation(project, clipId)
+  if (!location || location.track.locked) throw new EditingOperationError('clip_locked', '字幕トラックがロックされています。', [clipId])
+  const adjacentIndex = direction === 'previous' ? location.index - 1 : location.index + 1
+  const adjacent = location.track.clips[adjacentIndex]
+  if (!adjacent || adjacent.kind !== 'subtitle') {
+    throw new EditingOperationError('subtitle_no_adjacent', direction === 'previous' ? '前に結合できる字幕がありません。' : '後ろに結合できる字幕がありません.', [clipId])
+  }
+  const first = direction === 'previous' ? adjacent : location.clip
+  const second = direction === 'previous' ? location.clip : adjacent
+  const next = clone(project)
+  const nextLocation = subtitleLocation(next, clipId)
+  if (!nextLocation) return project
+  const nextAdjacent = nextLocation.track.clips[adjacentIndex]
+  if (!nextAdjacent || nextAdjacent.kind !== 'subtitle') return project
+  const mergedWords = first.words && second.words ? [...first.words, ...second.words].map((word) => ({ ...word })) : undefined
+  const merged: SubtitleClip = {
+    ...(direction === 'previous' ? nextAdjacent : nextLocation.clip),
+    text: `${first.text}${second.text}`,
+    startUs: Math.min(first.startUs, second.startUs),
+    durationUs: Math.max(first.startUs + first.durationUs, second.startUs + second.durationUs) - Math.min(first.startUs, second.startUs),
+    sourceInUs: Math.min(first.sourceInUs, second.sourceInUs),
+    ...(mergedWords ? { words: mergedWords } : { words: undefined })
+  }
+  const removeIndex = direction === 'previous' ? nextLocation.index : adjacentIndex
+  const replaceIndex = direction === 'previous' ? adjacentIndex : nextLocation.index
+  nextLocation.track.clips.splice(replaceIndex, 1, merged)
+  nextLocation.track.clips.splice(removeIndex > replaceIndex ? removeIndex : removeIndex + 1, 1)
+  nextLocation.track.clips.sort((a, b) => a.startUs - b.startUs || a.id.localeCompare(b.id))
+  assertSubtitleTrackHasNoOverlap(nextLocation.track)
+  updateTimestamp(next)
+  return next
+}
+
+export const mergeSubtitleWithPrevious = (project: ProjectFile, clipId: string): ProjectFile => mergeSubtitle(project, clipId, 'previous')
+export const mergeSubtitleWithNext = (project: ProjectFile, clipId: string): ProjectFile => mergeSubtitle(project, clipId, 'next')
 
 const applyTimeDelta = (project: ProjectFile, clipIds: readonly string[], deltaUs: TimeUs): void => {
   for (const clipId of clipIds) {

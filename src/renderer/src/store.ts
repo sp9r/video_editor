@@ -13,7 +13,7 @@ import {
   validateProject,
   updateClip
 } from '../../shared/project'
-import { deleteLinkedClips, EditingOperationError, moveLinkedClip, splitLinkedClip, splitSelectedRoots, trimLinkedClip } from '../../shared/editing/operations'
+import { deleteLinkedClips, EditingOperationError, mergeSubtitleWithNext, mergeSubtitleWithPrevious, moveLinkedClip, splitLinkedClip, splitSelectedRoots, splitSubtitleAtWordBoundary, trimLinkedClip } from '../../shared/editing/operations'
 import { linkedClipIds } from '../../shared/editing/links'
 import { isMediaTrack } from '../../shared/types'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
@@ -59,6 +59,9 @@ interface EditorState {
   addAssetClip(assetId: string, trackId: string, atUs: TimeUs): void
   addSubtitle(): void
   patchClip(clipId: string, patcher: (clip: TimelineClip) => TimelineClip): void
+  splitSubtitleAtWordBoundary(clipId: string, boundaryIndex: number): void
+  mergeSubtitleWithPrevious(clipId: string): void
+  mergeSubtitleWithNext(clipId: string): void
   moveSelected(clipId: string, trackId: string, atUs: TimeUs): void
   trim(clipId: string, edge: 'start' | 'end', atUs: TimeUs): void
   splitSelected(): void
@@ -209,6 +212,43 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     get().applyProject(validateProject(next), { selectClipId: clip.id })
   },
   patchClip: (clipId, patcher) => get().applyProject(updateClip(get().project, clipId, patcher)),
+  splitSubtitleAtWordBoundary: (clipId, boundaryIndex) => {
+    try {
+      const { project } = get()
+      const next = splitSubtitleAtWordBoundary(project, clipId, boundaryIndex)
+      const right = next.tracks.flatMap((track) => track.clips).find((clip) => clip.id.startsWith(`${clipId}:subtitle-right:`))
+      if (!right) return get().showNotice('単語の境界を確認できませんでした。', 'warning')
+      get().applyProject(next)
+      set({ selectedClipIds: [clipId, right.id] })
+    } catch (error) {
+      if (error instanceof EditingOperationError) get().showNotice(error.message, 'warning')
+      else throw error
+    }
+  },
+  mergeSubtitleWithPrevious: (clipId) => {
+    try {
+      const { project } = get()
+      const location = project.tracks.flatMap((track) => track.clips.map((clip, index) => ({ track, clip, index }))).find(({ clip }) => clip.id === clipId)
+      const previous = location?.track.kind === 'subtitle' ? location.track.clips[location.index - 1] : undefined
+      if (!previous) return get().showNotice('前に結合できる字幕がありません。', 'warning')
+      get().applyProject(mergeSubtitleWithPrevious(project, clipId), { selectClipId: previous.id })
+    } catch (error) {
+      if (error instanceof EditingOperationError) get().showNotice(error.message, 'warning')
+      else throw error
+    }
+  },
+  mergeSubtitleWithNext: (clipId) => {
+    try {
+      const { project } = get()
+      const location = project.tracks.flatMap((track) => track.clips.map((clip, index) => ({ track, clip, index }))).find(({ clip }) => clip.id === clipId)
+      const next = location?.track.kind === 'subtitle' ? location.track.clips[location.index + 1] : undefined
+      if (!next) return get().showNotice('後ろに結合できる字幕がありません。', 'warning')
+      get().applyProject(mergeSubtitleWithNext(project, clipId), { selectClipId: clipId })
+    } catch (error) {
+      if (error instanceof EditingOperationError) get().showNotice(error.message, 'warning')
+      else throw error
+    }
+  },
   moveSelected: (clipId, trackId, atUs) => {
     try { get().applyProject(moveLinkedClip(get().project, clipId, trackId, atUs)) }
     catch (error) { if (error instanceof EditingOperationError) get().showNotice(error.message, 'warning'); else throw error }
@@ -219,6 +259,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   splitSelected: () => {
     const { project, selectedClipIds, playheadUs } = get()
+    const selectedSubtitle = selectedClipIds.length === 1
+      ? project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === selectedClipIds[0] && clip.kind === 'subtitle')
+      : undefined
+    if (selectedSubtitle?.kind === 'subtitle' && selectedSubtitle.words?.length) {
+      get().showNotice('単語タイミングがある字幕は、インスペクタの単語境界から分割してください。', 'warning')
+      return
+    }
     let next = project
     for (const id of splitSelectedRoots(project, selectedClipIds)) next = splitLinkedClip(next, id, playheadUs)
     if (next === project) get().showNotice('再生ヘッドをクリップの内側へ移動してください。', 'warning')

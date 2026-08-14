@@ -102,6 +102,35 @@ describe('editor history and linked selection', () => {
     expect(subtitles.every((clip) => clip.kind === 'subtitle' && clip.style.fontFamily === 'Custom Font' && clip.style.maxWidthPercent === 85)).toBe(true)
   })
 
+  it('updates subtitle split and merge immediately and keeps them undoable', () => {
+    const project = createEmptyProject('subtitle-edit')
+    const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle')!
+    subtitleTrack.clips.push({
+      id: 'caption-edit', name: '編集字幕', kind: 'subtitle', startUs: 0, durationUs: 1_000_000, sourceInUs: 0,
+      enabled: true, text: '字幕を入力', style: structuredClone(DEFAULT_SUBTITLE_STYLE), words: [
+        { id: 'edit-word-1', text: '字幕', startUs: 0, endUs: 300_000 },
+        { id: 'edit-word-2', text: 'を', startUs: 300_000, endUs: 500_000 },
+        { id: 'edit-word-3', text: '入力', startUs: 500_000, endUs: 800_000 }
+      ]
+    })
+    subtitleTrack.clips.push({
+      id: 'caption-next', name: '次字幕', kind: 'subtitle', startUs: 1_200_000, durationUs: 800_000, sourceInUs: 1_200_000,
+      enabled: true, text: '次', style: structuredClone(DEFAULT_SUBTITLE_STYLE), words: [{ id: 'next-word', text: '次', startUs: 1_200_000, endUs: 1_400_000 }]
+    })
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('caption-edit')
+    useEditorStore.getState().splitSubtitleAtWordBoundary('caption-edit', 1)
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips).toHaveLength(3)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips).toHaveLength(2)
+    useEditorStore.getState().redo()
+    const right = useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips.find((clip) => clip.id !== 'caption-edit' && clip.id !== 'caption-next')
+    expect(right?.kind === 'subtitle' ? right.text : undefined).toBe('入力')
+    useEditorStore.getState().mergeSubtitleWithNext('caption-edit')
+    expect(useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips).toHaveLength(2)
+    expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'subtitle').map((clip) => clip.text)).toEqual(['字幕を入力', '次'])
+  })
+
   it('adds, renames, reorders, and undoes empty track operations', () => {
     const project = createEmptyProject('tracks')
     useEditorStore.getState().loadProject(project)
