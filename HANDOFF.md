@@ -14,6 +14,15 @@ branch: `main`
 - Current regression baseline: `npm.cmd run check` = **31 files / 164 tests PASS**; `npm.cmd run build` = PASS.
 - Next scope: **Step 3.5A Timeline-first Subtitle Editing**. Step 3.5A-1 is read-only visualization of word timing inside subtitle clips; split, drag, ownership changes, Review Mode, and caption algorithm changes are out of scope.
 
+## Step 3.5A-1 completion (2026-08-15)
+
+- Added read-only `.subtitle-word-layer` / `.subtitle-word-unit` visuals inside words-bearing subtitle clips. Geometry uses the true absolute `word.startUs` / `word.endUs` ratio; gaps and very short words are not normalized or given a minimum timing width.
+- Words-free captions retain the existing text-only rendering. Text-mismatch captions retain metadata visualization without adding split affordances. The outer `.timeline-clip` remains `position: absolute`; existing selection and pointer gesture semantics are unchanged.
+- Added renderer geometry coverage for contiguous words, gaps, words undefined/empty, very short words, and text mismatch.
+- `npm.cmd run check`: **32 files / 169 tests PASS**; `npm.cmd run build`: PASS; `npm.cmd run smoke:electron`: PASS with no console errors.
+- `VISIBLE_TIMELINE_QA: NOT_RUN_TOOL_LIMIT` (the available packaged window was not the latest source build, and a source-build dev window could not be attached as a targetable window). Formal project and production artifacts were not modified.
+- Implementation commit: `01a9985d6f79c5fba741a2cf0087849aaba5a39b` pushed to `origin/main`. Step 3.5A-2 and Step 3.5A-3 remain NOT STARTED.
+
 ## 0. 最初に行うこと
 
 ```powershell
