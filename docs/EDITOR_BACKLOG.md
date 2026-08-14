@@ -2,17 +2,26 @@
 
 ## Phase 4R - Preview architecture
 
-- Fast PreviewはReact/HTML/CSSの近似表示、Accurate PreviewとFinalはFFmpeg/libassのauthoritative RenderPlanを使用する。
+- Fast PreviewはHTML video/imageの近似表示と、FFmpeg/libassのauthoritative subtitle PNG overlayを使用する。Accurate PreviewとFinalはFFmpeg/libassのauthoritative full frameを使用する。
 - Accurate Previewの対応範囲は、現在のProject Model、visual transforms、layer order、字幕ASS、Final frame comparison fixtureで検証する。Chromium/libassのrasterization差は許容する。
 - Accurate PreviewのPNG memory cacheは64件。大規模disk cache、GPU decode、HDR/color managementは未実装。
 - Accurate frame extractionは1 requestにつきFFmpegを起動するため、長い連続seekの最適化や共有workerは将来検討する。
 
-## Phase 4R.2 - Fast Preview semantic parity
+## Phase 4R.2 - Fast Preview semantic parity（Phase 4R.4で字幕経路を置換）
 
 - Fast Preview subtitle DOMはbackground / duplicate shadow / sharp main glyphの3層。Final/Accurateのauthoritative rendererは引き続きFFmpeg/libass。
 - `canonicalShadowBlurRadius()`をPreviewとASSで共有し、CSS shadowの過大表示を避ける。CSS/libassのrasterization、font fallback、exact blur shapeは許容差として残る。
 - Fast側はfont-sizeだけへChromium/libassのfont metric calibration（Noto Sans JP 0.67、その他fallback 0.90）を適用する。stack container、outline、shadow、background、anchorはscaleしない。論理font size、wrap、positionはshared specのまま保持する。
 - production smokeは実Project/PreviewからFast screenshotとAccurate screenshotを取得し、字幕・visual transform fixtureを検証する。実PNGからcenter、glyph width/height、shadow/background存在、video geometryを測定する。
+
+## Phase 4R.4 - Authoritative Fast Subtitle Overlay
+
+- 通常の`animation=none`字幕はCSS typographyをauthorityにせず、`renderSubtitleOverlay()`がFinalと同じ`generateAss(project)`を透明RGBA canvasへlibass描画する。
+- FFmpeg `ass` filterの`alpha=1`を使用する。透明640x360 fixtureでcorner alpha=0、white glyph、outline、background、red shadow alphaをpixel検証する。
+- Fast overlayはsequence全体PNGを`.fast-authoritative-subtitle-overlay`としてそのまま重ね、CSS側でfont-size、position、outline、shadow、backgroundを補正しない。paused Accurate frameはFast CSS fallbackより上位で表示する。
+- cache keyはrenderer version、sequence width/height/fps、active subtitle visual state（ID、track order、text、全style）。mediaは不要で、最大64件のmemory/in-flight/disk bounded cacheとする。同一static cue中は同じPNGを再利用する。
+- animated cue、overlay生成失敗、初回生成中だけCSS fallbackを使用し、`data-subtitle-renderer`で内部状態を識別する。font別0.67/0.90 calibrationは通常字幕経路から廃止する。
+- production smokeはFast overlay存在・自然サイズ・CSS fallback不使用、Accurate stale overlay、Final/Accurate regressionを確認する。
 
 ## Phase 4R.3 - Subtitle geometry/style semantic correction
 

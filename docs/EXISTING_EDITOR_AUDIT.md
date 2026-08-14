@@ -130,3 +130,10 @@ Phase 4で再利用した既存コードも完成品とは扱わず、domain tes
 - ASSはbackground専用BorderStyle 3 event、shadow event、main glyph eventの順で描画する。bundled libassではBackColourだけではBorderStyle 3 boxが描画されないため、background色をPrimary/Outline/Backへ設定し、正のOutlineをpaddingとして与える。backgroundがshadowを覆わないようにし、Previewはmax-width outer layoutとtext-sized inner backgroundへ分離した。
 - `npm.cmd run subtitle:parity`を追加。exact user fixture（1920x1080、字幕を入力、Noto Sans JP、123px、outline 14、red shadow 24、background 0.15）からElectron screenshotとFFmpeg/libass frameを生成し、white glyph center、readability、red shadow、background geometryを比較する。
 - 実測結果: Preview/Final white glyph center差は約11.6px、両方でred shadow regionとbackground regionを検出。CSS/libassのantialiasing・blur shape・font rasterization差は許容範囲として残す。
+
+## Phase 4R.4 authoritative Fast subtitle overlay
+
+- Phase 4R.3までのCSS font metric calibration（Noto Sans JP 0.67、fallback 0.90）は通常字幕経路から廃止する。理由はChromium CSS typographyとlibass typographyを係数で近づけ続ける設計が、font size・position・outlineの再発差分を残すため。
+- `renderSubtitleOverlay()`はFinalと同じ`generateAss(project)`をbundled FFmpeg/libassへ渡し、`ass=...:alpha=1`で透明RGBA PNGを生成する。FastはHTML media + このsequence全面overlay、pausedはfull Accurate frame、Finalはfull renderとなる。
+- `animation=none`はauthoritative overlayを必須経路とし、animated cue・生成失敗・初回のみCSS fallbackへ降格する。overlayにはrequest sequence、active visual-state fingerprint、64件bounded cacheを持たせる。
+- 透明fixtureのpixel検証はcorner alpha=0、glyph/outline/background/shadow alpha>0。Fast production smokeはoverlay DOM、自然サイズ、CSS fallback count、stale/accurate遷移を確認する。

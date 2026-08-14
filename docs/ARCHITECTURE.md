@@ -13,7 +13,7 @@ flowchart LR
   EP --> L["independent validator / loader"]
   L --> PM["video_editor Project Model"]
   PM --> RP["shared Render Plan"]
-  RP --> FP["Fast Preview\nReact/CSS approximate"]
+  RP --> FP["Fast Preview\nHTML media + libass subtitle PNG"]
   RP --> AP["Accurate Preview\nFFmpeg/libass PNG"]
   RP --> HR["headless / final FFmpeg render"]
 ```
@@ -22,13 +22,13 @@ flowchart LR
 
 ### Preview authority (Phase 4R)
 
-Previewには二つのモードがある。再生中のFast PreviewはReact/HTML/CSSによる低遅延の近似表示であり、Final相当の画素正本ではない。停止中のAccurate Previewは`FfmpegService.renderAccurateFrame()`を通じ、Finalと同じ`buildAuthoritativeVideoGraph()`、ASS、RenderPlanからcanonical frame PNGを生成してoverlayする。Final renderer、Accurate Preview、headless renderの差は末端出力だけである。
+Previewには二つのモードがある。再生中のFast PreviewはHTML video/imageを低遅延で表示し、字幕だけは`FfmpegService.renderSubtitleOverlay()`でFinalと同じASS/libassから透明RGBA PNGを生成して全面overlayする。停止中のAccurate Previewは`FfmpegService.renderAccurateFrame()`を通じ、Finalと同じ`buildAuthoritativeVideoGraph()`、ASS、RenderPlanからcanonical frame PNGを生成してoverlayする。字幕のtypographyはFast、Accurate、Finalで同じlibass経路を使い、映像媒体だけがFast側の近似表示になる。
 
 `src/shared/frame-time.ts`がframe quantizationの正本で、floor semantics（playhead時刻以下の最後のframe）を使う。Accurate frame requestはmain processが安全なcache/temp pathを決め、rendererはpathを指定しない。cacheはproject fingerprint、media size/mtime、frame index、解像度、fpsで無効化される。
 
 停止後のrequestは180ms debounceし、latest sequenceだけを表示する。再生開始時はAccurate overlayを隠してFast Previewへ戻る。失敗時はFast Previewを残し、Previewの小さな診断表示だけを出す。export pipelineは影響を受けない。
 
-Fast Previewの字幕描画はFinalのASS layer semanticsに合わせ、background、shadow duplicate、main glyphを別DOM layerとして持つ。main glyphは常にsharpで、shared `canonicalShadowBlurRadius()`を使うshadowだけをsoftenする。Chromiumとlibassのfont metric差はFast側のfont-sizeだけへrenderer-only calibration（Noto Sans JP 0.67、その他のfallback 0.90）を適用し、stack container、outline、shadow、background、anchorはscaleしない。論理font sizeやwrapの正本は`SubtitleRenderSpec`に残す。これによりFast Previewはpixel authorityではないまま、字幕styleを別デザインに見せない編集判断用のsemantic parityを確保する。
+Fast Previewの通常字幕（`animation=none`）はCSS typographyを使わず、`.fast-authoritative-subtitle-overlay`へ透明RGBA PNGをそのまま表示する。overlayはsequence全体サイズで、CSS側でposition、font-size、outline、shadow、backgroundを再計算しない。字幕のactive visual stateをkeyにmemory/disk bounded cacheを共有し、同一cue表示中にFFmpegを毎frame起動しない。animated subtitleは現段階では明示的にCSS fallbackへ降格し、overlay生成失敗時も内部状態を識別してfallbackする。Phase 4R.3までのNoto/Arial font-size calibrationは通常字幕経路から廃止した。
 
 ## 設計目標
 
