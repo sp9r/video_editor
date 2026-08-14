@@ -10,7 +10,7 @@ import {
   type CommandResult,
   type ProcessExecutor
 } from '../../src/main/ffmpeg/process.js'
-import type { ExportProgress } from '../../src/shared/types.js'
+import type { ExportProgress, SubtitleClip } from '../../src/shared/types.js'
 import { makeExportSettings, makeProject } from './ffmpeg-fixtures.js'
 
 const success = (request: CommandRequest, stdout = '', stderr = ''): CommandResult => ({
@@ -131,6 +131,42 @@ describe('FFmpeg export service', () => {
       await rm(root, { recursive: true, force: true })
     }
   }, 30_000)
+
+  it('reuses a prefetched next cue at the boundary without another FFmpeg render', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-subtitle-overlay-prefetch-'))
+    try {
+      const project = makeProject()
+      const track = project.tracks.find((item) => item.kind === 'subtitle')
+      const current = track?.clips.find((clip): clip is SubtitleClip => clip.kind === 'subtitle')
+      if (!track || !current) throw new Error('subtitle fixture missing')
+      current.style = { ...current.style, animation: 'none', animationDurationUs: 0 }
+      const next = structuredClone(current)
+      next.id = 'caption-next'
+      next.startUs = current.startUs + current.durationUs + 50_000
+      next.text = '次の字幕'
+      track.clips.push(next)
+      let renderCalls = 0
+      const executor: ProcessExecutor = {
+        async run(request) {
+          if (request.args.includes('-filter_complex_script')) {
+            renderCalls += 1
+            const outputPath = request.args.at(-1)
+            if (!outputPath) throw new Error('Missing subtitle overlay output')
+            await writeFile(outputPath, `overlay-${renderCalls}`)
+          }
+          return success(request)
+        }
+      }
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor, workspaceRoot: join(root, 'workspace') })
+      await service.renderSubtitleOverlay(project, current.startUs + 100_000)
+      await service.renderSubtitleOverlay(project, next.startUs)
+      const boundary = await service.renderSubtitleOverlay(project, next.startUs + 1)
+      expect(renderCalls).toBe(2)
+      expect(boundary.framePath).toContain('subtitle-overlay')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 
   it('renders an authoritative single frame and shares bounded cache entries', async () => {
     const root = await mkdtemp(join(tmpdir(), 'spectra-accurate-frame-'))

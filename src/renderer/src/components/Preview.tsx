@@ -7,6 +7,7 @@ import { canonicalShadowBlurRadius } from '../../../shared/subtitle-shadow'
 import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip, SubtitleOverlayResult } from '../../../shared/types'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
+import { LatestSubtitleOverlayScheduler } from '../subtitle-overlay-scheduler'
 
 const activeAt = (clip: { startUs: number; durationUs: number; enabled: boolean }, timeUs: number): boolean =>
   clip.enabled && clip.startUs <= timeUs && clip.startUs + clip.durationUs > timeUs
@@ -83,13 +84,32 @@ function PreviewAudio({
   return <audio ref={elementRef} data-clip-id={item.clipId} src={window.spectra.mediaUrl(asset.path)} preload="auto" />
 }
 
+interface SubtitleOverlayState {
+  result: SubtitleOverlayResult
+  visualKey: string
+  cueKey: string
+}
+
+const nextStaticSubtitleTime = (project: Parameters<typeof activeSubtitleClips>[0], timeUs: number): number | null => {
+  const active = activeSubtitleClips(project, timeUs)
+  const boundaryUs = active.length > 0
+    ? Math.max(...active.map(({ clip }) => clip.startUs + clip.durationUs))
+    : timeUs
+  const next = project.tracks
+    .filter((track) => track.kind === 'subtitle' && !track.hidden && !track.muted)
+    .flatMap((track) => track.clips)
+    .filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && clip.enabled && clip.durationUs > 0 && clip.startUs >= boundaryUs && clip.style.animation === 'none' && clip.text.trim().length > 0)
+    .sort((left, right) => left.startUs - right.startUs || left.id.localeCompare(right.id))[0]
+  return next?.startUs ?? null
+}
+
 export default function Preview(): React.JSX.Element {
   const { project, playheadUs, setPlayhead, playing, setPlaying, selectClip } = useEditorStore()
   const [renderPlan, setRenderPlan] = useState<PreviewPlan | null>(null)
   const [accurateFrame, setAccurateFrame] = useState<AccuratePreviewFrameResult | null>(null)
   const [accurateRendering, setAccurateRendering] = useState(false)
   const [accurateError, setAccurateError] = useState<string | null>(null)
-  const [subtitleOverlay, setSubtitleOverlay] = useState<SubtitleOverlayResult | null>(null)
+  const [subtitleOverlay, setSubtitleOverlay] = useState<SubtitleOverlayState | null>(null)
   const [subtitleOverlayRendering, setSubtitleOverlayRendering] = useState(false)
   const [subtitleOverlayError, setSubtitleOverlayError] = useState<string | null>(null)
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
@@ -99,6 +119,8 @@ export default function Preview(): React.JSX.Element {
   const audioRefs = useRef(new Map<string, HTMLAudioElement>())
   const accurateRequestSequence = useRef(0)
   const subtitleOverlayRequestSequence = useRef(0)
+  const subtitleOverlayScheduler = useRef(new LatestSubtitleOverlayScheduler<SubtitleOverlayResult>(40))
+  const subtitlePrefetchKey = useRef<string | null>(null)
   const playheadRef = useRef(playheadUs)
   playheadRef.current = playheadUs
   const durationUs = Math.max(renderPlan?.durationUs ?? projectDurationUs(project), 1_000_000)
@@ -108,9 +130,12 @@ export default function Preview(): React.JSX.Element {
     return {
       active,
       hasAnimated: active.some(({ clip }) => clip.style.animation !== 'none'),
-      key: subtitleVisualStateKey(project, playheadUs)
+      key: subtitleVisualStateKey(project, playheadUs),
+      cueKey: active.map(({ clip, trackIndex }) => `${trackIndex}:${clip.id}`).join('|')
     }
   }, [playheadUs, project])
+
+  useEffect(() => () => subtitleOverlayScheduler.current.dispose(), [])
 
   useEffect(() => {
     if (!window.spectra) {
@@ -154,28 +179,41 @@ export default function Preview(): React.JSX.Element {
     const sequence = ++subtitleOverlayRequestSequence.current
     setSubtitleOverlayError(null)
     if (!playing || !window.spectra || activeSubtitleState.active.length === 0 || activeSubtitleState.hasAnimated) {
-      setSubtitleOverlay(null)
+      subtitleOverlayScheduler.current.cancel()
       setSubtitleOverlayRendering(false)
+      if (activeSubtitleState.active.length === 0 || activeSubtitleState.hasAnimated) setSubtitleOverlay(null)
       return
     }
-    setSubtitleOverlay(null)
+    const cueChanged = subtitleOverlay?.cueKey !== activeSubtitleState.cueKey
+    if (cueChanged) setSubtitleOverlay(null)
     setSubtitleOverlayRendering(true)
     const api = window.spectra
-    const timeout = window.setTimeout(() => {
-      void api.renderSubtitleOverlay(project, playheadRef.current)
-        .then((result) => {
-          if (sequence !== subtitleOverlayRequestSequence.current || !useEditorStore.getState().playing) return
-          setSubtitleOverlay(result)
-          setSubtitleOverlayRendering(false)
-        })
-        .catch((error: unknown) => {
-          if (sequence !== subtitleOverlayRequestSequence.current || !useEditorStore.getState().playing) return
-          setSubtitleOverlayRendering(false)
-          setSubtitleOverlayError(error instanceof Error ? error.message : '字幕overlayを生成できませんでした')
-        })
-    }, 0)
-    return () => window.clearTimeout(timeout)
-  }, [activeSubtitleState.hasAnimated, activeSubtitleState.key, activeSubtitleState.active.length, playing, project])
+    const requestedKey = activeSubtitleState.key
+    const requestedCueKey = activeSubtitleState.cueKey
+    subtitleOverlayScheduler.current.schedule({
+      key: requestedKey,
+      debounceMs: cueChanged ? 0 : 40,
+      run: () => api.renderSubtitleOverlay(project, playheadRef.current),
+      onCommit: (result, key) => {
+        if (sequence !== subtitleOverlayRequestSequence.current || !useEditorStore.getState().playing) return
+        setSubtitleOverlay({ result, visualKey: key, cueKey: requestedCueKey })
+        setSubtitleOverlayRendering(false)
+        setSubtitleOverlayError(null)
+        const nextTimeUs = nextStaticSubtitleTime(project, playheadRef.current)
+        if (nextTimeUs === null) return
+        const nextKey = subtitleVisualStateKey(project, nextTimeUs)
+        if (subtitlePrefetchKey.current === nextKey) return
+        subtitlePrefetchKey.current = nextKey
+        void api.renderSubtitleOverlay(project, nextTimeUs).catch(() => undefined)
+      },
+      onError: (error) => {
+        if (sequence !== subtitleOverlayRequestSequence.current || !useEditorStore.getState().playing) return
+        setSubtitleOverlayRendering(false)
+        setSubtitleOverlayError(error instanceof Error ? error.message : '字幕プレビューを更新できませんでした')
+      }
+    })
+    return () => subtitleOverlayScheduler.current.cancel()
+  }, [activeSubtitleState.hasAnimated, activeSubtitleState.key, activeSubtitleState.active.length, activeSubtitleState.cueKey, playing, project])
 
   useLayoutEffect(() => {
     const element = canvasRef.current
@@ -221,8 +259,8 @@ export default function Preview(): React.JSX.Element {
     .filter((clip) => activeAt(clip, playheadUs) && (!plannedVideoIds || plannedVideoIds.has(clip.id))), [playheadUs, plannedVideoIds, project])
   const subtitles = useMemo(() => project.tracks
     .filter((track) => track.kind === 'subtitle' && !track.hidden && !track.muted)
-    .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && activeAt(clip, playheadUs) && (!plannedCaptionIds || plannedCaptionIds.has(clip.id)))), [plannedCaptionIds, playheadUs, project])
-  const showCssSubtitles = activeSubtitleState.hasAnimated || (!playing && !accurateFrame) || (playing && Boolean(subtitleOverlayError))
+    .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && clip.style.animation !== 'none' && activeAt(clip, playheadUs) && (!plannedCaptionIds || plannedCaptionIds.has(clip.id)))), [plannedCaptionIds, playheadUs, project])
+  const showCssSubtitles = activeSubtitleState.hasAnimated && (playing || !accurateFrame)
   const scale = viewportSize.width > 0 && viewportSize.height > 0
     ? Math.min(viewportSize.width / project.sequence.width, viewportSize.height / project.sequence.height)
     : 1
@@ -264,7 +302,7 @@ export default function Preview(): React.JSX.Element {
         <span className="viewer-quality" aria-live="polite">
           <i />{playing ? subtitleOverlayRendering ? '高速プレビュー（字幕生成中…）' : '高速プレビュー' : accurateRendering ? '正確プレビュー更新中…' : accurateFrame ? '正確プレビュー' : '正確プレビュー生成中…'}
           {accurateError && <small className="preview-accurate-error" title={accurateError}>取得失敗</small>}
-          {subtitleOverlayError && <small className="preview-accurate-error" title={subtitleOverlayError}>字幕fallback</small>}
+          {subtitleOverlayError && <small className="preview-accurate-error" title={subtitleOverlayError}>字幕更新失敗</small>}
         </span>
       </header>
       <div className="viewer-stage">
@@ -345,11 +383,11 @@ export default function Preview(): React.JSX.Element {
                 </button>
               })()
             ))}
-            {playing && subtitleOverlay && !activeSubtitleState.hasAnimated && window.spectra && (
+            {playing && subtitleOverlay && subtitleOverlay.cueKey === activeSubtitleState.cueKey && !activeSubtitleState.hasAnimated && window.spectra && (
               <img
                 className="fast-authoritative-subtitle-overlay"
                 data-subtitle-renderer="authoritative-libass"
-                src={window.spectra.mediaUrl(subtitleOverlay.framePath)}
+                src={window.spectra.mediaUrl(subtitleOverlay.result.framePath)}
                 alt=""
                 draggable={false}
               />
