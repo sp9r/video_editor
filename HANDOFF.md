@@ -4,6 +4,16 @@
 状態: **Phase 3 standalone `edit_project.v1`基盤を実装。実画面E2E、別PC受入、GitHub公開は未完了の実用アルファ0.1.0**
 branch: `main`
 
+## Phase 3.4 CLOSED / Step 3.5A checkpoint (2026-08-15)
+
+- Accepted baseline at checkpoint start: `30883f61c25903d5c26c138585e998dc71347988` (`main`).
+- The `edit_project.v1` subtitle-words bridge is established. Caption `words[]` is optional; words-free captions remain valid.
+- Zero-duration source-word handling, decimal-seconds validation, subtitle split/merge, Undo/Redo, Save/reload, FFmpeg render, and accurate preview are accepted end to end.
+- `word_timing_overrides` parity is accepted: effective timing applies overrides, then `position_offset`.
+- `video_editor` is the future manual subtitle editor authority. The legacy `clip_automation` editor is frozen/reference-only and is not imported or runtime-coupled.
+- Current regression baseline: `npm.cmd run check` = **31 files / 164 tests PASS**; `npm.cmd run build` = PASS.
+- Next scope: **Step 3.5A Timeline-first Subtitle Editing**. Step 3.5A-1 is read-only visualization of word timing inside subtitle clips; split, drag, ownership changes, Review Mode, and caption algorithm changes are out of scope.
+
 ## 0. 最初に行うこと
 
 ```powershell
