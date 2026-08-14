@@ -192,6 +192,53 @@ const requiredFinite = (value: unknown, label: string): number => {
   return value as number
 }
 
+export type DecimalValue = Readonly<{
+  coefficient: bigint
+  scale: number
+}>
+
+const normalizeDecimal = (value: DecimalValue): DecimalValue => {
+  let coefficient = value.coefficient
+  let scale = value.scale
+  while (scale > 0 && coefficient % 10n === 0n) {
+    coefficient /= 10n
+    scale -= 1
+  }
+  return { coefficient, scale }
+}
+
+/** Decimal value semantics for finite JSON numbers, based on Number.toString(). */
+export const decimalFromNumber = (value: number, label = 'value'): DecimalValue => {
+  if (!Number.isFinite(value)) invalid(`${label} must be a finite number`)
+  const text = value.toString()
+  const match = /^([+-]?)(\d+)(?:\.(\d*))?(?:e([+-]?\d+))?$/iu.exec(text)
+  const parsedMatch = match ?? invalid(`${label} must be a finite decimal number`)
+  const sign = parsedMatch[1] ?? ''
+  const integerPart = parsedMatch[2] ?? ''
+  const fractionPart = parsedMatch[3] ?? ''
+  const exponentText = parsedMatch[4] ?? '0'
+  const digits = `${integerPart}${fractionPart}`
+  const unsignedCoefficient = BigInt(digits || '0')
+  const coefficient = sign === '-' ? -unsignedCoefficient : unsignedCoefficient
+  const scale = fractionPart.length - Number(exponentText)
+  if (scale >= 0) return normalizeDecimal({ coefficient, scale })
+  return normalizeDecimal({ coefficient: coefficient * (10n ** BigInt(-scale)), scale: 0 })
+}
+
+export const decimalAdd = (left: DecimalValue, right: DecimalValue): DecimalValue => {
+  const scale = Math.max(left.scale, right.scale)
+  const leftCoefficient = left.coefficient * (10n ** BigInt(scale - left.scale))
+  const rightCoefficient = right.coefficient * (10n ** BigInt(scale - right.scale))
+  return normalizeDecimal({ coefficient: leftCoefficient + rightCoefficient, scale })
+}
+
+export const decimalCompare = (left: DecimalValue, right: DecimalValue): -1 | 0 | 1 => {
+  const scale = Math.max(left.scale, right.scale)
+  const leftCoefficient = left.coefficient * (10n ** BigInt(scale - left.scale))
+  const rightCoefficient = right.coefficient * (10n ** BigInt(scale - right.scale))
+  return leftCoefficient < rightCoefficient ? -1 : leftCoefficient > rightCoefficient ? 1 : 0
+}
+
 const requiredPositive = (value: unknown, label: string): number => {
   const number = requiredFinite(value, label)
   if (number <= 0) invalid(`${label} must be > 0`)
@@ -268,12 +315,15 @@ const parseCaption = (value: unknown, label: string): EditProjectCaption => {
   const id = requiredString(object.id, `${label}.id`)
   const text = typeof object.text === 'string' ? object.text : invalid(`${label}.text must be a string`)
   const timeline = range(object.timeline, `${label}.timeline`)
+  const captionStartDecimal = decimalFromNumber(timeline.start, `${label}.timeline.start`)
+  const captionDurationDecimal = decimalFromNumber(timeline.duration, `${label}.timeline.duration`)
+  const captionEndDecimal = decimalAdd(captionStartDecimal, captionDurationDecimal)
   const words = object.words === undefined ? undefined : (() => {
     const rawWords = object.words
     if (!Array.isArray(rawWords) || rawWords.length === 0) invalid(`${label}.words must be a non-empty array when present`)
     const wordArray = rawWords as unknown[]
     const wordIds = new Set<string>()
-    let previousEnd = timeline.start
+    let previousEnd = captionStartDecimal
     const parsed = wordArray.map((value: unknown, index: number): EditProjectCaptionWord => {
       const word = record(value, `${label}.words[${index}]`)
       const wordId = requiredString(word.id, `${label}.words[${index}].id`)
@@ -281,11 +331,13 @@ const parseCaption = (value: unknown, label: string): EditProjectCaption => {
       wordIds.add(wordId)
       const wordText = typeof word.text === 'string' ? word.text : invalid(`${label}.words[${index}].text must be a string`)
       const wordTimeline = range(word.timeline, `${label}.words[${index}].timeline`)
-      const wordEnd = wordTimeline.start + wordTimeline.duration
-      if (wordTimeline.start < timeline.start) invalid(`${label}.words[${index}] starts before the caption`)
-      if (wordEnd > timeline.start + timeline.duration) invalid(`${label}.words[${index}] ends after the caption`)
-      if (wordTimeline.start < previousEnd) invalid(`${label}.words[${index}] overlaps or reverses the previous word`)
-      previousEnd = wordEnd
+      const wordStartDecimal = decimalFromNumber(wordTimeline.start, `${label}.words[${index}].timeline.start`)
+      const wordDurationDecimal = decimalFromNumber(wordTimeline.duration, `${label}.words[${index}].timeline.duration`)
+      const wordEndDecimal = decimalAdd(wordStartDecimal, wordDurationDecimal)
+      if (decimalCompare(wordStartDecimal, captionStartDecimal) < 0) invalid(`${label}.words[${index}] starts before the caption`)
+      if (decimalCompare(wordEndDecimal, captionEndDecimal) > 0) invalid(`${label}.words[${index}] ends after the caption`)
+      if (decimalCompare(wordStartDecimal, previousEnd) < 0) invalid(`${label}.words[${index}] overlaps or reverses the previous word`)
+      previousEnd = wordEndDecimal
       return { id: wordId, text: wordText, timeline: wordTimeline }
     })
     if (parsed.map((word) => word.text).join('') !== text) invalid(`${label}.words text does not reconstruct caption.text`)

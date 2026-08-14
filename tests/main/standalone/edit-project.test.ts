@@ -6,11 +6,15 @@ import { describe, expect, it } from 'vitest'
 import { createPreviewPlan, createRenderPlan } from '../../../src/main/ffmpeg/render-plan.js'
 import { splitSubtitleAtWordBoundary } from '../../../src/shared/editing/operations.js'
 import {
+  decimalAdd,
+  decimalCompare,
+  decimalFromNumber,
   EditProjectError,
   loadEditProject,
   validateEditProject,
   type EditProjectDocument
 } from '../../../src/main/standalone/edit-project.js'
+import { validateProject } from '../../../src/shared/project.js'
 
 const sourceBytes = Buffer.from('deterministic phase 3 media fixture\n', 'utf8')
 
@@ -213,6 +217,93 @@ describe('standalone edit_project.v1 loader', () => {
       ])
       const split = splitSubtitleAtWordBoundary(loaded.project, 'caption_1', 0)
       expect(split.tracks.find((track) => track.kind === 'subtitle')?.clips.map((item) => item.kind === 'subtitle' ? item.text : item.id)).toEqual(['私', 'の'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('uses exact decimal value semantics for caption word adjacency and caption end', () => {
+    const document = makeDocument()
+    document.sequence.duration = 15
+    document.captions[0] = {
+      ...document.captions[0]!,
+      text: 'AB',
+      timeline: { start: 13.88, duration: 0.52 },
+      words: [
+        { id: 'source-word:1', text: 'A', timeline: { start: 13.88, duration: 0.32 } },
+        { id: 'source-word:2', text: 'B', timeline: { start: 14.2, duration: 0.2 } }
+      ]
+    }
+    expect(() => validateEditProject(document)).not.toThrow()
+  })
+
+  it.each([
+    ['true 1us overlap', 0.320001, /overlaps or reverses/u],
+    ['true sub-us overlap', 0.320000000000001, /overlaps or reverses/u]
+  ])('%s is rejected without microsecond quantization', (_name, firstDuration, message) => {
+    const document = makeDocument()
+    document.sequence.duration = 15
+    document.captions[0] = {
+      ...document.captions[0]!,
+      text: 'AB',
+      timeline: { start: 13.88, duration: 0.52 },
+      words: [
+        { id: 'source-word:1', text: 'A', timeline: { start: 13.88, duration: firstDuration } },
+        { id: 'source-word:2', text: 'B', timeline: { start: 14.2, duration: 0.2 } }
+      ]
+    }
+    expect(() => validateEditProject(document)).toThrow(message)
+  })
+
+  it('rejects a true caption overrun while accepting exact caption end', () => {
+    const exact = makeDocument()
+    exact.sequence.duration = 15
+    exact.captions[0] = {
+      ...exact.captions[0]!,
+      text: 'AB',
+      timeline: { start: 13.88, duration: 0.52 },
+      words: [
+        { id: 'source-word:1', text: 'A', timeline: { start: 13.88, duration: 0.32 } },
+        { id: 'source-word:2', text: 'B', timeline: { start: 14.2, duration: 0.2 } }
+      ]
+    }
+    expect(() => validateEditProject(exact)).not.toThrow()
+
+    const overrun = structuredClone(exact)
+    overrun.captions[0]!.words![1]!.timeline.duration = 0.200001
+    expect(() => validateEditProject(overrun)).toThrow(/ends after the caption/u)
+  })
+
+  it('parses exponent notation in decimal helper arithmetic and comparison', () => {
+    const one = decimalFromNumber(1e-7)
+    const two = decimalFromNumber(2e-7)
+    expect(decimalCompare(decimalAdd(one, two), decimalFromNumber(3e-7))).toBe(0)
+    expect(decimalCompare(decimalFromNumber(1.5e+2), decimalFromNumber(150))).toBe(0)
+    expect(decimalCompare(decimalFromNumber(1e-7), decimalFromNumber(2e-7))).toBe(-1)
+  })
+
+  it('keeps exact decimal adjacency when importing to microseconds and validates the Project Model', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'video-editor-decimal-import-'))
+    try {
+      const document = makeDocument()
+      document.sequence.duration = 15
+      document.captions[0] = {
+        ...document.captions[0]!,
+        text: 'AB',
+        timeline: { start: 13.88, duration: 0.52 },
+        words: [
+          { id: 'source-word:1', text: 'A', timeline: { start: 13.88, duration: 0.32 } },
+          { id: 'source-word:2', text: 'B', timeline: { start: 14.2, duration: 0.2 } }
+        ]
+      }
+      const projectPath = await writeProject(root, document)
+      const loaded = await loadEditProject(projectPath)
+      const caption = loaded.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'caption_1')
+      expect(caption?.kind === 'subtitle' ? caption.words : undefined).toEqual([
+        { id: 'source-word:1', text: 'A', startUs: 13_880_000, endUs: 14_200_000 },
+        { id: 'source-word:2', text: 'B', startUs: 14_200_000, endUs: 14_400_000 }
+      ])
+      expect(() => validateProject(loaded.project)).not.toThrow()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
