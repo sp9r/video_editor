@@ -273,15 +273,26 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const detail = JSON.stringify({ project, timeUs: 500_000 })
   await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${detail} }))`)
   console.log('SPECTRA_ACCURATE_PREVIEW_STAGE project-dispatched')
-  const readDom = async (): Promise<{ overlay: boolean; quality: string; playButton: boolean; overlayCount: number; overlaySrc: string }> => await window.webContents.executeJavaScript(`(() => ({
+  const readDom = async (): Promise<{ viewport: { width: number; height: number }; overlay: boolean; overlayReady: boolean; quality: string; playButton: boolean; overlayCount: number; overlaySrc: string; subtitleMain: { x: number; y: number; width: number; height: number }; visual: { x: number; y: number; width: number; height: number } }> => await window.webContents.executeJavaScript(`(() => {
+    const rect = (element) => {
+      const value = element?.getBoundingClientRect()
+      return value ? { x: value.x, y: value.y, width: value.width, height: value.height } : { x: 0, y: 0, width: 0, height: 0 }
+    }
+    return {
+    viewport: { width: window.innerWidth, height: window.innerHeight },
     overlay: document.querySelector('.accurate-preview-overlay') !== null,
+    overlayReady: (() => { const image = document.querySelector('.accurate-preview-overlay'); return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0 })(),
     quality: document.querySelector('.viewer-quality')?.textContent ?? '',
     playButton: document.querySelector('.play-button') !== null,
     overlayCount: document.querySelectorAll('.accurate-preview-overlay').length,
-    overlaySrc: document.querySelector('.accurate-preview-overlay')?.getAttribute('src') ?? ''
-  }))()`)
+    overlaySrc: document.querySelector('.accurate-preview-overlay')?.getAttribute('src') ?? '',
+    subtitleMain: rect(document.querySelector('.preview-subtitle-main')),
+    visual: rect(document.querySelector('.preview-visual'))
+    }
+  })()`)
   console.log('SPECTRA_ACCURATE_PREVIEW_STAGE dom-poll-start')
   const wait = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds))
+  const waitForPaint = (): Promise<unknown> => window.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
   const until = async (predicate: (dom: Awaited<ReturnType<typeof readDom>>) => boolean, timeoutMs = 10_000): Promise<boolean> => {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
@@ -291,24 +302,36 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
     }
     return false
   }
-  const accurateInitial = await until((dom) => dom.overlay)
+  const accurateInitial = await until((dom) => dom.overlay && dom.overlayReady)
   const initialDom = await readDom()
   if (!initialDom.playButton) throw new Error('Preview play button is missing')
   const initialOverlaySrc = initialDom.overlaySrc
+  const accurateScreenshotPath = path.join(app.getPath('temp'), 'spectra-accurate-preview-phase4r2.png')
+  await waitForPaint()
+  await writeFile(accurateScreenshotPath, (await window.webContents.capturePage()).toPNG())
+  await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
+  const fastFixture = await until((dom) => !dom.overlay && dom.quality.includes('高速'))
+  const fastFixtureDom = await readDom()
+  const fastScreenshotPath = path.join(app.getPath('temp'), 'spectra-fast-preview-phase4r2.png')
+  await waitForPaint()
+  await writeFile(fastScreenshotPath, (await window.webContents.capturePage()).toPNG())
+  await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
+  const accurateFixtureAfterResume = (await readDom()).overlay
+    && await until((dom) => dom.overlay && dom.overlayReady)
   const editedProject = structuredClone(project)
   const editedSubtitle = editedProject.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === 'subtitle')
   if (editedSubtitle?.kind === 'subtitle') editedSubtitle.text = 'Accurate Preview edited'
   await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${JSON.stringify({ project: editedProject, timeUs: 500_000 })} }))`)
   const pendingDom = await readDom()
   const editPendingPreservesOverlay = pendingDom.overlay && pendingDom.overlaySrc === initialOverlaySrc && pendingDom.quality.includes('更新中')
-  const editedFrameReady = await until((dom) => dom.overlay && dom.overlaySrc !== initialOverlaySrc && dom.quality.includes('正確プレビュー'))
+  const editedFrameReady = await until((dom) => dom.overlay && dom.overlayReady && dom.overlaySrc !== initialOverlaySrc && dom.quality.includes('正確プレビュー'))
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
   const fastDuringPlay = await until((dom) => !dom.overlay && dom.quality.includes('高速'))
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
   const overlayImmediatelyAfterPause = (await readDom()).overlay
-  const accurateAfterResume = overlayImmediatelyAfterPause && await until((dom) => dom.overlay)
+  const accurateAfterResume = overlayImmediatelyAfterPause && await until((dom) => dom.overlay && dom.overlayReady)
   const finalDom = await readDom()
-  const report = { accurateInitial, initialQuality: initialDom.quality, editPendingPreservesOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount }
+  const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, fastFixture, accurateFixtureAfterResume, editPendingPreservesOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
   return { ...startup, ...report }
 }
 
