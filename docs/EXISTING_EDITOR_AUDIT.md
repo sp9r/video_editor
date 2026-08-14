@@ -127,6 +127,6 @@ Phase 4で再利用した既存コードも完成品とは扱わず、domain tes
 ## Phase 4.11 subtitle visual parity stabilization
 
 - `SubtitleRenderSpec`へcanonical shadow offset `(0px, 2px)`を追加。CSS shadow blurはoffsetを変更せず、ASSでは`assShadowBlurFromCss()`でshadow duplicate eventだけへ近似適用する。main glyphの`\\blur`は禁止。
-- ASSはbackground専用BorderStyle 3 event、shadow event、main glyph eventの順で描画する。backgroundがshadowを覆わないようにし、Previewはmax-width outer layoutとtext-sized inner backgroundへ分離した。
+- ASSはbackground専用BorderStyle 3 event、shadow event、main glyph eventの順で描画する。bundled libassではBackColourだけではBorderStyle 3 boxが描画されないため、background色をPrimary/Outline/Backへ設定し、正のOutlineをpaddingとして与える。backgroundがshadowを覆わないようにし、Previewはmax-width outer layoutとtext-sized inner backgroundへ分離した。
 - `npm.cmd run subtitle:parity`を追加。exact user fixture（1920x1080、字幕を入力、Noto Sans JP、123px、outline 14、red shadow 24、background 0.15）からElectron screenshotとFFmpeg/libass frameを生成し、white glyph center、readability、red shadow、background geometryを比較する。
 - 実測結果: Preview/Final white glyph center差は約11.6px、両方でred shadow regionとbackground regionを検出。CSS/libassのantialiasing・blur shape・font rasterization差は許容範囲として残す。

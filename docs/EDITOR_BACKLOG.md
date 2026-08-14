@@ -11,8 +11,15 @@
 
 - Fast Preview subtitle DOMはbackground / duplicate shadow / sharp main glyphの3層。Final/Accurateのauthoritative rendererは引き続きFFmpeg/libass。
 - `canonicalShadowBlurRadius()`をPreviewとASSで共有し、CSS shadowの過大表示を避ける。CSS/libassのrasterization、font fallback、exact blur shapeは許容差として残る。
-- Fast側のsubtitle stackはChromium/libassのfont metric差を実測したrenderer-only scale（現在0.67）で吸収する。論理font size、wrap、positionはshared specのまま保持する。
+- Fast側はfont-sizeだけへChromium/libassのfont metric calibration（Noto Sans JP 0.67、その他fallback 0.90）を適用する。stack container、outline、shadow、background、anchorはscaleしない。論理font size、wrap、positionはshared specのまま保持する。
 - production smokeは実Project/PreviewからFast screenshotとAccurate screenshotを取得し、字幕・visual transform fixtureを検証する。実PNGからcenter、glyph width/height、shadow/background存在、video geometryを測定する。
+
+## Phase 4R.3 - Subtitle geometry/style semantic correction
+
+- `transform: scale(0.67)`によるstack全体の縮小を廃止し、font-sizeだけへfamily別metric calibrationを適用する。outline width、shadow offset/blur、background box、anchor geometryはlogical spec値を直接使う。
+- bundled libass実測ではBorderStyle 3の`BackColour`だけではboxが描画されず、`PrimaryColour`と正の`Outline`が必要だった。background eventはbackground色をPrimary/Outline/Backへ設定し、Outlineは`max(1, logical outlineWidth)`とする。main/shadow eventとの分離は維持する。
+- bright-blue canvasのFinal A/Bでbackground opacity 0→0.15の差分を測定（9,516 pixels、234x76）。production Accurate screenshot A/Bでも1,102 pixels、76x25を検出する。
+- `npm.cmd run subtitle:geometry`は実Project/Previewを使い、Noto Sans JP 54/123、Arial 64、top/middle/bottom、background on/offをFast/Accurate PNGで比較する。center、X/Y anchor、glyph width/height、outline、background A/Bを測定する。
 
 ## Phase 4.11 subtitle visual parity stabilization
 

@@ -127,7 +127,9 @@ frame timeは`src/shared/frame-time.ts`のfloor semanticsを正本とする。30
 
 React/CSS Previewは再生中のFast Previewとして許容誤差のある近似表示を行う。停止中は180ms debounce後にAccurate PNGをoverlayし、play開始時にoverlayを隠す。project変更・seekの古いrequest結果はsequenceで破棄する。cache keyはproject fingerprint、media pathのsize/mtime、frame index、width、height、fpsを含み、memory cacheは64件に制限する。
 
-Fast Previewの字幕は`background`、duplicate `shadow`、sharp `main glyph`の3レイヤーへ分離する。main glyphにはtext shadowやblurを付与しない。shadowのCSS filter radiusとASS `\\blur`は`src/shared/subtitle-shadow.ts`の`canonicalShadowBlurRadius()`（例: 24px→12px）を共有し、backgroundはtext layout boxだけを塗る。Chromium/libassの実font metric差はFast subtitle stackのrenderer-only scale（現在0.67、exact fixtureの実PNG比較で校正）で吸収し、logical font size/wrappingはshared specのまま維持する。Fast Previewは依然として近似表示だが、Finalと別デザインに見えないsemantic parityを目標とする。
+Fast Previewの字幕は`background`、duplicate `shadow`、sharp `main glyph`の3レイヤーへ分離する。main glyphにはtext shadowやblurを付与しない。shadowのCSS filter radiusとASS `\\blur`は`src/shared/subtitle-shadow.ts`の`canonicalShadowBlurRadius()`（例: 24px→12px）を共有し、backgroundはtext layout boxだけを塗る。Chromium/libassの実font metric差はfont-sizeだけへrenderer-only calibration（Noto Sans JP 0.67、その他fallback 0.90）を適用し、stack、outline、shadow、background、anchorはscaleしない。logical font size/wrappingはshared specのまま維持する。Fast Previewは依然として近似表示だが、Finalと別デザインに見えないsemantic parityを目標とする。
+
+ASS BorderStyle 3のbackground eventはbundled libassの実挙動に合わせ、background色をPrimary/Outline/Backへ設定し、正のOutlineをpaddingとして与える。BackColourだけでは矩形が描画されないため、PrimaryColour transparentの旧形式は使用しない。backgroundはmain glyph・shadowとは別eventで、描画順はbackground → shadow → mainとする。
 
 ## 6. 字幕
 
