@@ -23,6 +23,15 @@ branch: `main`
 - `VISIBLE_TIMELINE_QA: NOT_RUN_TOOL_LIMIT` (the available packaged window was not the latest source build, and a source-build dev window could not be attached as a targetable window). Formal project and production artifacts were not modified.
 - Implementation commit: `01a9985d6f79c5fba741a2cf0087849aaba5a39b` pushed to `origin/main`. Step 3.5A-2 and Step 3.5A-3 remain NOT STARTED.
 
+## Step 3.5A-2 CLOSED (2026-08-15)
+
+- Timeline subtitle split is word-boundary-only. `Razor`, `Ctrl+K`, and the context menu route through the shared nearest-boundary helper and the existing `splitSubtitleAtWordBoundary` operation; subtitle timestamps and word ownership remain unchanged.
+- A gap is treated as one zero-distance boundary region, ties choose the lower boundary index, and frame snapping is not used for subtitle splits. Words-free, one-word, text-mismatch, outside-clip, and unsupported multi-selection cases are rejected atomically with a warning. Video/audio/image split behavior is unchanged.
+- Added shared/store/renderer regression coverage for nearest boundary selection, gap/tie behavior, exact split timing, undo/redo, invalid-input atomicity, media regression, multi-selection rejection, and context-menu enablement.
+- `npm.cmd run check`: **32 files / 178 tests PASS**; `npm.cmd run build`: PASS; `npm.cmd run smoke:electron`: PASS with `did-finish-load`, renderer alive, `#root`, `.app-shell`, preload API, and no console errors.
+- `VISIBLE_SUBTITLE_SPLIT_QA: NOT_RUN_TOOL_LIMIT`. `subtitle:geometry` was not used as a gate because it is a known flaky environment check and this change does not touch preview/ASS/FFmpeg.
+- Production render code, `edit_project.v1`, and `clip_automation` were not changed. Implementation commit: `e765227a68d2912399f8e340d8c6ea088eaca3e9` pushed to `origin/main`. Next: Step 3.5A-3; boundary drag and ownership editing remain NOT STARTED.
+
 ## 0. 最初に行うこと
 
 ```powershell
