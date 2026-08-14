@@ -11,6 +11,7 @@ import {
   type MediaAsset,
   type ProjectFile,
   type SubtitleClip,
+  type SubtitleWord,
   type TimelineClip,
   type TimelineTrack,
   type VideoClip
@@ -130,6 +131,12 @@ export interface EditProjectCaptionStyle {
   position_y?: number | null
 }
 
+export interface EditProjectCaptionWord {
+  id: string
+  text: string
+  timeline: EditProjectTimeRange
+}
+
 export interface EditProjectCaption {
   id: string
   track_id?: string
@@ -137,6 +144,8 @@ export interface EditProjectCaption {
   timeline: EditProjectTimeRange
   source?: EditProjectTimeRange
   style?: EditProjectCaptionStyle
+  source_word_ids?: number[]
+  words?: EditProjectCaptionWord[]
   enabled: boolean
 }
 
@@ -256,13 +265,52 @@ const parseCaption = (value: unknown, label: string): EditProjectCaption => {
   const object = record(value, label)
   const style = object.style
   if (style !== undefined && !isRecord(style)) invalid(`${label}.style must be an object`)
+  const id = requiredString(object.id, `${label}.id`)
+  const text = typeof object.text === 'string' ? object.text : invalid(`${label}.text must be a string`)
+  const timeline = range(object.timeline, `${label}.timeline`)
+  const words = object.words === undefined ? undefined : (() => {
+    const rawWords = object.words
+    if (!Array.isArray(rawWords) || rawWords.length === 0) invalid(`${label}.words must be a non-empty array when present`)
+    const wordArray = rawWords as unknown[]
+    const wordIds = new Set<string>()
+    let previousEnd = timeline.start
+    const parsed = wordArray.map((value: unknown, index: number): EditProjectCaptionWord => {
+      const word = record(value, `${label}.words[${index}]`)
+      const wordId = requiredString(word.id, `${label}.words[${index}].id`)
+      if (wordIds.has(wordId)) invalid(`${label}.words contains duplicate id: ${wordId}`)
+      wordIds.add(wordId)
+      const wordText = typeof word.text === 'string' ? word.text : invalid(`${label}.words[${index}].text must be a string`)
+      const wordTimeline = range(word.timeline, `${label}.words[${index}].timeline`)
+      const wordEnd = wordTimeline.start + wordTimeline.duration
+      if (wordTimeline.start < timeline.start) invalid(`${label}.words[${index}] starts before the caption`)
+      if (wordEnd > timeline.start + timeline.duration) invalid(`${label}.words[${index}] ends after the caption`)
+      if (wordTimeline.start < previousEnd) invalid(`${label}.words[${index}] overlaps or reverses the previous word`)
+      previousEnd = wordEnd
+      return { id: wordId, text: wordText, timeline: wordTimeline }
+    })
+    if (parsed.map((word) => word.text).join('') !== text) invalid(`${label}.words text does not reconstruct caption.text`)
+    return parsed
+  })()
+  const sourceWordIds = object.source_word_ids === undefined ? undefined : (() => {
+    const rawSourceWordIds = object.source_word_ids
+    if (!Array.isArray(rawSourceWordIds) || rawSourceWordIds.length !== 2 || rawSourceWordIds.some((item) => !Number.isInteger(item) || (item as number) < 0)) {
+      invalid(`${label}.source_word_ids must contain the first and last non-negative integer word id`)
+    }
+    return [...(rawSourceWordIds as unknown[])] as number[]
+  })()
+  if (words && sourceWordIds && (
+    words[0]?.id !== `source-word:${sourceWordIds[0]}` ||
+    words.at(-1)?.id !== `source-word:${sourceWordIds[1]}`
+  )) invalid(`${label}.source_word_ids does not match the first and last words`)
   return {
-    id: requiredString(object.id, `${label}.id`),
+    id,
     ...(object.track_id === undefined ? {} : { track_id: requiredString(object.track_id, `${label}.track_id`) }),
-    text: typeof object.text === 'string' ? object.text : invalid(`${label}.text must be a string`),
-    timeline: range(object.timeline, `${label}.timeline`),
+    text,
+    timeline,
     ...(object.source === undefined ? {} : { source: range(object.source, `${label}.source`) }),
     ...(style ? { style: style as EditProjectCaptionStyle } : {}),
+    ...(sourceWordIds ? { source_word_ids: sourceWordIds } : {}),
+    ...(words ? { words } : {}),
     enabled: requiredBoolean(object.enabled, `${label}.enabled`)
   }
 }
@@ -517,7 +565,15 @@ const buildProjectModel = async (
       sourceInUs: toMicroseconds(caption.source?.start ?? 0),
       enabled: caption.enabled,
       text: caption.text,
-      style: captionStyle(caption.style)
+      style: captionStyle(caption.style),
+      ...(caption.words ? {
+        words: caption.words.map((word): SubtitleWord => ({
+          id: word.id,
+          text: word.text,
+          startUs: toMicroseconds(word.timeline.start),
+          endUs: toMicroseconds(word.timeline.start + word.timeline.duration)
+        }))
+      } : {})
     }
     const destination = tracks.find((track) => track.id === (caption.track_id ?? targetCaptionTrack.id)) ?? targetCaptionTrack
     destination.clips.push(subtitle)

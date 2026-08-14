@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import { createPreviewPlan, createRenderPlan } from '../../../src/main/ffmpeg/render-plan.js'
+import { splitSubtitleAtWordBoundary } from '../../../src/shared/editing/operations.js'
 import {
   EditProjectError,
   loadEditProject,
@@ -189,6 +190,48 @@ describe('standalone edit_project.v1 loader', () => {
     }
   })
 
+  it('imports optional caption words into absolute SubtitleClip timing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'video-editor-caption-words-'))
+    try {
+      const document = makeDocument()
+      document.captions[0] = {
+        ...document.captions[0]!,
+        text: '私の',
+        timeline: { start: 0.25, duration: 0.75 },
+        source_word_ids: [123, 124],
+        words: [
+          { id: 'source-word:123', text: '私', timeline: { start: 0.25, duration: 0.18 } },
+          { id: 'source-word:124', text: 'の', timeline: { start: 0.43, duration: 0.22 } }
+        ]
+      }
+      const projectPath = await writeProject(root, document)
+      const loaded = await loadEditProject(projectPath)
+      const caption = loaded.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'caption_1')
+      expect(caption?.kind === 'subtitle' ? caption.words : undefined).toEqual([
+        { id: 'source-word:123', text: '私', startUs: 250_000, endUs: 430_000 },
+        { id: 'source-word:124', text: 'の', startUs: 430_000, endUs: 650_000 }
+      ])
+      const split = splitSubtitleAtWordBoundary(loaded.project, 'caption_1', 0)
+      expect(split.tracks.find((track) => track.kind === 'subtitle')?.clips.map((item) => item.kind === 'subtitle' ? item.text : item.id)).toEqual(['私', 'の'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects invalid optional caption word metadata', () => {
+    const cases = [
+      { words: [{ id: 'source-word:1', text: 'A', timeline: { start: 0.25, duration: 0.2 } }, { id: 'source-word:1', text: 'B', timeline: { start: 0.45, duration: 0.2 } }] },
+      { words: [{ id: 'source-word:1', text: 'AB', timeline: { start: 0.25, duration: 0.4 } }, { id: 'source-word:2', text: 'B', timeline: { start: 0.5, duration: 0.2 } }] },
+      { words: [{ id: 'source-word:1', text: 'A', timeline: { start: 0.1, duration: 0.2 } }] },
+      { words: [{ id: 'source-word:1', text: 'A', timeline: { start: 0.25, duration: 0.2 } }] }
+    ]
+    for (const extra of cases) {
+      const document = makeDocument()
+      document.captions[0] = { ...document.captions[0]!, text: 'AB', ...extra }
+      expect(() => validateEditProject(document)).toThrow(EditProjectError)
+    }
+  })
+
   it('feeds preview and final render planning from the same adapted project', async () => {
     const root = await mkdtemp(join(tmpdir(), 'video-editor-render-plan-'))
     try {
@@ -211,6 +254,33 @@ describe('standalone edit_project.v1 loader', () => {
       expect(finalPlan.graphStatements.join('\n')).toContain('amix=inputs=1')
       expect(finalPlan.inputArgs).toContain('-ss')
       expect(finalPlan.filterGraph).toContain('ass=filename')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not change render planning when caption words are present', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'video-editor-word-render-plan-'))
+    try {
+      const withoutWords = makeDocument()
+      const withWords = makeDocument()
+      withWords.captions[0] = {
+        ...withWords.captions[0]!,
+        words: [
+          { id: 'source-word:1', text: 'Phase ', timeline: { start: 0.25, duration: 0.3 } },
+          { id: 'source-word:2', text: '3', timeline: { start: 0.55, duration: 0.45 } }
+        ]
+      }
+      const settings = {
+        outputPath: join(root, 'output.mp4'), width: 640, height: 360,
+        frameRate: { numerator: 30, denominator: 1 }, videoBitrate: 1_000_000,
+        audioBitrate: 96_000, encoderMode: 'software' as const, burnSubtitles: true, exportSrt: false
+      }
+      const basePath = await writeProject(root, withoutWords)
+      const basePlan = createRenderPlan((await loadEditProject(basePath)).project, settings)
+      const withWordsPath = await writeProject(root, withWords)
+      const wordPlan = createRenderPlan((await loadEditProject(withWordsPath)).project, settings)
+      expect(wordPlan).toEqual(basePlan)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
