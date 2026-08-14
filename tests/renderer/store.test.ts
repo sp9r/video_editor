@@ -277,6 +277,29 @@ describe('editor history and linked selection', () => {
     expect(useEditorStore.getState().past).toHaveLength(0)
   })
 
+  it('moves subtitle ownership in one undoable operation and preserves a no-op boundary', () => {
+    const project = createEmptyProject('ownership store')
+    const track = project.tracks.find((item) => item.kind === 'subtitle')!
+    track.clips.push(
+      { id: 'ownership-left', name: '左', kind: 'subtitle', startUs: 0, durationUs: 1_000_000, sourceInUs: 0, enabled: true, text: 'AB', style: structuredClone(DEFAULT_SUBTITLE_STYLE), words: [{ id: 'a', text: 'A', startUs: 100_000, endUs: 300_000 }, { id: 'b', text: 'B', startUs: 400_000, endUs: 600_000 }] },
+      { id: 'ownership-right', name: '右', kind: 'subtitle', startUs: 1_200_000, durationUs: 1_000_000, sourceInUs: 1_200_000, enabled: true, text: 'CD', style: structuredClone(DEFAULT_SUBTITLE_STYLE), words: [{ id: 'c', text: 'C', startUs: 1_300_000, endUs: 1_500_000 }, { id: 'd', text: 'D', startUs: 1_600_000, endUs: 1_800_000 }] }
+    )
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('ownership-left')
+    useEditorStore.getState().moveSubtitleBoundary('ownership-left', 'ownership-right', 2)
+    const moved = useEditorStore.getState().project.tracks.find((item) => item.kind === 'subtitle')!.clips
+    expect(moved.find((clip) => clip.id === 'ownership-left')).toMatchObject({ text: 'ABC', durationUs: 1_500_000 })
+    expect(moved.find((clip) => clip.id === 'ownership-right')).toMatchObject({ text: 'D', startUs: 1_600_000, sourceInUs: 1_600_000 })
+    expect(useEditorStore.getState().past).toHaveLength(1)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().project.tracks.find((item) => item.kind === 'subtitle')!.clips.find((clip) => clip.id === 'ownership-left')).toMatchObject({ text: 'AB' })
+    useEditorStore.getState().redo()
+    expect(useEditorStore.getState().project.tracks.find((item) => item.kind === 'subtitle')!.clips.find((clip) => clip.id === 'ownership-right')).toMatchObject({ text: 'D' })
+    const historyLength = useEditorStore.getState().past.length
+    useEditorStore.getState().moveSubtitleBoundary('ownership-left', 'ownership-right', 2)
+    expect(useEditorStore.getState().past).toHaveLength(historyLength)
+  })
+
   it('adds, renames, reorders, and undoes empty track operations', () => {
     const project = createEmptyProject('tracks')
     useEditorStore.getState().loadProject(project)

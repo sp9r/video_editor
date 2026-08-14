@@ -15,7 +15,7 @@ import {
   validateProject,
   updateClip
 } from '../../shared/project'
-import { deleteLinkedClips, EditingOperationError, isSubtitleWordBoundarySplitAvailable, mergeSubtitleWithNext, mergeSubtitleWithPrevious, moveLinkedClip, nearestSubtitleWordBoundaryIndex, splitLinkedClip, splitSelectedRoots, splitSubtitleAtWordBoundary, trimLinkedClip } from '../../shared/editing/operations'
+import { deleteLinkedClips, EditingOperationError, isSubtitleWordBoundarySplitAvailable, mergeSubtitleWithNext, mergeSubtitleWithPrevious, moveLinkedClip, moveSubtitleBoundary, nearestSubtitleWordBoundaryIndex, splitLinkedClip, splitSelectedRoots, splitSubtitleAtWordBoundary, trimLinkedClip } from '../../shared/editing/operations'
 import { linkedClipIds } from '../../shared/editing/links'
 import { isMediaTrack } from '../../shared/types'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
@@ -62,6 +62,7 @@ interface EditorState {
   addSubtitle(): void
   patchClip(clipId: string, patcher: (clip: TimelineClip) => TimelineClip): void
   splitSubtitleAtWordBoundary(clipId: string, boundaryIndex: number): void
+  moveSubtitleBoundary(leftClipId: string, rightClipId: string, boundaryIndex: number): void
   mergeSubtitleWithPrevious(clipId: string): void
   mergeSubtitleWithNext(clipId: string): void
   moveSelected(clipId: string, trackId: string, atUs: TimeUs): void
@@ -255,6 +256,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   moveSelected: (clipId, trackId, atUs) => {
     try { get().applyProject(moveLinkedClip(get().project, clipId, trackId, atUs)) }
     catch (error) {
+      if (error instanceof EditingOperationError || error instanceof SubtitleCollisionError) get().showNotice(error.message, 'warning')
+      else throw error
+    }
+  },
+  moveSubtitleBoundary: (leftClipId, rightClipId, boundaryIndex) => {
+    try {
+      const { project } = get()
+      const next = moveSubtitleBoundary(project, leftClipId, rightClipId, boundaryIndex)
+      if (next === project) return
+      get().applyProject(next)
+      set({ selectedClipIds: [leftClipId, rightClipId] })
+    } catch (error) {
       if (error instanceof EditingOperationError || error instanceof SubtitleCollisionError) get().showNotice(error.message, 'warning')
       else throw error
     }

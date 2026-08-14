@@ -19,8 +19,8 @@ import {
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
-import { formatTimecode, layoutSubtitleTracks, makeId } from '../../../shared/project'
-import { isSubtitleWordBoundarySplitAvailable } from '../../../shared/editing/operations'
+import { findSubtitleContext, formatTimecode, layoutSubtitleTracks, makeId } from '../../../shared/project'
+import { isSubtitleOwnershipBoundaryAvailable, isSubtitleWordBoundarySplitAvailable, nearestSubtitleOwnershipBoundaryIndex } from '../../../shared/editing/operations'
 import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type SubtitleClip, type SubtitleWord, type TimelineClip, type TimelineTrack } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
 import { Button, IconButton } from './Controls'
@@ -45,8 +45,31 @@ export const subtitleWordGeometry = (
 export const subtitleWordGeometries = (clip: SubtitleClip): Array<SubtitleWordGeometry & { word: SubtitleWord }> =>
   (clip.words ?? []).map((word) => ({ word, ...subtitleWordGeometry(clip, word) }))
 
-export const timelineSplitMenuState = (clip: TimelineClip | undefined): { disabled: boolean; label: string } => {
+export interface SubtitleBoundaryPair {
+  left: SubtitleClip
+  right: SubtitleClip
+}
+
+export const subtitleBoundaryPairs = (track: TimelineTrack): SubtitleBoundaryPair[] => {
+  if (track.kind !== 'subtitle') return []
+  const pairs: SubtitleBoundaryPair[] = []
+  for (let index = 0; index < track.clips.length - 1; index += 1) {
+    const left = track.clips[index]
+    const right = track.clips[index + 1]
+    if (left?.kind === 'subtitle' && right?.kind === 'subtitle' && isSubtitleOwnershipBoundaryAvailable(left, right)) pairs.push({ left, right })
+  }
+  return pairs
+}
+
+export const subtitleBoundaryPositionUs = (pair: SubtitleBoundaryPair): number => {
+  const leftEndUs = pair.left.words?.at(-1)?.endUs ?? pair.left.startUs
+  const rightStartUs = pair.right.words?.[0]?.startUs ?? pair.right.startUs
+  return (leftEndUs + rightStartUs) / 2
+}
+
+export const timelineSplitMenuState = (clip: TimelineClip | undefined, locked = false): { disabled: boolean; label: string } => {
   if (!clip) return { disabled: true, label: '分割対象がありません' }
+  if (locked) return { disabled: true, label: 'ロック中のため分割不可' }
   if (clip.kind === 'subtitle') {
     return isSubtitleWordBoundarySplitAvailable(clip)
       ? { disabled: false, label: 'ここで字幕を分割（単語境界）' }
@@ -94,6 +117,13 @@ interface PointerEdit {
   targetTrackId: string
 }
 
+interface SubtitleBoundaryDrag {
+  leftClipId: string
+  rightClipId: string
+  initialX: number
+  currentX: number
+}
+
 export const POINTER_EDIT_DRAG_THRESHOLD_PX = 3
 
 export const shouldCommitPointerEdit = ({
@@ -114,6 +144,9 @@ export const shouldCommitPointerEdit = ({
   if (mode === 'move' && targetTrackId !== initialTrackId) return true
   return Math.abs(pointerUpX - initialX) >= threshold
 }
+
+export const shouldCommitSubtitleBoundaryDrag = (initialX: number, pointerUpX: number, threshold = POINTER_EDIT_DRAG_THRESHOLD_PX): boolean =>
+  Math.abs(pointerUpX - initialX) >= threshold
 
 function TrackControls({ track, tracks }: { track: TimelineTrack; tracks: TimelineTrack[] }): React.JSX.Element {
   const patchTrack = useEditorStore((state) => state.patchTrack)
@@ -159,6 +192,9 @@ export default function Timeline(): React.JSX.Element {
     addSubtitleTrack,
     splitSelected,
     splitSelectedAt,
+    moveSubtitleBoundary,
+    mergeSubtitleWithPrevious,
+    mergeSubtitleWithNext,
     deleteSelected,
     moveSelected,
     trim,
@@ -172,12 +208,17 @@ export default function Timeline(): React.JSX.Element {
   const labelsRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [pointerEdit, setPointerEdit] = useState<PointerEdit | null>(null)
+  const [subtitleBoundaryDrag, setSubtitleBoundaryDrag] = useState<SubtitleBoundaryDrag | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; clipId: string } | null>(null)
   const durationUs = editorDurationUs(project)
   const timelineWidth = Math.max(900, seconds(durationUs) * zoomPxPerSecond)
   const ticks = useMemo(() => ticksFor(durationUs, zoomPxPerSecond), [durationUs, zoomPxPerSecond])
   const contextClip = contextMenu ? project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === contextMenu.clipId) : undefined
-  const contextSplitMenu = timelineSplitMenuState(contextClip)
+  const contextTrack = contextClip ? project.tracks.find((track) => track.clips.some((clip) => clip.id === contextClip.id)) : undefined
+  const contextSplitMenu = timelineSplitMenuState(contextClip, contextTrack?.locked ?? false)
+  const contextSubtitle = contextClip?.kind === 'subtitle' ? findSubtitleContext(project, contextClip.id) : undefined
+  const canMergePrevious = Boolean(contextSubtitle?.previous && !contextTrack?.locked)
+  const canMergeNext = Boolean(contextSubtitle?.next && !contextTrack?.locked)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -236,6 +277,36 @@ export default function Timeline(): React.JSX.Element {
     event.stopPropagation()
     if (!selectedClipIds.includes(clip.id)) selectClip(clip.id)
     setContextMenu({ x: event.clientX, y: event.clientY, clipId: clip.id })
+  }
+
+  const beginSubtitleBoundaryDrag = (event: React.PointerEvent, pair: SubtitleBoundaryPair): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    const target = event.currentTarget as HTMLElement
+    try { target.setPointerCapture(event.pointerId) } catch { /* synthetic smoke events may not have an active pointer */ }
+    const start: SubtitleBoundaryDrag = { leftClipId: pair.left.id, rightClipId: pair.right.id, initialX: event.clientX, currentX: event.clientX }
+    setSubtitleBoundaryDrag(start)
+    const move = (pointerEvent: PointerEvent): void => setSubtitleBoundaryDrag((current) => current ? { ...current, currentX: pointerEvent.clientX } : null)
+    const finish = (pointerEvent: PointerEvent): void => {
+      target.removeEventListener('pointermove', move)
+      target.removeEventListener('pointerup', finish)
+      target.removeEventListener('pointercancel', finish)
+      if (target.hasPointerCapture(pointerEvent.pointerId)) target.releasePointerCapture(pointerEvent.pointerId)
+      setSubtitleBoundaryDrag(null)
+      if (!shouldCommitSubtitleBoundaryDrag(start.initialX, pointerEvent.clientX)) return
+      const lane = target.closest('.track-lane') as HTMLElement | null
+      if (!lane) return
+      const projectNow = useEditorStore.getState().project
+      const left = projectNow.tracks.flatMap((track) => track.clips).find((clip): clip is SubtitleClip => clip.id === start.leftClipId && clip.kind === 'subtitle')
+      const right = projectNow.tracks.flatMap((track) => track.clips).find((clip): clip is SubtitleClip => clip.id === start.rightClipId && clip.kind === 'subtitle')
+      if (!left || !right) return
+      const boundaryIndex = nearestSubtitleOwnershipBoundaryIndex(left, right, timeFromPointer(pointerEvent.clientX, lane))
+      if (boundaryIndex === null) return showNotice('単語境界を解決できないため、字幕の所有権を移動できません。', 'warning')
+      moveSubtitleBoundary(left.id, right.id, boundaryIndex)
+    }
+    target.addEventListener('pointermove', move)
+    target.addEventListener('pointerup', finish)
+    target.addEventListener('pointercancel', finish)
   }
 
   const beginPointerEdit = (event: React.PointerEvent, clip: TimelineClip, mode: PointerEdit['mode'], trackId: string): void => {
@@ -392,6 +463,20 @@ export default function Timeline(): React.JSX.Element {
                   addAssetClip(assetId, track.id, timeFromPointer(event.clientX, event.currentTarget))
                 }}
               >
+                {subtitleBoundaryPairs(track).map((pair) => {
+                  const boundaryUs = subtitleBoundaryPositionUs(pair)
+                  const dragging = subtitleBoundaryDrag?.leftClipId === pair.left.id && subtitleBoundaryDrag.rightClipId === pair.right.id
+                  const visualLeft = (boundaryUs / 1_000_000) * zoomPxPerSecond + (dragging ? subtitleBoundaryDrag.currentX - subtitleBoundaryDrag.initialX : 0)
+                  return <button
+                    key={`${pair.left.id}:${pair.right.id}`}
+                    type="button"
+                    className={`subtitle-boundary-handle${dragging ? ' is-dragging' : ''}`}
+                    style={{ left: visualLeft }}
+                    aria-label="字幕の単語所有境界を移動"
+                    title="単語の所有境界をドラッグ"
+                    onPointerDown={(event) => beginSubtitleBoundaryDrag(event, pair)}
+                  />
+                })}
                 {track.clips.map((clip) => {
                   const edit = pointerEdit?.clipId === clip.id ? pointerEdit : null
                   const deltaPx = edit?.deltaX ?? 0
@@ -446,8 +531,12 @@ export default function Timeline(): React.JSX.Element {
               setContextMenu(null)
             }}
           >{contextSplitMenu.label}</button>
-          <button type="button" onClick={() => { deleteSelected(false); setContextMenu(null) }}>削除</button>
-          <button type="button" onClick={() => { deleteSelected(true); setContextMenu(null) }}>リップル削除</button>
+          {contextClip?.kind === 'subtitle' ? <>
+            <button type="button" disabled={!canMergePrevious} onClick={() => { mergeSubtitleWithPrevious(contextClip.id); setContextMenu(null) }}>前の字幕と結合</button>
+            <button type="button" disabled={!canMergeNext} onClick={() => { mergeSubtitleWithNext(contextClip.id); setContextMenu(null) }}>次の字幕と結合</button>
+          </> : null}
+          <button type="button" disabled={contextTrack?.locked ?? false} onClick={() => { deleteSelected(false); setContextMenu(null) }}>削除</button>
+          <button type="button" disabled={contextTrack?.locked ?? false} onClick={() => { deleteSelected(true); setContextMenu(null) }}>リップル削除</button>
           <button type="button" onClick={() => { copySelected(); setContextMenu(null) }}>コピー</button>
           <button type="button" onClick={() => { pasteClipboard(); setContextMenu(null) }}>貼り付け</button>
           <button type="button" onClick={() => { duplicateSelected(); setContextMenu(null) }}>複製</button>

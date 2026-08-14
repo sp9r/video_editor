@@ -140,6 +140,94 @@ export const nearestSubtitleWordBoundaryIndex = (clip: SubtitleClip, atUs: TimeU
   return nearest
 }
 
+const subtitleWordsAreValid = (clip: SubtitleClip): boolean => {
+  if (!clip.words?.length || !subtitleWordsMatchText(clip)) return false
+  let previousEndUs = clip.startUs
+  const ids = new Set<string>()
+  for (const word of clip.words) {
+    if (ids.has(word.id) || !Number.isFinite(word.startUs) || !Number.isFinite(word.endUs) || word.startUs < previousEndUs || word.endUs <= word.startUs) return false
+    ids.add(word.id)
+    previousEndUs = word.endUs
+  }
+  return true
+}
+
+export const isSubtitleOwnershipBoundaryAvailable = (left: TimelineClip, right: TimelineClip): boolean =>
+  left.kind === 'subtitle' && right.kind === 'subtitle' && subtitleWordsAreValid(left) && subtitleWordsAreValid(right)
+
+/** Resolves a combined left/right subtitle ownership boundary from a timeline position. */
+export const nearestSubtitleOwnershipBoundaryIndex = (left: SubtitleClip, right: SubtitleClip, atUs: TimeUs): number | null => {
+  if (!subtitleWordsAreValid(left) || !subtitleWordsAreValid(right)) return null
+  const rightEndUs = right.startUs + right.durationUs
+  if (!Number.isFinite(rightEndUs) || rightEndUs <= left.startUs) return null
+  const combined: SubtitleClip = {
+    ...left,
+    startUs: left.startUs,
+    durationUs: rightEndUs - left.startUs,
+    text: `${left.text}${right.text}`,
+    words: [...left.words!, ...right.words!].map((word) => ({ ...word }))
+  }
+  return nearestSubtitleWordBoundaryIndex(combined, atUs)
+}
+
+/** Move subtitle word ownership between adjacent captions without changing word timestamps. */
+export const moveSubtitleBoundary = (project: ProjectFile, leftClipId: string, rightClipId: string, boundaryIndex: number): ProjectFile => {
+  const leftLocation = subtitleLocation(project, leftClipId)
+  const rightLocation = subtitleLocation(project, rightClipId)
+  if (!leftLocation || !rightLocation || leftLocation.track.id !== rightLocation.track.id || leftLocation.index + 1 !== rightLocation.index) {
+    throw new EditingOperationError('subtitle_invalid_boundary', '隣接した字幕の単語境界だけを移動できます。', [leftClipId, rightClipId])
+  }
+  if (leftLocation.track.locked) throw new EditingOperationError('clip_locked', '字幕トラックがロックされています。', [leftClipId, rightClipId])
+  if (!subtitleWordsAreValid(leftLocation.clip) || !subtitleWordsAreValid(rightLocation.clip)) {
+    throw new EditingOperationError('subtitle_invalid_boundary', '単語タイミング情報がないか、字幕本文と一致しません。', [leftClipId, rightClipId])
+  }
+  const leftWords = leftLocation.clip.words!
+  const rightWords = rightLocation.clip.words!
+  const combinedWords = [...leftWords, ...rightWords]
+  const combinedIds = new Set<string>()
+  let previousEndUs = leftLocation.clip.startUs
+  for (const word of combinedWords) {
+    if (combinedIds.has(word.id) || word.startUs < previousEndUs || word.endUs <= word.startUs) {
+      throw new EditingOperationError('subtitle_invalid_boundary', '単語タイミングの順序またはIDが不正です。', [leftClipId, rightClipId])
+    }
+    combinedIds.add(word.id)
+    previousEndUs = word.endUs
+  }
+  if (!Number.isInteger(boundaryIndex) || boundaryIndex < 0 || boundaryIndex >= combinedWords.length - 1) {
+    throw new EditingOperationError('subtitle_invalid_boundary', '選択した単語境界では字幕を分割できません。', [leftClipId, rightClipId])
+  }
+  const nextLeftWords = combinedWords.slice(0, boundaryIndex + 1)
+  const nextRightWords = combinedWords.slice(boundaryIndex + 1)
+  const nextLeftEndUs = nextLeftWords.at(-1)?.endUs
+  const nextRightStartUs = nextRightWords[0]?.startUs
+  const rightOuterEndUs = rightLocation.clip.startUs + rightLocation.clip.durationUs
+  if (nextLeftEndUs === undefined || nextRightStartUs === undefined) {
+    throw new EditingOperationError('subtitle_invalid_boundary', '字幕の外側へ単語境界を移動できません。', [leftClipId, rightClipId])
+  }
+  const nextRightSourceInUs = rightLocation.clip.sourceInUs + nextRightStartUs - rightLocation.clip.startUs
+  if (!Number.isFinite(nextLeftEndUs) || !Number.isFinite(nextRightStartUs) || !Number.isFinite(rightOuterEndUs) || !Number.isFinite(nextRightSourceInUs) || nextLeftEndUs <= leftLocation.clip.startUs || nextRightStartUs >= rightOuterEndUs || nextRightSourceInUs < 0) {
+    throw new EditingOperationError('subtitle_invalid_boundary', '字幕の外側へ単語境界を移動できません。', [leftClipId, rightClipId])
+  }
+  if (boundaryIndex === leftWords.length - 1) return project
+
+  const next = clone(project)
+  const nextLeftLocation = subtitleLocation(next, leftClipId)
+  const nextRightLocation = subtitleLocation(next, rightClipId)
+  if (!nextLeftLocation || !nextRightLocation) return project
+  nextLeftLocation.clip.text = nextLeftWords.map((word) => word.text).join('')
+  nextLeftLocation.clip.durationUs = nextLeftEndUs - nextLeftLocation.clip.startUs
+  nextLeftLocation.clip.words = nextLeftWords.map((word) => ({ ...word }))
+  nextRightLocation.clip.startUs = nextRightStartUs
+  nextRightLocation.clip.text = nextRightWords.map((word) => word.text).join('')
+  nextRightLocation.clip.durationUs = rightOuterEndUs - nextRightStartUs
+  nextRightLocation.clip.sourceInUs = nextRightSourceInUs
+  nextRightLocation.clip.words = nextRightWords.map((word) => ({ ...word }))
+  nextRightLocation.track.clips.sort((a, b) => a.startUs - b.startUs || a.id.localeCompare(b.id))
+  assertSubtitleTrackHasNoOverlap(nextRightLocation.track)
+  updateTimestamp(next)
+  return next
+}
+
 /** Split a caption only at a word boundary with timestamp metadata. */
 export const splitSubtitleAtWordBoundary = (project: ProjectFile, clipId: string, boundaryIndex: number): ProjectFile => {
   const location = subtitleLocation(project, clipId)
