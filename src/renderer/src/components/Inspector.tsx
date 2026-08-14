@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from 'react'
 import { Captions, Image as ImageIcon, SlidersHorizontal, Volume2 } from 'lucide-react'
+import { findSubtitleContext, subtitleWordsMatchText } from '../../../shared/project'
 import type { AudioSettings, SubtitleClip, SubtitleStyle, TimelineClip, TransformSettings } from '../../../shared/types'
 import { findClip, useEditorStore } from '../store'
 import { Button, EmptyState, Field, NumberField, Section, SelectField } from './Controls'
@@ -95,13 +96,8 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
   }, [clip.style.fontFamily])
   const patchStyle = (values: Partial<SubtitleStyle>): void =>
     patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, style: { ...current.style, ...values } } : current)
-  const captions = project.tracks
-    .filter((track) => track.kind === 'subtitle')
-    .flatMap((track) => track.clips.filter((item): item is SubtitleClip => item.kind === 'subtitle'))
-    .sort((left, right) => left.startUs - right.startUs || left.id.localeCompare(right.id))
-  const captionIndex = captions.findIndex((item) => item.id === clip.id)
-  const previous = captionIndex > 0 ? captions[captionIndex - 1] : undefined
-  const next = captionIndex >= 0 ? captions[captionIndex + 1] : undefined
+  const { previous, next } = findSubtitleContext(project, clip.id)
+  const wordsMatchText = subtitleWordsMatchText(clip)
   const selectContext = (item: SubtitleClip): void => {
     selectClip(item.id)
     setPlayhead(item.startUs)
@@ -129,10 +125,11 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
               {clip.words.map((word, index) => (
                 <span className="subtitle-word-boundary" key={word.id}>
                   <span className="subtitle-word-token" title={`${(word.startUs / 1_000_000).toFixed(2)}–${(word.endUs / 1_000_000).toFixed(2)}秒`}>{word.text}</span>
-                  {index < clip.words!.length - 1 && <button type="button" aria-label={`「${word.text}」の後で分割`} onClick={() => splitSubtitleAtWordBoundary(clip.id, index)}>分割</button>}
+                  {index < clip.words!.length - 1 && <button type="button" disabled={!wordsMatchText} aria-label={`「${word.text}」の後で分割`} onClick={() => splitSubtitleAtWordBoundary(clip.id, index)}>分割</button>}
                 </span>
               ))}
             </div>
+            {!wordsMatchText && <p className="field-hint warning">本文が編集されているため、現在の単語タイミングでは分割できません。</p>}
           </Field>
         ) : <p className="field-hint">単語タイミング情報がない字幕は、単語境界分割を利用できません。</p>}
       </Section>

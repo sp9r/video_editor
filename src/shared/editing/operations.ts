@@ -1,4 +1,4 @@
-import { assertSubtitleTrackHasNoOverlap, framesToUs, snapUsToFrame, splitClip, trimClip } from '../project'
+import { assertSubtitleTrackHasNoOverlap, framesToUs, shiftClipTimeline, snapUsToFrame, splitClip, subtitleTrimKeepsWordTiming, subtitleWordsMatchText, trimClip } from '../project'
 import type { ProjectFile, SubtitleClip, TimelineClip, TimelineTrack, TimeUs } from '../types'
 import { linkedClipIds, uniqueLinkedRoots } from './links'
 
@@ -8,6 +8,7 @@ export type EditingOperationCode =
   | 'clip_locked'
   | 'subtitle_invalid_boundary'
   | 'subtitle_no_adjacent'
+  | 'subtitle_trim_conflict'
 
 export class EditingOperationError extends Error {
   readonly code: EditingOperationCode
@@ -165,7 +166,14 @@ const mergeSubtitle = (project: ProjectFile, clipId: string, direction: 'previou
   if (!nextLocation) return project
   const nextAdjacent = nextLocation.track.clips[adjacentIndex]
   if (!nextAdjacent || nextAdjacent.kind !== 'subtitle') return project
-  const mergedWords = first.words && second.words ? [...first.words, ...second.words].map((word) => ({ ...word })) : undefined
+  const firstWordsMatch = first.kind === 'subtitle' && subtitleWordsMatchText(first)
+  const secondWordsMatch = second.kind === 'subtitle' && subtitleWordsMatchText(second)
+  const firstLastWord = first.words?.at(-1)
+  const secondFirstWord = second.words?.[0]
+  if (firstWordsMatch && secondWordsMatch && firstLastWord && secondFirstWord && firstLastWord.endUs > secondFirstWord.startUs) {
+    throw new EditingOperationError('subtitle_invalid_boundary', '単語タイミングの順序が逆転するため、字幕を結合できません。', [clipId])
+  }
+  const mergedWords = firstWordsMatch && secondWordsMatch ? [...first.words!, ...second.words!].map((word) => ({ ...word })) : undefined
   const merged: SubtitleClip = {
     ...(direction === 'previous' ? nextAdjacent : nextLocation.clip),
     text: `${first.text}${second.text}`,
@@ -189,7 +197,10 @@ export const mergeSubtitleWithNext = (project: ProjectFile, clipId: string): Pro
 
 const applyTimeDelta = (project: ProjectFile, clipIds: readonly string[], deltaUs: TimeUs): void => {
   for (const clipId of clipIds) {
-    updateClipInProject(project, clipId, (clip) => ({ ...clip, startUs: Math.max(0, clip.startUs + deltaUs) }))
+    updateClipInProject(project, clipId, (clip) => {
+      const nextStart = Math.max(0, clip.startUs + deltaUs)
+      return shiftClipTimeline(clip, nextStart - clip.startUs)
+    })
   }
 }
 
@@ -216,6 +227,11 @@ export const trimLinkedClip = (project: ProjectFile, clipId: string, edge: 'star
   if (!location) return project
   const ids = linkedClipIds(project, clipId)
   assertEditable(project, ids)
+  for (const candidate of locations(project, ids)) {
+    if (!subtitleTrimKeepsWordTiming(project, candidate.clip, edge, atUs)) {
+      throw new EditingOperationError('subtitle_trim_conflict', '単語タイミングより内側には字幕を縮められません。', [candidate.clip.id])
+    }
+  }
   if (ids.length === 1) return trimClip(project, clipId, edge, atUs)
   const selectedAfter = trimClip(project, clipId, edge, atUs)
   const selectedBefore = location.clip
@@ -248,6 +264,9 @@ export const splitLinkedClip = (project: ProjectFile, clipId: string, atUs: Time
   if (!location) return project
   const ids = linkedClipIds(project, clipId)
   assertEditable(project, ids)
+  if (location.clip.kind === 'subtitle' && location.clip.words?.length) {
+    throw new EditingOperationError('subtitle_invalid_boundary', '単語タイミングがある字幕は、Inspectorの単語境界から分割してください。', [clipId])
+  }
   if (ids.length === 1) return splitClip(project, clipId, atUs)
   const splitAt = snapUsToFrame(atUs, project)
   const frameUs = framesToUs(1, project.sequence.frameRate.numerator, project.sequence.frameRate.denominator)
@@ -308,7 +327,10 @@ const deleteExpandedClips = (project: ProjectFile, ids: string[], ripple: boolea
     if (ripple) {
       for (const clip of track.clips) {
         const shift = intervals.reduce((total, [start, end]) => total + (clip.startUs >= end ? end - start : 0), 0)
-        if (shift > 0) clip.startUs -= shift
+        if (shift > 0) {
+          const index = track.clips.indexOf(clip)
+          track.clips[index] = shiftClipTimeline(clip, -shift)
+        }
       }
     }
   }

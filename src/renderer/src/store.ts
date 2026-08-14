@@ -10,6 +10,7 @@ import {
   projectDurationUs,
   relinkMediaAsset,
   replaceTrack,
+  shiftClipTimeline,
   validateProject,
   updateClip
 } from '../../shared/project'
@@ -313,11 +314,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         })())
         : undefined
       const clip = structuredClone(item.clip)
-      clip.id = makeId('clip')
-      clip.startUs = Math.max(0, (atUs ?? get().playheadUs) + item.clip.startUs - baseUs)
-      if (linkGroupId) clip.linkGroupId = linkGroupId
-      track.clips.push(clip)
-      pastedIds.push(clip.id)
+      const nextStart = Math.max(0, (atUs ?? get().playheadUs) + item.clip.startUs - baseUs)
+      const shifted = shiftClipTimeline(clip, nextStart - clip.startUs)
+      shifted.id = makeId('clip')
+      if (linkGroupId) shifted.linkGroupId = linkGroupId
+      track.clips.push(shifted)
+      pastedIds.push(shifted.id)
     }
     for (const track of next.tracks) track.clips.sort((left, right) => left.startUs - right.startUs)
     next.updatedAt = new Date().toISOString()

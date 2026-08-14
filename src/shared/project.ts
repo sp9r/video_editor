@@ -43,6 +43,26 @@ export const assertSubtitleTrackHasNoOverlap = (track: TimelineTrack): void => {
   }
 }
 
+export const subtitleWordsMatchText = (clip: SubtitleClip): boolean =>
+  Boolean(clip.words?.length) && clip.words!.map((word) => word.text).join('') === clip.text
+
+export const findSubtitleContext = (project: ProjectFile, clipId: string): {
+  previous?: SubtitleClip
+  current?: SubtitleClip
+  next?: SubtitleClip
+} => {
+  for (const track of project.tracks) {
+    if (track.kind !== 'subtitle') continue
+    const captions = track.clips
+      .filter((clip): clip is SubtitleClip => clip.kind === 'subtitle')
+      .sort((left, right) => left.startUs - right.startUs || left.id.localeCompare(right.id))
+    const index = captions.findIndex((clip) => clip.id === clipId)
+    if (index < 0) continue
+    return { previous: captions[index - 1], current: captions[index], next: captions[index + 1] }
+  }
+  return {}
+}
+
 export const createTrack = (kind: 'media' | 'subtitle', index: number): TimelineTrack => ({
   id: makeId('track'),
   name: `${kind === 'media' ? 'V' : 'C'}${index}`,
@@ -220,8 +240,34 @@ export const updateClip = (
   return project
 }
 
+/** Shift a clip and any absolute subtitle word timestamps by the same timeline delta. */
+export const shiftClipTimeline = <T extends TimelineClip>(clip: T, deltaUs: TimeUs): T => ({
+  ...clip,
+  startUs: clip.startUs + deltaUs,
+  ...(clip.kind === 'subtitle' && clip.words
+    ? { words: clip.words.map((word) => ({ ...word, startUs: word.startUs + deltaUs, endUs: word.endUs + deltaUs })) }
+    : {})
+}) as T
+
+export const subtitleTrimKeepsWordTiming = (
+  project: ProjectFile,
+  clip: TimelineClip,
+  edge: 'start' | 'end',
+  timelineUs: TimeUs
+): boolean => {
+  if (clip.kind !== 'subtitle' || !clip.words?.length) return true
+  const snapped = snapUsToFrame(timelineUs, project)
+  const firstWord = clip.words[0]
+  const lastWord = clip.words.at(-1)
+  if (!firstWord || !lastWord) return true
+  return edge === 'start' ? snapped <= firstWord.startUs : snapped >= lastWord.endUs
+}
+
 export const moveClip = (project: ProjectFile, clipId: string, startUs: TimeUs): ProjectFile =>
-  updateClip(project, clipId, (clip) => ({ ...clip, startUs: Math.max(0, snapUsToFrame(startUs, project)) }))
+  updateClip(project, clipId, (clip) => {
+    const nextStart = Math.max(0, snapUsToFrame(startUs, project))
+    return shiftClipTimeline(clip, nextStart - clip.startUs)
+  })
 
 export const trimClip = (
   project: ProjectFile,
@@ -233,6 +279,7 @@ export const trimClip = (
     const snapped = snapUsToFrame(timelineUs, project)
     const frameUs = framesToUs(1, project.sequence.frameRate.numerator, project.sequence.frameRate.denominator)
     if (edge === 'start') {
+      if (!subtitleTrimKeepsWordTiming(project, clip, edge, timelineUs)) throw new Error('単語タイミングより内側には字幕を縮められません。')
       const delta = Math.min(clip.durationUs - frameUs, Math.max(-clip.sourceInUs, snapped - clip.startUs))
       return {
         ...clip,
@@ -241,6 +288,7 @@ export const trimClip = (
         durationUs: clip.durationUs - delta
       }
     }
+    if (!subtitleTrimKeepsWordTiming(project, clip, edge, timelineUs)) throw new Error('単語タイミングより内側には字幕を縮められません。')
     const asset = 'assetId' in clip ? project.media.find((item) => item.id === clip.assetId) : undefined
     const maximumDuration = asset && asset.kind !== 'image' ? asset.durationUs - clip.sourceInUs : Number.MAX_SAFE_INTEGER
     return { ...clip, durationUs: Math.min(maximumDuration, Math.max(frameUs, snapped - clip.startUs)) }
@@ -295,7 +343,10 @@ export const deleteClips = (project: ProjectFile, clipIds: string[], ripple = fa
     if (ripple) {
       for (const clip of track.clips) {
         const shift = intervals.reduce((total, [start, end]) => total + (clip.startUs >= end ? end - start : 0), 0)
-        if (shift > 0) clip.startUs -= shift
+        if (shift > 0) {
+          const index = track.clips.indexOf(clip)
+          track.clips[index] = shiftClipTimeline(clip, -shift)
+        }
       }
     }
   }

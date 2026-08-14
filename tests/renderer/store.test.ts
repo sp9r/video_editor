@@ -81,6 +81,31 @@ describe('editor history and linked selection', () => {
     expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips)).toHaveLength(2)
   })
 
+  it('copies and pastes word-timed subtitles with the same timeline delta', () => {
+    const project = createEmptyProject('subtitle-paste')
+    const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle')!
+    subtitleTrack.clips.push({
+      id: 'caption-copy', name: 'コピー字幕', kind: 'subtitle', startUs: 10_000_000, durationUs: 2_000_000, sourceInUs: 0,
+      enabled: true, text: '字幕を入力', style: structuredClone(DEFAULT_SUBTITLE_STYLE), words: [
+        { id: 'copy-word-1', text: '字幕', startUs: 10_100_000, endUs: 10_500_000 },
+        { id: 'copy-word-2', text: 'を', startUs: 10_500_000, endUs: 10_800_000 },
+        { id: 'copy-word-3', text: '入力', startUs: 11_000_000, endUs: 11_600_000 }
+      ]
+    })
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('caption-copy')
+    useEditorStore.getState().copySelected()
+    useEditorStore.getState().pasteClipboard(20_000_000)
+    const pasted = useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips.find((item) => item.id !== 'caption-copy')
+    expect(pasted).toMatchObject({ startUs: 20_000_000 })
+    expect(pasted?.kind === 'subtitle' ? pasted.words?.map((word) => [word.startUs, word.endUs]) : undefined).toEqual([
+      [20_100_000, 20_500_000], [20_500_000, 20_800_000], [21_000_000, 21_600_000]
+    ])
+    expect(pasted?.kind === 'subtitle' ? pasted.words?.map((word) => word.id) : undefined).toEqual([
+      'copy-word-1', 'copy-word-2', 'copy-word-3'
+    ])
+  })
+
   it('applies subtitle style to every caption as one undoable operation', () => {
     const project = fixture()
     const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle')!

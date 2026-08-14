@@ -604,6 +604,7 @@ select {
 .field { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .field-label { color: var(--text-muted); font-size: 9px; }
 .field-hint { color: var(--text-dim); font-size: 8px; }
+.field-hint.warning { color: var(--amber); }
 .field-wide { width: 100%; }
 .field-wide > select { width: 100%; }
 .number-input { display: flex; height: 28px; background: #11151a; border: 1px solid var(--line); border-radius: 4px; }
