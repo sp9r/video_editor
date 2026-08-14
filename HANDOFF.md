@@ -11,7 +11,7 @@ branch: `main`
 - Zero-duration source-word handling, decimal-seconds validation, subtitle split/merge, Undo/Redo, Save/reload, FFmpeg render, and accurate preview are accepted end to end.
 - `word_timing_overrides` parity is accepted: effective timing applies overrides, then `position_offset`.
 - `video_editor` is the future manual subtitle editor authority. The legacy `clip_automation` editor is frozen/reference-only and is not imported or runtime-coupled.
-- Current regression baseline: `npm.cmd run check` = **31 files / 164 tests PASS**; `npm.cmd run build` = PASS.
+- Latest regression baseline at the Step 3.5A-3 checkpoint: `npm.cmd run check` = **32 files / 185 tests PASS**; `npm.cmd run build` = PASS.
 - Next scope: **Step 3.5A Timeline-first Subtitle Editing**. Step 3.5A-1 is read-only visualization of word timing inside subtitle clips; split, drag, ownership changes, Review Mode, and caption algorithm changes are out of scope.
 
 ## Step 3.5A-1 completion (2026-08-15)
@@ -30,7 +30,18 @@ branch: `main`
 - Added shared/store/renderer regression coverage for nearest boundary selection, gap/tie behavior, exact split timing, undo/redo, invalid-input atomicity, media regression, multi-selection rejection, and context-menu enablement.
 - `npm.cmd run check`: **32 files / 178 tests PASS**; `npm.cmd run build`: PASS; `npm.cmd run smoke:electron`: PASS with `did-finish-load`, renderer alive, `#root`, `.app-shell`, preload API, and no console errors.
 - `VISIBLE_SUBTITLE_SPLIT_QA: NOT_RUN_TOOL_LIMIT`. `subtitle:geometry` was not used as a gate because it is a known flaky environment check and this change does not touch preview/ASS/FFmpeg.
-- Production render code, `edit_project.v1`, and `clip_automation` were not changed. Implementation commit: `e765227a68d2912399f8e340d8c6ea088eaca3e9` pushed to `origin/main`. Next: Step 3.5A-3; boundary drag and ownership editing remain NOT STARTED.
+- Production render code, `edit_project.v1`, and `clip_automation` were not changed. Implementation commit: `e765227a68d2912399f8e340d8c6ea088eaca3e9` pushed to `origin/main`. Step 3.5A-3 followed in the next checkpoint.
+
+## Step 3.5A-3 / 3.5A-4 CLOSED (2026-08-15)
+
+- Added the shared `moveSubtitleBoundary(project, leftClipId, rightClipId, boundaryIndex)` operation. It moves whole words between adjacent compatible captions, preserves caption IDs, word IDs, word timestamps, genuine gaps, left outer start, right outer end, and adjusts right `sourceInUs` by the exact timeline delta. Duplicate IDs, reversed/overlapping timing, invalid pairs, locked tracks, collisions, empty sides, and no-op boundaries are rejected atomically.
+- Added a dedicated `.subtitle-boundary-handle`. Pointer movement is local UI state only; pointerup resolves the nearest combined word boundary and applies one store/history operation. 0–2px is a no-op and 3px or more evaluates the boundary. Generic trim handles and media behavior remain unchanged.
+- Added subtitle context actions for word-boundary split, merge previous, merge next, and delete. Impossible or locked operations are disabled. Inspector split/merge operations remain the shared fallback.
+- Formal bridge acceptance project (`20260814_200007_bridge_acceptance/edit_project.json`) passed automated split, ownership transfer, invalid words-none/text-mismatch rejection, JSON Save/reload validation, duplicate-ID/collision validation, and FFmpeg render acceptance. Render: H.264/AAC stereo, 25.54s, 640×360, 48kHz, non-silent audio (`mean -26.0dB`, `max -5.1dB`); burned subtitle frames were visually inspected.
+- Latest `npm.cmd run check`: **32 files / 185 tests PASS**; `npm.cmd run build`: PASS; `npm.cmd run smoke:electron`: PASS with did-finish-load, renderer alive, root/app-shell, preload API, and no console errors.
+- `npm.cmd run subtitle:geometry` was repeated three times. All three failed in the existing Fast/Accurate screenshot parity detector, with different fixtures (`jp123-bottom`, `jp123-middle`, `jp54-top`) and no change to thresholds/fixtures/skip logic. Classification remains `INCONCLUSIVE_ENVIRONMENT`, not a demonstrated Timeline regression.
+- `VISIBLE_PHASE_35A_QA: NOT_RUN_TOOL_LIMIT`. Automated/formal acceptance passed; direct GUI drag/context-menu visual acceptance was not claimed.
+- Phase 3.5A is **CLOSED for automated/formal gates** with visible QA limitation. Implementation commit: `a8086666797537e37bf351107aa37e967224a39f` pushed to `origin/main`. Permanent Review artifact/schema work, max_lines, and caption algorithm changes remain out of scope.
 
 ## 0. 最初に行うこと
 
