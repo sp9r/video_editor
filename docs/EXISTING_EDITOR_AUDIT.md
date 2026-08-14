@@ -135,5 +135,11 @@ Phase 4で再利用した既存コードも完成品とは扱わず、domain tes
 
 - Phase 4R.3までのCSS font metric calibration（Noto Sans JP 0.67、fallback 0.90）は通常字幕経路から廃止する。理由はChromium CSS typographyとlibass typographyを係数で近づけ続ける設計が、font size・position・outlineの再発差分を残すため。
 - `renderSubtitleOverlay()`はFinalと同じ`generateAss(project)`をbundled FFmpeg/libassへ渡し、`ass=...:alpha=1`で透明RGBA PNGを生成する。FastはHTML media + このsequence全面overlay、pausedはfull Accurate frame、Finalはfull renderとなる。
-- `animation=none`はauthoritative overlayを必須経路とし、animated cue・生成失敗・初回のみCSS fallbackへ降格する。overlayにはrequest sequence、active visual-state fingerprint、64件bounded cacheを持たせる。
+- `animation=none`はauthoritative overlayを必須経路とし、animated cueだけをtemporary CSS fallbackとする。static字幕は生成失敗・初回生成中・style変更中もCSSへ降格せず、同一cueの最後のauthoritative overlay保持または字幕なしとする。overlayにはrequest sequence、active visual-state fingerprint、64件bounded cacheを持たせる。
 - 透明fixtureのpixel検証はcorner alpha=0、glyph/outline/background/shadow alpha>0。Fast production smokeはoverlay DOM、自然サイズ、CSS fallback count、stale/accurate遷移を確認する。
+
+## Phase 4R.4.1 accuracy-first subtitle preview UX
+
+- 40ms latest-only schedulerでInspector burstをcoalesceし、古いFFmpeg結果をcommitしない。同一cueのstyle変更では旧overlayを保持し、新overlay完成時だけatomicに差し替える。
+- 次のstatic cueは既存visual-state cacheへprefetchし、cue boundaryではdebounceなしでcache hitを取得する。cue変更・字幕なしでは旧cueを残さない。
+- static subtitle pixelsのauthorityは`generateAss(project)` + bundled libassに限定する。animated cueのCSS表示はtemporary/non-authoritative debtとして扱う。

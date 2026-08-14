@@ -20,8 +20,15 @@
 - FFmpeg `ass` filterの`alpha=1`を使用する。透明640x360 fixtureでcorner alpha=0、white glyph、outline、background、red shadow alphaをpixel検証する。
 - Fast overlayはsequence全体PNGを`.fast-authoritative-subtitle-overlay`としてそのまま重ね、CSS側でfont-size、position、outline、shadow、backgroundを補正しない。paused Accurate frameはFast CSS fallbackより上位で表示する。
 - cache keyはrenderer version、sequence width/height/fps、active subtitle visual state（ID、track order、text、全style）。mediaは不要で、最大64件のmemory/in-flight/disk bounded cacheとする。同一static cue中は同じPNGを再利用する。
-- animated cue、overlay生成失敗、初回生成中だけCSS fallbackを使用し、`data-subtitle-renderer`で内部状態を識別する。font別0.67/0.90 calibrationは通常字幕経路から廃止する。
+- animated cueだけCSS fallbackを使用し、static overlay生成失敗・初回生成中・style変更中はCSSへ降格しない。`data-subtitle-renderer`はanimated fallbackとauthoritative overlayの診断用に残す。font別0.67/0.90 calibrationは通常字幕経路から廃止する。
 - production smokeはFast overlay存在・自然サイズ・CSS fallback不使用、Accurate stale overlay、Final/Accurate regressionを確認する。
+
+## Phase 4R.4.1 - Accuracy-first Subtitle Preview UX
+
+- `animation=none`の字幕はstartup、cache miss、rendering中、slider burst、error時もlibass overlayだけを表示する。CSS typographyはstatic字幕のbackendにしない。
+- 同一cueのstyle変更では最後に成功したauthoritative overlayを保持し、新overlay完成時にatomic swapする。cue変更・字幕なしでは旧cueを残さない。
+- Inspector burstは40ms latest-only schedulerでcoalesceし、stale resultはcommitしない。次のstatic cueをprefetchし、boundaryではcache hitを即時利用する。
+- animated subtitleのCSS表示はtemporary/non-authoritative debt。失敗時もstatic字幕へ自動fallbackせず、「字幕更新失敗」を診断表示する。
 
 ## Phase 4R.3 - Subtitle geometry/style semantic correction
 

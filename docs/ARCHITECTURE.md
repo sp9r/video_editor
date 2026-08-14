@@ -28,7 +28,13 @@ Previewには二つのモードがある。再生中のFast PreviewはHTML video
 
 停止後のrequestは180ms debounceし、latest sequenceだけを表示する。再生開始時はAccurate overlayを隠してFast Previewへ戻る。失敗時はFast Previewを残し、Previewの小さな診断表示だけを出す。export pipelineは影響を受けない。
 
-Fast Previewの通常字幕（`animation=none`）はCSS typographyを使わず、`.fast-authoritative-subtitle-overlay`へ透明RGBA PNGをそのまま表示する。overlayはsequence全体サイズで、CSS側でposition、font-size、outline、shadow、backgroundを再計算しない。字幕のactive visual stateをkeyにmemory/disk bounded cacheを共有し、同一cue表示中にFFmpegを毎frame起動しない。animated subtitleは現段階では明示的にCSS fallbackへ降格し、overlay生成失敗時も内部状態を識別してfallbackする。Phase 4R.3までのNoto/Arial font-size calibrationは通常字幕経路から廃止した。
+Fast Previewの通常字幕（`animation=none`）はCSS typographyを使わず、`.fast-authoritative-subtitle-overlay`へ透明RGBA PNGをそのまま表示する。overlayはsequence全体サイズで、CSS側でposition、font-size、outline、shadow、backgroundを再計算しない。字幕のactive visual stateをkeyにmemory/disk bounded cacheを共有し、同一cue表示中にFFmpegを毎frame起動しない。animated subtitleだけは現段階でtemporary/non-authoritativeなCSS fallbackへ降格する。static overlay生成失敗時もCSSへfallbackせず、同一cueの最後のauthoritative overlay保持または字幕なしとする。Phase 4R.3までのNoto/Arial font-size calibrationは通常字幕経路から廃止した。
+
+### Phase 4R.4.1 accuracy-first subtitle preview UX
+
+Static subtitle pixels in Fast Preview must originate from `generateAss(project)` and bundled libass. CSS is not a valid static subtitle rendering backend. Startup、cache miss、rendering中、Inspector変更、overlay errorでも、同一cueなら最後の成功overlayを保持し、新overlay完成時だけatomicに差し替える。active cueが変わる、または字幕がない場合は旧cueを残さない。
+
+Rendererは40ms latest-only schedulerを使用する。pending requestは常に最新一件へ置換し、stale resultはcommitしない。次のstatic cueは既存cacheへprefetchし、cue boundaryではdebounceなしでcache hitを取得する。animated subtitleのCSS表示はauthoritativeではないtemporary debtである。
 
 ## 設計目標
 

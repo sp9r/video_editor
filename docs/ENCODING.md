@@ -127,9 +127,11 @@ frame timeは`src/shared/frame-time.ts`のfloor semanticsを正本とする。30
 
 React/CSSは再生中のFast Previewで映像・画像を近似表示する。通常の`animation=none`字幕は`renderSubtitleOverlay()`が`generateAss(project)`をそのまま使い、透明RGBA canvasへ`ass=...:alpha=1`で描画したsequence全体PNGをoverlayする。停止中は従来どおり180ms debounce後にAccurate PNGをoverlayし、play開始時に隠す。project変更・seekの古いrequest結果はsequenceで破棄する。
 
-Fast Previewの通常字幕はCSSのfont、outline、shadow、background、positionをauthorityとして使わない。`SubtitleRenderSpec`から生成された同じASSをlibassで描画するため、Noto Sans JP 0.67やArial 0.90のfont calibrationは通常字幕経路に存在しない。CSS 3-layerはanimated cue、overlay失敗、初回生成中だけのfallbackであり、`data-subtitle-renderer="css-fallback"`で識別できる。
+Fast Previewの通常字幕はCSSのfont、outline、shadow、background、positionをauthorityとして使わない。`SubtitleRenderSpec`から生成された同じASSをlibassで描画するため、Noto Sans JP 0.67やArial 0.90のfont calibrationは通常字幕経路に存在しない。CSS 3-layerはanimated cueだけのtemporary fallbackであり、static overlay失敗・初回生成中・style変更中はCSSへfallbackしない。`data-subtitle-renderer="css-fallback"`はanimated fallbackの診断用である。
 
 subtitle overlay cache keyはrenderer version、sequence width/height/fps、active subtitle visual state（active clip ID、track order、text、全style）から作り、media pathは含めない。memory/in-flight cacheは最大64件、同一static cueの再生中は同じPNGを再利用する。style/text/geometry/active cue変更でkeyが変わり、old requestはsequence guardで破棄する。animated cueはCSS fallbackへ明示的に降格する。
+
+static subtitleの更新は40ms latest-onlyでcoalesceする。実行中の古いFFmpeg結果は表示せず、同一cueの最後のauthoritative overlayを保持してから新しいPNGへatomic swapする。次のstatic cueをprefetchし、boundaryではdebounceなしでcache hitを要求する。overlay生成失敗時は誤ったCSS字幕を出さず、保持可能な旧overlayまたは字幕なしとし、UIへ診断を表示する。
 
 bundled FFmpegの`ass` filterは`alpha=1`を指定してalpha processingを有効化する。640x360透明fixtureでcorner alpha=0、glyph/outline/background/shadow alpha>0をpixel検証し、chroma keyは使用しない。
 
