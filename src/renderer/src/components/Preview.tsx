@@ -3,6 +3,7 @@ import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-r
 import { formatTimecode, projectDurationUs } from '../../../shared/project'
 import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
 import { buildSubtitleRenderSpec, subtitleAnchorTransform } from '../../../shared/subtitle-render'
+import { canonicalShadowBlurRadius } from '../../../shared/subtitle-shadow'
 import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip } from '../../../shared/types'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
@@ -242,6 +243,16 @@ export default function Preview(): React.JSX.Element {
             {subtitles.map((subtitle) => (
               (() => {
                 const spec = buildSubtitleRenderSpec(subtitle, project.sequence)
+                const textStyle = {
+                  fontFamily: spec.fontFamily,
+                  fontSize: `${spec.fontSizePx}px`,
+                  fontWeight: spec.bold ? 700 : 400,
+                  fontStyle: spec.italic ? 'italic' : 'normal' as const,
+                  letterSpacing: `${spec.letterSpacingPx}px`,
+                  lineHeight: spec.lineHeight,
+                  whiteSpace: 'pre-wrap' as const,
+                  overflowWrap: 'anywhere' as const
+                }
                 return <button
                   type="button"
                   key={subtitle.id}
@@ -255,22 +266,37 @@ export default function Preview(): React.JSX.Element {
                     transform: subtitleAnchorTransform(spec.anchor)
                   }}
                 >
-                  <span
-                    className="preview-subtitle-text"
-                    style={{
-                      color: spec.color,
-                      fontFamily: spec.fontFamily,
-                      fontSize: `${spec.fontSizePx}px`,
-                      fontWeight: spec.bold ? 700 : 400,
-                      fontStyle: spec.italic ? 'italic' : 'normal',
-                      letterSpacing: `${spec.letterSpacingPx}px`,
-                      lineHeight: spec.lineHeight,
-                      WebkitTextStroke: `${spec.outlineWidthPx}px ${spec.outlineColor}`,
-                      paintOrder: 'stroke fill',
-                      textShadow: `${spec.shadowOffsetXPx}px ${spec.shadowOffsetYPx}px ${spec.shadowBlurPx}px ${spec.shadowColor}`,
-                      background: `color-mix(in srgb, ${spec.backgroundColor} ${spec.backgroundOpacity * 100}%, transparent)`
-                    }}
-                  >{spec.wrappedText}</span>
+                  <span className="preview-subtitle-stack">
+                    {spec.backgroundOpacity > 0 && <span
+                      className="preview-subtitle-layer preview-subtitle-background"
+                      aria-hidden="true"
+                      style={{
+                        ...textStyle,
+                        color: 'transparent',
+                        WebkitTextStroke: '0 transparent',
+                        background: `color-mix(in srgb, ${spec.backgroundColor} ${spec.backgroundOpacity * 100}%, transparent)`
+                      }}
+                    >{spec.wrappedText}</span>}
+                    {spec.shadowColor && <span
+                      className="preview-subtitle-layer preview-subtitle-shadow"
+                      aria-hidden="true"
+                      style={{
+                        ...textStyle,
+                        color: spec.shadowColor,
+                        transform: `translate(${spec.shadowOffsetXPx}px, ${spec.shadowOffsetYPx}px)`,
+                        filter: canonicalShadowBlurRadius(spec.shadowBlurPx) > 0 ? `blur(${canonicalShadowBlurRadius(spec.shadowBlurPx)}px)` : undefined
+                      }}
+                    >{spec.wrappedText}</span>}
+                    <span
+                      className="preview-subtitle-layer preview-subtitle-main"
+                      style={{
+                        ...textStyle,
+                        color: spec.color,
+                        WebkitTextStroke: `${spec.outlineWidthPx}px ${spec.outlineColor}`,
+                        paintOrder: 'stroke fill'
+                      }}
+                    >{spec.wrappedText}</span>
+                  </span>
                 </button>
               })()
             ))}

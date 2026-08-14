@@ -1,5 +1,6 @@
 import type { ProjectFile, SubtitleClip, SubtitleStyle } from '../../shared/types.js'
 import { buildSubtitleRenderSpec, type SubtitleRenderSpec } from '../../shared/subtitle-render.js'
+import { canonicalShadowBlurRadius } from '../../shared/subtitle-shadow.js'
 
 export interface SubtitleCue {
   clip: SubtitleClip
@@ -143,8 +144,7 @@ const hasVisibleColor = (value: string): boolean => parseHexColor(value).alpha >
  * filter radius. A half-radius is the current conservative approximation;
  * the mapping is deliberately applied only to the duplicate shadow event.
  */
-export const assShadowBlurFromCss = (cssShadowBlurPx: number): number =>
-  cssShadowBlurPx <= 0 ? 0 : clamp(Math.round(cssShadowBlurPx / 2), 1, 20)
+export const assShadowBlurFromCss = canonicalShadowBlurRadius
 
 export const generateAss = (project: ProjectFile): string => {
   const cues = collectSubtitleCues(project)
