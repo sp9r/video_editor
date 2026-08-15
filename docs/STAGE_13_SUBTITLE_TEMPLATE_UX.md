@@ -16,6 +16,14 @@
 
 既存の自動処理dialogにもtemplate選択は残している。Inspectorで保存したuser templateは同じcatalogから即時利用でき、次回起動後も読み込まれる。
 
+## Template Manager
+
+ヘッダーの「テンプレート」から、ProjectFileの字幕選択状態に依存しない管理modalを開ける。built-inとuserを別一覧で表示し、種別をbadgeで識別する。選択templateのSubtitleStyle全field、maxWidth、animation、maxChars、maxLines、segmentationModeをdetailで確認できる。
+
+Managerでは、新規作成、Timeline字幕から作成、適用、複製、名前変更、内容更新、削除、default設定を行える。built-inは直接更新・削除せず、複製してuser templateにする。Timeline字幕が選択されている場合だけTimeline由来の作成・適用を有効にし、Projectを開いていなくてもcatalogの閲覧とuser template管理は利用できる。
+
+削除時は確認を表示する。削除対象がdefaultだった場合はmain-process serviceが`default`へ戻し、rendererも同じcatalogへ追従する。malformed user recordはserviceのload時に個別隔離され、正常なrecordとbuilt-inの表示を止めない。
+
 ## sample preview
 
 Inspector内で「皆さんこんばんは / アルマジロウです」を表示する。font、size、bold/italic、letter spacing、line height、foreground、outline、shadow、background opacityを選択templateのstyleから反映する。これは別の字幕modelを作らず、Final/libassへ渡るstyleと同じ値を使う軽量なpresentation previewである。
@@ -42,3 +50,4 @@ maxLinesはclipに保持された値を最優先し、未指定の場合だけba
 - `npm.cmd run build`
 - `npm.cmd run smoke:electron`
 - `npm.cmd run smoke:accurate-preview`
+- `npm.cmd run smoke:electron`: template managerを含むproduction rendererのasset、DOM、preload、console errorなしを確認

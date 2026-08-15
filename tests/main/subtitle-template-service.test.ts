@@ -34,8 +34,10 @@ describe('subtitle template service', () => {
     expect(await service.remove(created.id)).toBe(false)
     expect((await service.load()).userTemplates.map((template) => template.id)).toEqual([copied.id])
     expect((await service.setDefault(copied.id)).defaultTemplateId).toBe(copied.id)
+    const restarted = new SubtitleTemplateService(root)
+    expect((await restarted.load()).userTemplates[0]).toMatchObject({ id: copied.id, name: '複製元 copy', captionGeneration: { maxChars: 40 } })
     expect(await service.remove(copied.id)).toBe(true)
-    expect((await service.load()).defaultTemplateId).toBe('default')
+    expect((await new SubtitleTemplateService(root).load()).defaultTemplateId).toBe('default')
   })
 
   it('writes a versioned path-free store atomically', async () => {
@@ -55,10 +57,11 @@ describe('subtitle template service', () => {
     roots.push(root)
     await writeFile(path.join(root, 'subtitle-templates.v1.json'), JSON.stringify({
       version: 'spectra.subtitle-template-store.v1',
-      templates: [{ version: 'spectra.subtitle-template.v2', id: 'bad', name: 'bad', style: {}, captionGeneration: {}, createdAt: 'bad', updatedAt: 'bad' }]
+      templates: [{ version: 'spectra.subtitle-template.v2', id: 'valid', ...draft('valid'), createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z' }, { version: 'spectra.subtitle-template.v2', id: 'bad', name: 'bad', style: {}, captionGeneration: {}, createdAt: 'bad', updatedAt: 'bad' }]
     }), 'utf8')
     const loaded = await new SubtitleTemplateService(root).load()
-    expect(loaded.userTemplates).toEqual([])
+    expect(loaded.userTemplates).toHaveLength(1)
+    expect(loaded.userTemplates[0]?.name).toBe('valid')
     expect(loaded.malformedCount).toBe(1)
     expect(loaded.defaultTemplateId).toBe('default')
   })

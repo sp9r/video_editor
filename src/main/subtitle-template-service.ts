@@ -133,6 +133,19 @@ const parseTemplate = (value: unknown): UserSubtitleTemplate => {
 
 const storePath = (userDataPath: string): string => path.join(userDataPath, STORE_FILE)
 
+const renameAtomicallyWithWindowsRetry = async (temporary: string, target: string): Promise<void> => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(temporary, target)
+      return
+    } catch (error) {
+      const code = (error as { code?: string }).code
+      if (!['EPERM', 'EBUSY'].includes(code ?? '') || attempt >= 4) throw error
+      await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)))
+    }
+  }
+}
+
 const validTemplateId = (value: unknown): value is SubtitleTemplateId =>
   typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)
 
@@ -173,7 +186,7 @@ const writeStore = async (userDataPath: string, templates: readonly UserSubtitle
   const temporary = path.join(directory, `.${path.basename(target)}.${randomUUID()}.tmp`)
   try {
     await writeFile(temporary, `${JSON.stringify({ version: SUBTITLE_TEMPLATE_STORE_VERSION, defaultTemplateId, templates }, null, 2)}\n`, 'utf8')
-    await rename(temporary, target)
+    await renameAtomicallyWithWindowsRetry(temporary, target)
   } finally {
     await rm(temporary, { force: true }).catch(() => undefined)
   }

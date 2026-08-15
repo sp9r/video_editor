@@ -1,5 +1,13 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-16 NIGHT 10 Subtitle Template Manager Complete UX
+
+- ヘッダーから開けるProjectFile非依存の字幕Template Manager modalを追加。built-in/userの一覧・badge識別と、SubtitleStyle全field、maxWidth、animation、maxChars、maxLines、segmentationModeのdetail表示を実装した。
+- 新規作成、Timeline字幕から作成、適用、複製、built-inからuser copy、名前変更、内容更新、削除、default設定を接続。built-inは直接変更・削除不可、default削除時は標準へfallbackする。
+- malformed recordが正常user recordを巻き込まないこと、再起動相当の新Service instanceでCRUD結果が残ることを回帰テストへ追加。
+- Windows temp file lockによるatomic renameの一時`EPERM`/`EBUSY`だけを限定retryし、atomic publishを維持した。
+- `npm.cmd run check`: **50 files / 282 tests PASS**、`npm.cmd run build`: **PASS**、`npm.cmd run smoke:electron`: **PASS**。Phase 5、planning、highlight、publishing、mass Human Review、learningは開始していない。
+
 ## 2026-08-16 Night 09 Create Subtitle Template From Timeline Subtitle
 
 - Timelineで選択したSubtitleClipから、SubtitleStyle全体、clip-held maxLines、layout constraintをtemplate保存dialogへ引き継ぐようにした。

@@ -27,6 +27,7 @@ import MediaBin from './components/MediaBin'
 import Preview from './components/Preview'
 import Timeline from './components/Timeline'
 import ReviewPanel from './components/ReviewPanel'
+import SubtitleTemplateManagerPanel from './components/SubtitleTemplateManagerPanel'
 import { useEditorStore } from './store'
 import { useReviewStore } from './review-store'
 import { autoCaptionControlState } from './action-state'
@@ -85,6 +86,7 @@ export default function App(): React.JSX.Element {
   const [appError, setAppError] = useState<string | null>(null)
   const [captioning, setCaptioning] = useState(false)
   const [captionDialogOpen, setCaptionDialogOpen] = useState(false)
+  const [templateManagerOpen, setTemplateManagerOpen] = useState(false)
   const [autoCaptionEnabled, setAutoCaptionEnabled] = useState(true)
   const [userSubtitleTemplates, setUserSubtitleTemplates] = useState<UserSubtitleTemplate[]>([])
   const [captionSettings, setCaptionSettings] = useState<AutoCaptionSettings>({
@@ -349,6 +351,7 @@ export default function App(): React.JSX.Element {
   const selectedCaptionAsset = selectedCaptionClip && 'assetId' in selectedCaptionClip
     ? project.media.find((asset) => asset.id === selectedCaptionClip.assetId)
     : undefined
+  const selectedSubtitleClip = selectedCaptionClip?.kind === 'subtitle' ? selectedCaptionClip : undefined
   const autoCaptionRunState = autoCaptionControlState({
     captioning,
     clipKind: selectedCaptionClip?.kind,
@@ -470,6 +473,7 @@ export default function App(): React.JSX.Element {
           <IconButton label={past.length ? '元に戻す（Ctrl+Z）' : '元に戻す（変更履歴がありません）'} disabled={!past.length} onClick={undo}><Undo2 size={16} /></IconButton>
           <IconButton label={future.length ? 'やり直す（Ctrl+Shift+Z）' : 'やり直す（やり直せる変更がありません）'} disabled={!future.length} onClick={redo}><Redo2 size={16} /></IconButton>
           <Button className="save-button" disabled={saving} title={saving ? '保存中です' : 'プロジェクトを保存'} onClick={() => void save()}><Save size={15} />{saving ? '保存中…' : '保存'}</Button>
+          <Button className="subtle-button" onClick={() => setTemplateManagerOpen(true)}>テンプレート</Button>
           <Button className={reviewEnabled ? 'review-toggle is-active' : 'review-toggle'} onClick={() => {
             if (reviewEnabled) useReviewStore.getState().stop()
             else if (!useReviewStore.getState().start(project, useEditorStore.getState().selectedClipIds[0])) showNotice('レビュー対象の字幕がありません。', 'warning')
@@ -514,6 +518,7 @@ export default function App(): React.JSX.Element {
           <IconButton label="通知を閉じる" onClick={clearNotice}><X size={14} /></IconButton>
         </div>
       )}
+      {templateManagerOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTemplateManagerOpen(false) }}><SubtitleTemplateManagerPanel userTemplates={userSubtitleTemplates} defaultTemplateId={defaultSubtitleTemplateId} selectedSubtitle={selectedSubtitleClip} onTemplatesChange={(templates) => { setUserSubtitleTemplates(templates); setStoreUserSubtitleTemplates(templates) }} onDefaultChange={setDefaultSubtitleTemplateId} onClose={() => setTemplateManagerOpen(false)} /></div>}
       {appError && (
         <div className="error-banner" role="alert"><CircleAlert size={18} /><strong>画面でエラーが発生しました</strong><span>{appError}</span><button type="button" onClick={() => setAppError(null)}>閉じる</button></div>
       )}
