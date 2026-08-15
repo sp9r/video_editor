@@ -1,3 +1,5 @@
+import type { AutoCaptionBaseline, AutoCaptionProgress, AutoCaptionSettings } from './auto-caption-contract'
+
 export const PROJECT_SCHEMA_VERSION = 1 as const
 export const APP_VERSION = '0.1.0'
 
@@ -332,6 +334,23 @@ export interface AppInfo {
   smokeMode?: boolean
 }
 
+export interface AutoCaptionHealth {
+  available: boolean
+  checkedAt: string
+  provider: 'clip_automation' | 'unavailable'
+  reason?: string
+}
+
+export interface AutoCaptionStartResult {
+  jobId: string
+  clipId: string
+}
+
+export interface AutoCaptionBaselineLoadResult {
+  records: AutoCaptionBaseline[]
+  malformedCount: number
+}
+
 export interface DesktopApi {
   getAppInfo(): Promise<AppInfo>
   pickMedia(): Promise<ProbeResult[]>
@@ -349,7 +368,11 @@ export interface DesktopApi {
   createPreviewPlan(project: ProjectFile): Promise<PreviewPlan>
   renderAccuratePreviewFrame(project: ProjectFile, timeUs: TimeUs): Promise<AccuratePreviewFrameResult>
   renderSubtitleOverlay(project: ProjectFile, timeUs: TimeUs): Promise<SubtitleOverlayResult>
-  generateCaptions(project: ProjectFile, videoClipId: string): Promise<import('./automation').TranscriptAiOutput>
+  autoCaptionHealth(): Promise<AutoCaptionHealth>
+  startAutoCaption(project: ProjectFile, selectedClipIds: string[], settings?: AutoCaptionSettings): Promise<AutoCaptionStartResult>
+  cancelAutoCaption(jobId: string): Promise<boolean>
+  loadAutoCaptionBaselines(): Promise<AutoCaptionBaselineLoadResult>
+  onAutoCaptionProgress(callback: (progress: AutoCaptionProgress) => void): () => void
   detectEncoders(force?: boolean): Promise<EncoderReport>
   chooseExportPath(defaultName: string): Promise<string | null>
   startExport(project: ProjectFile, settings: ExportSettings): Promise<StartExportResult>

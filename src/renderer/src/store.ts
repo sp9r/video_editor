@@ -18,9 +18,10 @@ import {
 import { deleteLinkedClips, EditingOperationError, isSubtitleWordBoundarySplitAvailable, mergeSubtitleWithNext, mergeSubtitleWithPrevious, moveLinkedClip, moveSubtitleBoundary, nearestSubtitleWordBoundaryIndex, splitLinkedClip, splitSelectedRoots, splitSubtitleAtWordBoundary, trimLinkedClip } from '../../shared/editing/operations'
 import { linkedClipIds } from '../../shared/editing/links'
 import { isMediaTrack } from '../../shared/types'
+import type { AutoCaptionProgress, AutoCaptionResult } from '../../shared/auto-caption-contract'
+import { createAutoCaptionAutomationPlan } from '../../shared/auto-caption-adapter'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
-import { createAutomationPlanFromOutput, previewAutomationProposal } from '../../shared/automation'
-import type { TranscriptAiOutput } from '../../shared/automation'
+import { previewAutomationProposal } from '../../shared/automation'
 import { createDemoProject } from './demo'
 
 type EditTool = 'select' | 'razor'
@@ -210,16 +211,62 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       get().showNotice('自動字幕はElectronデスクトップ版で利用できます。', 'warning')
       return
     }
-    const selectedVideo = get().project.tracks
-      .flatMap((track) => track.clips)
-      .find((clip) => get().selectedClipIds.includes(clip.id) && clip.kind === 'video')
-    if (!selectedVideo || selectedVideo.kind !== 'video') {
-      get().showNotice('動画クリップを1つ選択してから自動字幕を実行してください。', 'warning')
+    const selectedIds = [...get().selectedClipIds]
+    const project = get().project
+    const selectedClip = project.tracks.flatMap((track) => track.clips).find((clip) => selectedIds.includes(clip.id))
+    if (selectedIds.length !== 1 || !selectedClip || (selectedClip.kind !== 'video' && selectedClip.kind !== 'audio')) {
+      get().showNotice('動画または音声クリップを1つだけ選択してから自動字幕を実行してください。', 'warning')
       return
     }
     try {
-      const output: TranscriptAiOutput = await window.spectra.generateCaptions(get().project, selectedVideo.id)
-      const plan = createAutomationPlanFromOutput(get().project, output, { title: 'Whisper自動字幕' })
+      const health = await window.spectra.autoCaptionHealth()
+      if (!health.available) throw new Error(health.reason ?? '自動字幕エンジンを利用できません。')
+      const result = await new Promise<AutoCaptionResult>((resolve, reject) => {
+        let startedJobId = ''
+        let terminalBeforeStart: AutoCaptionProgress | undefined
+        let settled = false
+        const unsubscribe = window.spectra!.onAutoCaptionProgress((progress) => {
+          if (startedJobId && progress.jobId !== startedJobId) return
+          if (!startedJobId) {
+            if (progress.state === 'completed' || progress.state === 'failed') terminalBeforeStart = progress
+            return
+          }
+          if (settled) return
+          if (progress.state === 'failed') {
+            settled = true
+            unsubscribe()
+            reject(new Error(progress.errorCode === 'CANCELLED' ? '自動字幕をキャンセルしました。' : progress.message))
+          } else if (progress.state === 'completed' && progress.result) {
+            settled = true
+            unsubscribe()
+            resolve(progress.result)
+          }
+        })
+        void window.spectra!.startAutoCaption(project, selectedIds).then(
+          (started) => {
+            startedJobId = started.jobId
+            if (terminalBeforeStart && !settled) {
+              const terminal = terminalBeforeStart
+              if (terminal.state === 'failed') {
+                settled = true
+                unsubscribe()
+                reject(new Error(terminal.errorCode === 'CANCELLED' ? '自動字幕をキャンセルしました。' : terminal.message))
+              } else if (terminal.result) {
+                settled = true
+                unsubscribe()
+                resolve(terminal.result)
+              }
+            }
+          },
+          (error) => {
+            if (settled) return
+            settled = true
+            unsubscribe()
+            reject(error)
+          }
+        )
+      })
+      const plan = createAutoCaptionAutomationPlan(project, selectedClip, result, { title: 'Whisper自動字幕' })
       const preview = previewAutomationProposal(get().project, plan)
       const firstCaption = plan.commands.find((command) => command.type === 'insert-subtitle')
       get().applyProject(preview.project, firstCaption?.type === 'insert-subtitle' ? { selectClipId: firstCaption.clipId } : undefined)

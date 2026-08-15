@@ -20,20 +20,38 @@ describe('automatic caption insertion', () => {
     project = addClipToTrack(project, project.tracks.find((track) => track.kind === 'media')!.id, video)
     useEditorStore.getState().loadProject(project)
     useEditorStore.getState().selectClip('auto-caption-video')
-    const generateCaptions = vi.fn().mockResolvedValue({
-      kind: 'transcript',
-      language: 'ja',
-      segments: [{
-        startUs: 0,
-        endUs: 1_000_000,
-        text: '字幕テスト',
-        words: [
-          { id: 'source-word:0', text: '字幕', startUs: 0, endUs: 500_000 },
-          { id: 'source-word:1', text: 'テスト', startUs: 500_000, endUs: 1_000_000 }
-        ]
-      }]
+    let progress: ((value: any) => void) | undefined
+    const startAutoCaption = vi.fn(async () => {
+      progress?.({
+        version: 'spectra.auto-caption.progress.v1',
+        jobId: 'caption-job-test',
+        state: 'completed',
+        ratio: 1,
+        message: '完了',
+        result: {
+          version: 'spectra.auto-caption.result.v1',
+          jobId: 'caption-job-test',
+          sourceStartUs: 0,
+          sourceEndUs: 4_000_000,
+          language: 'ja',
+          provider: 'faster-whisper+caption.py',
+          model: 'test',
+          rawWords: [
+            { id: 'source-word:0', text: '字幕', startUs: 0, endUs: 500_000 },
+            { id: 'source-word:1', text: 'テスト', startUs: 500_000, endUs: 1_000_000 }
+          ],
+          captions: [{ id: 'caption:0', text: '字幕テスト', sourceWordIds: ['source-word:0', 'source-word:1'], startUs: 0, endUs: 1_000_000, textStatus: 'as_transcribed', provenance: 'caption_algorithm' }],
+          diagnostics: [],
+          fallback: { used: false }
+        }
+      })
+      return { jobId: 'caption-job-test', clipId: 'auto-caption-video' }
     })
-    window.spectra = { generateCaptions } as unknown as DesktopApi
+    window.spectra = {
+      autoCaptionHealth: vi.fn().mockResolvedValue({ available: true, checkedAt: new Date().toISOString(), provider: 'clip_automation' }),
+      startAutoCaption,
+      onAutoCaptionProgress: vi.fn((callback) => { progress = callback; return () => { progress = undefined } })
+    } as unknown as DesktopApi
 
     await useEditorStore.getState().autoCaptionSelected()
 
@@ -45,6 +63,6 @@ describe('automatic caption insertion', () => {
     expect(useEditorStore.getState().past).toHaveLength(1)
     useEditorStore.getState().undo()
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips).toHaveLength(0)
-    expect(generateCaptions).toHaveBeenCalledWith(expect.anything(), 'auto-caption-video')
+    expect(startAutoCaption).toHaveBeenCalledWith(expect.anything(), ['auto-caption-video'])
   })
 })

@@ -13,7 +13,10 @@ import { buildSubtitleRenderSpec } from '../shared/subtitle-render'
 import { createSubtitleParityFixture } from '../shared/subtitle-parity-fixture'
 import { loadExperimentalReviewRecords, saveExperimentalReviewRecord } from './review-service'
 import type { ExperimentalReviewRecord } from '../shared/review/types'
-import { generateCaptionsForMedia } from './ai/external-caption'
+import { parseAutoCaptionSettings } from '../shared/auto-caption-contract'
+import { AutoCaptionService } from './ai/auto-caption-service'
+import { loadAutoCaptionBaselines } from './ai/auto-caption-baseline'
+import type { AutoCaptionSettings } from '../shared/auto-caption-contract'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
@@ -32,6 +35,7 @@ const MEDIA_FILTERS = [
 
 let mainWindow: BrowserWindow | null = null
 let ffmpegService: FfmpegService | null = null
+let autoCaptionService: AutoCaptionService | null = null
 
 const assertTrustedSender = (event: Electron.IpcMainInvokeEvent): void => {
   const senderUrl = event.senderFrame?.url ?? ''
@@ -41,6 +45,11 @@ const assertTrustedSender = (event: Electron.IpcMainInvokeEvent): void => {
 const requireService = (): FfmpegService => {
   if (!ffmpegService) throw new Error('メディアエンジンの初期化が完了していません。')
   return ffmpegService
+}
+
+const requireAutoCaptionService = (): AutoCaptionService => {
+  if (!autoCaptionService) throw new Error('自動字幕エンジンの初期化が完了していません。')
+  return autoCaptionService
 }
 
 const validateExportSettings = (settings: ExportSettings): ExportSettings => {
@@ -150,15 +159,34 @@ const registerIpcHandlers = (): void => {
     return await requireService().renderSubtitleOverlay(validateProject(projectInput), timeUs)
   })
 
-  ipcMain.handle(IPC.captionsGenerate, async (event, projectInput: ProjectFile, videoClipId: unknown) => {
+  ipcMain.handle(IPC.autoCaptionHealth, async (event) => {
     assertTrustedSender(event)
-    if (typeof videoClipId !== 'string' || !videoClipId.trim()) throw new Error('自動字幕の対象動画が指定されていません。')
-    const project = validateProject(projectInput)
-    const videoClip = project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === videoClipId)
-    if (!videoClip || videoClip.kind !== 'video') throw new Error('自動字幕は動画クリップを1つ選択して実行してください。')
-    const asset = project.media.find((candidate) => candidate.id === videoClip.assetId)
-    if (!asset || asset.kind !== 'video' || asset.offline || !path.isAbsolute(asset.path)) throw new Error('自動字幕の動画素材がオフラインです。')
-    return await generateCaptionsForMedia({ appPath: app.getAppPath(), mediaPath: asset.path })
+    return requireAutoCaptionService().health()
+  })
+
+  ipcMain.handle(IPC.autoCaptionStart, async (event, projectInput: ProjectFile, selectedClipIds: unknown, settingsInput: unknown) => {
+    assertTrustedSender(event)
+    if (!Array.isArray(selectedClipIds) || selectedClipIds.some((id) => typeof id !== 'string')) {
+      throw new Error('自動字幕の選択状態が不正です。')
+    }
+    const settings: AutoCaptionSettings | undefined = settingsInput === undefined ? undefined : parseAutoCaptionSettings(settingsInput)
+    return await requireAutoCaptionService().start({
+      project: validateProject(projectInput),
+      selectedClipIds,
+      settings,
+      onProgress: (progress) => mainWindow?.webContents.send(IPC.autoCaptionProgress, progress)
+    })
+  })
+
+  ipcMain.handle(IPC.autoCaptionCancel, (event, jobId: unknown) => {
+    assertTrustedSender(event)
+    if (typeof jobId !== 'string' || jobId.length > 200) return false
+    return requireAutoCaptionService().cancel(jobId)
+  })
+
+  ipcMain.handle(IPC.autoCaptionBaselinesLoad, async (event) => {
+    assertTrustedSender(event)
+    return loadAutoCaptionBaselines(app.getPath('userData'))
   })
 
   ipcMain.handle(IPC.waveformPeaks, async (event, request) => {
@@ -379,6 +407,7 @@ const start = async (): Promise<void> => {
   ffmpegService = await createFfmpegService({
     workspaceRoot: path.join(app.getPath('temp'), 'spectra-video-studio')
   })
+  autoCaptionService = new AutoCaptionService({ appPath: app.getAppPath(), userDataPath: app.getPath('userData') })
   registerIpcHandlers()
   mainWindow = createMainWindow()
   if (process.env.SPECTRA_SUBTITLE_PARITY_SMOKE === '1') {

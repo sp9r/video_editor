@@ -1,9 +1,10 @@
-import type { VideoClip } from './types.js'
+import type { TimelineClip } from './types.js'
 
 export const AUTO_CAPTION_REQUEST_VERSION = 'spectra.auto-caption.request.v1' as const
 export const AUTO_CAPTION_RESULT_VERSION = 'spectra.auto-caption.result.v1' as const
 export const AUTO_CAPTION_BASELINE_VERSION = 'experimental.auto-caption-baseline.v1' as const
 export const AUTO_CAPTION_MAPPING_FORMULA = 'timelineUs = clip.startUs + (sourceUs - clip.sourceInUs)' as const
+export const AUTO_CAPTION_PROGRESS_VERSION = 'spectra.auto-caption.progress.v1' as const
 
 const MAX_ITEMS = 100_000
 const MAX_TEXT_LENGTH = 100_000
@@ -16,9 +17,28 @@ const FORBIDDEN_KEYS = new Set([
   'mediaPath', 'path', 'paths', 'projectPath', 'refreshToken', 'sourcePath', 'token'
 ])
 
-type SegmentationMode = typeof SEGMENTATION_MODES[number]
+export type SegmentationMode = typeof SEGMENTATION_MODES[number]
 export type AutoCaptionTextStatus = typeof TEXT_STATUSES[number]
 export type AutoCaptionProvenance = typeof PROVENANCES[number]
+
+export interface AutoCaptionSettings {
+  language: string
+  maxChars: number
+  maxLines?: number
+  segmentationMode: SegmentationMode
+}
+
+export type AutoCaptionProgressState = 'preparing' | 'transcribing' | 'segmenting' | 'completed' | 'failed'
+
+export interface AutoCaptionProgress {
+  version: typeof AUTO_CAPTION_PROGRESS_VERSION
+  jobId: string
+  state: AutoCaptionProgressState
+  ratio: number
+  message: string
+  errorCode?: string
+  result?: AutoCaptionResult
+}
 
 export interface AutoCaptionRequest {
   version: typeof AUTO_CAPTION_REQUEST_VERSION
@@ -97,7 +117,7 @@ export interface AutoCaptionBaseline {
   }
   rawWords: AutoCaptionRawWord[]
   captions: AutoCaptionCaption[]
-  settings: Pick<AutoCaptionRequest, 'language' | 'maxChars' | 'maxLines' | 'segmentationMode'>
+  settings: AutoCaptionSettings
   provider: string
   model: string
   diagnostics: AutoCaptionDiagnostic[]
@@ -236,6 +256,8 @@ const parseSettings = (value: unknown): AutoCaptionBaseline['settings'] => {
   }
 }
 
+export const parseAutoCaptionSettings = (value: unknown): AutoCaptionSettings => parseSettings(value)
+
 export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
   if (!isRecord(input)) throw new Error('auto-caption request must be an object')
   assertKeys(input, ['version', 'jobId', 'mediaPath', 'sourceStartUs', 'sourceEndUs', 'language', 'maxChars', 'maxLines', 'segmentationMode'], 'auto-caption request')
@@ -256,6 +278,25 @@ export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
     maxChars: boundedCount(own(input, 'maxChars'), 'maxChars', 1, 10_000),
     ...(maxLines === undefined ? {} : { maxLines }),
     segmentationMode
+  }
+}
+
+export const parseAutoCaptionProgress = (input: unknown): AutoCaptionProgress => {
+  if (!isRecord(input)) throw new Error('auto-caption progress must be an object')
+  assertKeys(input, ['version', 'jobId', 'state', 'ratio', 'message', 'errorCode'], 'auto-caption progress')
+  if (own(input, 'version') !== AUTO_CAPTION_PROGRESS_VERSION) throw new Error('unsupported auto-caption progress version')
+  const state = requiredString(own(input, 'state'), 'progress.state', 32) as AutoCaptionProgressState
+  if (!['preparing', 'transcribing', 'segmenting', 'completed', 'failed'].includes(state)) throw new Error('progress.state is invalid')
+  const ratio = own(input, 'ratio')
+  if (typeof ratio !== 'number' || !Number.isFinite(ratio) || ratio < 0 || ratio > 1) throw new Error('progress.ratio is invalid')
+  const errorCode = input.errorCode === undefined ? undefined : identifier(input.errorCode, 'progress.errorCode')
+  return {
+    version: AUTO_CAPTION_PROGRESS_VERSION,
+    jobId: identifier(own(input, 'jobId'), 'progress.jobId'),
+    state,
+    ratio,
+    message: requiredString(own(input, 'message'), 'progress.message', 4096),
+    ...(errorCode ? { errorCode } : {})
   }
 }
 
@@ -293,7 +334,7 @@ export const parseAutoCaptionResult = (input: unknown): AutoCaptionResult => {
 }
 
 export const mapAutoCaptionSourceTimeToTimelineUs = (
-  clip: Pick<VideoClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
+  clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
   sourceUs: number
 ): number => {
   const source = integerUs(sourceUs, 'sourceUs')

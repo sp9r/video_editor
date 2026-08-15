@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { DesktopApi, ExportProgress, ExportSettings, ProjectFile, TimeUs, WaveformRequest } from '../shared/types'
+import type { AutoCaptionProgress } from '../shared/auto-caption-contract'
 import type { ExperimentalReviewRecord } from '../shared/review/types'
 
 const api: DesktopApi = {
@@ -20,7 +21,15 @@ const api: DesktopApi = {
   createPreviewPlan: (project: ProjectFile) => ipcRenderer.invoke(IPC.previewPlan, project),
   renderAccuratePreviewFrame: (project: ProjectFile, timeUs: TimeUs) => ipcRenderer.invoke(IPC.previewAccurateFrame, project, timeUs),
   renderSubtitleOverlay: (project: ProjectFile, timeUs: TimeUs) => ipcRenderer.invoke(IPC.previewSubtitleOverlay, project, timeUs),
-  generateCaptions: (project: ProjectFile, videoClipId: string) => ipcRenderer.invoke(IPC.captionsGenerate, project, videoClipId),
+  autoCaptionHealth: () => ipcRenderer.invoke(IPC.autoCaptionHealth),
+  startAutoCaption: (project: ProjectFile, selectedClipIds: string[], settings) => ipcRenderer.invoke(IPC.autoCaptionStart, project, selectedClipIds, settings),
+  cancelAutoCaption: (jobId: string) => ipcRenderer.invoke(IPC.autoCaptionCancel, jobId),
+  loadAutoCaptionBaselines: () => ipcRenderer.invoke(IPC.autoCaptionBaselinesLoad),
+  onAutoCaptionProgress: (callback: (progress: AutoCaptionProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: AutoCaptionProgress): void => callback(progress)
+    ipcRenderer.on(IPC.autoCaptionProgress, listener)
+    return () => ipcRenderer.removeListener(IPC.autoCaptionProgress, listener)
+  },
   detectEncoders: (force = false) => ipcRenderer.invoke(IPC.encodersDetect, force),
   chooseExportPath: (defaultName: string) => ipcRenderer.invoke(IPC.exportChoosePath, defaultName),
   startExport: (project: ProjectFile, settings: ExportSettings) => ipcRenderer.invoke(IPC.exportStart, project, settings),

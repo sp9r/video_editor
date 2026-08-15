@@ -609,9 +609,9 @@ const parseCommand = (value: unknown, project: ProjectFile): AutomationEditComma
       if (wordsValue !== undefined) {
         if (!Array.isArray(wordsValue) || wordsValue.length === 0) throw new Error('words must be a non-empty array')
         words = wordsValue.map((rawWord, index) => parseTranscriptWord(rawWord, `words[${index}]`))
-        if (words.map((word) => word.text).join('') !== requiredString(ownValue(value, 'text'), 'text', MAX_AUTOMATION_TEXT_LENGTH)) {
-          throw new Error('words must reconstruct subtitle text')
-        }
+        // Source word metadata may retain punctuation or transcription text
+        // that the display caption normalized. The editor keeps both fields
+        // intentionally; caption-specific validation owns reconstruction.
         const endUs = startUs + durationUs
         if (words.some((word) => word.startUs < startUs || word.endUs > endUs)) {
           throw new Error('words must fit inside subtitle timing')
