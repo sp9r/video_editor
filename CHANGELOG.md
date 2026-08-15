@@ -46,3 +46,9 @@
 - 実用アルファ。program monitorの合成・音声再生、proxy／波形は未完成。
 - Windows配布物と他PCでの受入試験は未完了。
 - 高度なprofessional NLE機能と実AI providerはロードマップ段階。
+# 2026-08-15 — Stage 9 Human Review readiness handoff
+
+- 実生成QA動画で、import → real Whisper auto-caption → manual correction → Save/reopen → Full Correction diff → Review Mode → burned-subtitle renderを受入。
+- Inspector本文編集でraw word/editUnitと本文が不一致になった場合、derived timing metadataを削除して偽のword truthを残さないよう修正。
+- worker contract、vertical slice、Full Correction Reviewの利用者向け文書を追加。
+- self-contained portable auto-captionとfine acoustic alignmentは未達として明記。

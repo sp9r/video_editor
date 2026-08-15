@@ -172,3 +172,29 @@ npm.cmd run dev
 - Windows x64のNSIS installer／portable版は生成済みで、同梱FFmpeg/ffprobeと起動プロセスをこのPCで確認済み。ただし対話インストール・アンインストール、別PC移植、Intel／NVIDIA実機受入は未完了。
 
 次の開発優先順位は [HANDOFF.md](../HANDOFF.md) を確認してください。
+# Stage 9: 自動字幕から全文修正まで
+
+## 前提
+
+自動字幕はvideo_editor単体に内蔵されたWhisperではありません。main processが、設定ファイル・環境変数・兄弟directory discoveryの順に`clip_automation`の`python`と`spectra_caption_worker.py`を探します。worker、Python依存、faster-whisper modelが利用できない場合は、手動編集・既存projectの利用は継続できますが、自動字幕だけが利用不可になります。
+
+## 操作
+
+1. 動画を読み込み、V1へ配置する。
+2. 動画clipを1つ選び、「自動字幕」を押す。
+3. 日本語、最大文字数32、最大行数2、高品質またはルール方式を選ぶ。
+4. 生成完了後、字幕trackを確認する。
+5. 必要に応じて字幕をRazor分割、結合、境界drag、Inspector本文編集する。
+6. `Ctrl+Z` / `Ctrl+Shift+Z`で操作を戻す／やり直す。
+7. 「全文修正」を開始し、通常の編集を終えたら「修正完了」を押す。
+8. before/afterのwhole-track差分summaryを確認する。
+9. 必要ならReview Modeで個別字幕をA/B/C/D評価する。
+
+本文を編集して元のraw word連結と一致しなくなった字幕は、誤ったword timingを残さず本文編集可能な状態になります。これは推定境界を音響的真実として保存しないための仕様です。
+
+## 制限
+
+- workerのsource range結果はsource absolute microsecondsで返り、Studio側で`clip.startUs + (sourceUs - clip.sourceInUs)`によりtimelineへ変換します。
+- raw Whisper wordは保持しますが、文字単位のfine acoustic alignmentはありません。SubtitleEditUnitの時刻は編集用推定値です。
+- 自動字幕baselineとFull Correction artifactはuserDataへ保存されます。path、credential、media本体はartifactへ保存しません。
+- 別PCへコピーするだけで使えるportable構成は未達です。worker discoveryとPython/Whisper環境のセットアップが必要です。

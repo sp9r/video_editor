@@ -378,3 +378,34 @@ Phase Aが完了するまで、multicamや高度なAI機能へ先に進まない
 字幕human review MVPを実装した。Review Mode、baseline/final snapshot、correction summary、learning eligibility、local experimental review log、typed IPC、ReviewPanelを追加している。ProjectFile schema、`edit_project.v1`、`caption_review.v1`、字幕生成アルゴリズムは変更していない。詳細は [`docs/PHASE_3_5B_1_IMPLEMENTATION.md`](docs/PHASE_3_5B_1_IMPLEMENTATION.md) を参照すること。
 
 自動検証は `npm.cmd run check`（34 files / 193 tests）、`npm.cmd run build`、`npm.cmd run smoke:electron` がPASS。QA用16字幕projectでGUI reviewを10件実施し、Good 3 / Acceptable 3 / Corrected 3 / Skip 1を確認した。review provenanceからraw local pathを除去する回帰も追加した。split/merge/boundary moveの実操作を含む長時間human acceptanceは未完了である。
+# 2026-08-15 Stage 9 Final Human Review Readiness Handoff
+
+## 結論
+
+生成QAメディアを用いた現行Electronのvertical sliceは受入済みです。動画import、単一clip選択、実Whisper自動字幕、字幕編集、Undo/Redo、Save/reopen、Full Correction差分、Review Mode、字幕焼き込みrenderまで確認しました。次はユーザー本人が実動画でレビューを開始する段階です。
+
+## 正確な制限
+
+- 自動字幕はself-contained portableではありません。`clip_automation` worker、Python依存、faster-whisper、Whisper modelを設定／環境変数／兄弟repo discoveryで解決できる必要があります。
+- 実Whisper経路は`faster-whisper+caption.py`、modelは受入時`large-v3`です。
+- `caption.py`の既存segmentationをworkerから再利用しています。利用不能時のrule fallbackはresult diagnosticsへ記録されます。
+- raw Whisper wordsはsource truthとして保持します。日本語raw word内のSubtitleEditUnitは編集用derived boundaryで、fine acoustic alignmentではありません。
+- fine acoustic alignmentは未実装ですが、現時点の境界操作はmanual correction可能と分類し、Human Review blockerとは判定していません。
+- 今回のComputer UseではAltキー保持によるfree scrubを直接再現できず、shared regressionと既存実装を根拠にしています。
+
+## QA evidence
+
+- generated QA media: 約103.24秒、生成映像＋生成音声、日本語発話
+- baseline: 34 captions / 311 raw words / `NO_FINE_ACOUSTIC_ALIGNMENT` / fallback false
+- Full Correction: 34→34、本文変更1、未変更33
+- final render: H.264/AAC、1920×1080、103.241秒、焼き込み字幕frame確認
+- video_editor: 245 tests、build、Electron startup、Accurate Preview、subtitle parity/geometry PASS
+- clip_automation同梱`.venv`: unittest 252、compileall PASS
+
+詳細: `docs/AUTO_CAPTION_WORKER_CONTRACT.md`、`docs/AUTO_CAPTION_VERTICAL_SLICE.md`、`docs/FULL_CORRECTION_REVIEW.md`。
+
+## 次の利用者操作
+
+Phase 5、planning、highlight、publishing、mass Human Review、caption algorithm learningは開始しない。ユーザーが実動画を選び、同じvertical sliceでレビューを開始する。
+
+---

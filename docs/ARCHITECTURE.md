@@ -140,3 +140,24 @@ AIはProject JSONを直接書き換えない。Providerへ渡すのはローカ�
 - FFmpeg binaryはtarget OS上で依存導入して同梱する。Windows上でmacOS完成物を正しく生成する運用は採らない。
 - 高度なカラー管理、マルチカム、追跡、モーショングラフィックス、共同編集は次期以降。
 - Premiere Pro / DaVinci Resolve / Final Cut Proの画面・ロゴ・素材は複製しない。
+# Stage 9 accepted integration boundary
+
+Stage 9時点の自動字幕とHuman Reviewの実装境界は次のとおりです。
+
+```text
+selected single clip
+  → video_editor main process
+  → spectra.auto-caption.request.v1
+  → clip_automation/spectra_caption_worker.py
+  → spectra.auto-caption.result.v1
+  → runtime validation
+  → source→timeline mapping
+  → one history transaction
+  → SubtitleClip + SubtitleWord + SubtitleEditUnit
+```
+
+video_editorはclip_automationのPython module、run directory、caption algorithmを直接importしません。worker discoveryはuserData設定、環境変数、兄弟repoの順です。resultはpath/credentialを含まず、main processがsize、version、job、range、ownership、時刻、禁止fieldを検証します。
+
+`SubtitleWord`はraw Whisper source identity、`SubtitleEditUnit`は日本語raw word内を編集するためのderived metadataです。estimated timingはfine acoustic alignmentではありません。PreviewとFinalは同じProject Model / Render Planを使います。
+
+Full Correctionはauto-caption baselineをbefore truthとしてcurrent subtitle trackとの差分を保存し、既存Review Modeの個別ratingとは分離します。詳細な状態と未達項目は`HANDOFF.md`と`docs/AUTO_CAPTION_VERTICAL_SLICE.md`を正本とします。

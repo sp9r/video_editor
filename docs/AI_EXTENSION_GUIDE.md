@@ -588,4 +588,14 @@ renderer側の正しい役割は、provider選択、job開始、progress表示�
 - [ ] undoとstale revision拒否を確認する
 - [ ] mock providerで正常系、異常系、cancelをテストする
 - [ ] log、error、telemetryにsecret・pathがないことを確認する
+# Stage 9: 実Whisper連携の位置付け
 
+この文書にあるWhisper provider例は、video_editor内に実providerが実装済みであることを意味しません。現在の実行経路は、main processがversioned local worker contractを介して`clip_automation/spectra_caption_worker.py`を起動する方式です。
+
+- video_editorからclip_automation Python moduleを直接importしない。
+- rendererから任意commandを受け取らず、main processがworkerを解決して`shell:false`で起動する。
+- `faster-whisper`と既存`caption.py`の実行はworker側の責務。
+- self-contained portable auto-captionは未達。worker root、Python、依存、Whisper modelの環境が必要。
+- raw word truthは保存するが、文字単位fine acoustic alignmentは未提供。
+
+実装と受入結果は`docs/AUTO_CAPTION_WORKER_CONTRACT.md`を参照する。

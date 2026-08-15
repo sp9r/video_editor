@@ -5,6 +5,9 @@
 > [!IMPORTANT]
 > 現在は **0.1.0 実用アルファの開発途中** です。編集UI、非破壊プロジェクト、FFmpeg書き出し、GPU自動検査、CPUフォールバック、AI拡張基盤まで実装されていますが、Premiere Pro / DaVinci Resolve / Final Cut Proと全機能・全性能が同等の完成版ではありません。現在地点と未完了項目は [HANDOFF.md](./HANDOFF.md) を確認してください。
 
+> [!NOTE]
+> Stage 9時点のHuman Review向けvertical slice（動画選択 → 実Whisper自動字幕 → 手動修正 → 保存／再開 → 全文修正差分 → Review Mode → 書き出し）は、生成QAメディアで受入済みです。これはself-contained portable auto-captionを意味しません。自動字幕には、設定・環境変数・兄弟repo discoveryで解決できる`clip_automation` workerと、そのPython環境・Whisper modelが必要です。fine acoustic alignmentは提供しておらず、現状は手動修正可能な推定編集境界として扱います。
+
 ## 現在実装されているもの
 
 - Electron + React + TypeScriptによる独自デスクトップUI
@@ -22,6 +25,12 @@
 - GPU失敗時の`libx264` CPUフォールバック
 - 一時出力、進捗、キャンセル、ffprobe＋先頭／末尾デコード検証
 - Whisper、ローカルLLM、OpenAI互換API、将来のCodex連携を追加できるAI provider基盤
+
+## Stage 9 Human Review readiness
+
+「自動字幕」は、選択した単一の映像／音声clipについて、main processがsource rangeを外部versioned workerへ送り、`caption.py`再利用結果をProject Modelへ一括適用します。worker未発見、model不足、cancel、timeout、不正resultではProjectを変更しません。生成後はSubtitleWord（raw source identity）とSubtitleEditUnit（編集用derived boundary）を使ってRazor、merge、ownership drag、discrete snap、Undo/Redo、Inspector編集ができます。
+
+全文修正では`experimental.auto-caption-baseline.v1`をbefore truthとして、修正完了時にwhole-track diffを保存します。既存のA/B/C/D Review Modeとは別workflowです。詳細は[Auto Caption Worker Contract](./docs/AUTO_CAPTION_WORKER_CONTRACT.md)、[Vertical Slice](./docs/AUTO_CAPTION_VERTICAL_SLICE.md)、[Full Correction Review](./docs/FULL_CORRECTION_REVIEW.md)を参照してください。
 
 ## 開発環境で起動する
 
