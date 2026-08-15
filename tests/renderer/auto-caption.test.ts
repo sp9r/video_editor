@@ -87,6 +87,35 @@ describe('automatic caption insertion', () => {
     expect(startAutoCaption).toHaveBeenCalledWith(expect.anything(), ['auto-caption-video'], { language: 'ja', maxChars: 40, maxLines: 3, segmentationMode: 'rule', subtitleTemplate: template.id })
   })
 
+  it('reconciles a completed result from main-process status when the push event was missed', async () => {
+    let project = { ...createEmptyProject('auto caption status recovery'), media: [asset] }
+    const video = { ...createClipForAsset(asset, 0, 4_000_000), id: 'auto-caption-status-video' }
+    project = addClipToTrack(project, project.tracks.find((track) => track.kind === 'media')!.id, video)
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip(video.id)
+    const jobId = 'caption-job-status-recovery'
+    const result = {
+      version: 'spectra.auto-caption.result.v1' as const, jobId, sourceStartUs: 0, sourceEndUs: 4_000_000,
+      language: 'ja', provider: 'test', model: 'test',
+      rawWords: [{ id: 'status-word', text: '復旧', startUs: 500_000, endUs: 1_000_000 }],
+      captions: [{ id: 'status-caption', text: '復旧', sourceWordIds: ['status-word'], startUs: 500_000, endUs: 1_000_000, textStatus: 'as_transcribed' as const, provenance: 'caption_algorithm' as const }],
+      diagnostics: [], fallback: { used: false }
+    }
+    const startAutoCaption = vi.fn().mockResolvedValue({ jobId, clipId: video.id })
+    const getAutoCaptionStatus = vi.fn().mockResolvedValue({
+      jobId, clipId: video.id,
+      progress: { version: 'spectra.auto-caption.progress.v1' as const, jobId, state: 'completed' as const, ratio: 1, message: '完了', result }
+    })
+    window.spectra = {
+      autoCaptionHealth: vi.fn().mockResolvedValue({ available: true, checkedAt: new Date().toISOString(), provider: 'clip_automation' }),
+      startAutoCaption, getAutoCaptionStatus, onAutoCaptionProgress: vi.fn(() => () => undefined)
+    } as unknown as DesktopApi
+
+    await useEditorStore.getState().autoCaptionSelected()
+    expect(getAutoCaptionStatus).toHaveBeenCalledWith(jobId)
+    expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).some((clip) => clip.kind === 'subtitle' && clip.sourceJobId === jobId)).toBe(true)
+  })
+
   it('protects existing captions and names reruns independently', async () => {
     let project = { ...createEmptyProject('auto caption rerun'), media: [asset] }
     const video = { ...createClipForAsset(asset, 0, 4_000_000), id: 'auto-caption-video-rerun' }
@@ -182,6 +211,7 @@ describe('automatic caption insertion', () => {
     await useEditorStore.getState().autoCaptionSelected()
     expect(useEditorStore.getState().project).toEqual(before)
     expect(useEditorStore.getState().past).toHaveLength(0)
+    expect(useEditorStore.getState().notice?.message).toContain('WORKER_FAILED')
   })
 
   it('keeps the project unchanged when a started job is cancelled', async () => {

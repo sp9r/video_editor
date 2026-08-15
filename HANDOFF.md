@@ -469,3 +469,10 @@ Phase 5、planning、highlight、publishing、mass Human Review、caption algori
 - built-in catalogを3件へ整理した。`default`＝標準、`high-contrast`＝白文字・黒縁、`minimal`＝大きめ強調。`minimal`のIDは既存設定互換のため維持し、built-inはimmutableのまま。
 - 1920×1080、日本語2行の各templateをFFmpeg/libass経路で実レンダリングし、visible pixels・白glyph・大きめtemplateのglyph高さを確認するintegration testを追加。
 - `npm.cmd run check` 48 files / 266 tests、build、Electron startup PASS。詳細は[`docs/STAGE_15_BUILTIN_SUBTITLE_TEMPLATES.md`](docs/STAGE_15_BUILTIN_SUBTITLE_TEMPLATES.md)。
+
+## 2026-08-16 NIGHT 03 Auto Processing Worker Result Lifecycle Hardening
+
+- workerの`completed`通知を結果artifactの成功とは扱わず、main processがresult・baseline・silence artifactを検証した後に一度だけterminal completionを発行するようにした。workerのlate progress、stale job、double completionを無視する。
+- 検証済みterminal statusを15分間main processへ保持し、`auto-caption:status` IPCとrenderer側の一回限りの再照合を追加した。renderer callbackが閉じた、busy、reloadされた場合もProject apply前のcompleted resultを取り逃さない。cancel後・stale failureはProjectを変更しない。
+- failureにはsafeなphase/diagnosticを付け、worker・result validation・baseline・silence validationのどこで止まったかをUI/診断で追跡できるようにした。GUI再実行では生成QA mediaで無音解析、非破壊分割、字幕track配置まで完了した。
+- video_editorは対象19 tests、full serial 48 files / 270 tests、typecheck、build、Electron startup smoke PASS。

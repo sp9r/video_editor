@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { addClipToTrack, createClipForAsset, createEmptyProject } from '../../src/shared/project'
 import { loadAutoCaptionBaselines } from '../../src/main/ai/auto-caption-baseline'
 import { AutoCaptionService } from '../../src/main/ai/auto-caption-service'
@@ -211,6 +211,35 @@ describe('auto-caption worker discovery and service', () => {
     expect(terminal.silenceAnalysis?.settings.fillerRemoval).toBe(false)
     expect(terminal.silenceAnalysis?.silences[0]?.startUs).toBe(20_200_000)
     expect(JSON.stringify(terminal)).not.toContain(root)
+  })
+
+  it('retains the validated terminal result when the renderer disappears and ignores stale/late completion signals', async () => {
+    const root = await makeTemp('lifecycle-retained')
+    const media = path.join(root, 'source.mp4')
+    await writeFile(media, 'fixture', 'utf8')
+    const fixture = makeProject(media)
+    const executor = async (request: CommandRequest): Promise<CommandResult> => {
+      const requestPath = request.args[request.args.indexOf('--request') + 1]!
+      const outputPath = request.args[request.args.indexOf('--output') + 1]!
+      const payload = JSON.parse(await readFile(requestPath, 'utf8')) as { jobId: string }
+      await writeFile(outputPath, JSON.stringify(resultFor(payload.jobId)), 'utf8')
+      request.onStdout?.([
+        JSON.stringify({ version: 'spectra.auto-caption.progress.v1', jobId: 'stale-job', state: 'failed', ratio: 0, message: 'stale' }),
+        JSON.stringify({ version: 'spectra.auto-caption.progress.v1', jobId: payload.jobId, state: 'completed', ratio: 1, message: 'worker completed' }),
+        JSON.stringify({ version: 'spectra.auto-caption.progress.v1', jobId: payload.jobId, state: 'segmenting', ratio: 0.9, message: 'late progress' })
+      ].join('\n') + '\n')
+      return { command: request.command, args: request.args, exitCode: 0, stdout: '', stderr: '' }
+    }
+    const service = new AutoCaptionService({ appPath: root, userDataPath: root, executor: { run: executor }, discover: async () => discovery(root) })
+    const events: string[] = []
+    const started = await service.start({ project: fixture.project, selectedClipIds: ['clip-1'], onProgress: (event) => { events.push(event.state); if (event.state === 'completed') throw new Error('renderer closed') } })
+    await vi.waitFor(async () => expect(service.status(started.jobId)?.progress.state).toBe('completed'))
+    const retained = service.status(started.jobId)
+    expect(events.filter((state) => state === 'completed')).toHaveLength(1)
+    expect(events).not.toContain('failed')
+    expect(retained?.progress.state).toBe('completed')
+    expect(retained?.progress.result?.jobId).toBe(started.jobId)
+    expect(service.cancel(started.jobId)).toBe(false)
   })
 
   it.each([

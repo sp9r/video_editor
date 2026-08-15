@@ -192,6 +192,12 @@ const registerIpcHandlers = (): void => {
     return requireAutoCaptionService().cancel(jobId)
   })
 
+  ipcMain.handle(IPC.autoCaptionStatus, (event, jobId: unknown) => {
+    assertTrustedSender(event)
+    if (typeof jobId !== 'string' || jobId.length > 200) return null
+    return requireAutoCaptionService().status(jobId)
+  })
+
   ipcMain.handle(IPC.autoCaptionBaselinesLoad, async (event) => {
     assertTrustedSender(event)
     return loadAutoCaptionBaselines(app.getPath('userData'))

@@ -352,6 +352,12 @@ export interface AutoCaptionStartResult {
   clipId: string
 }
 
+export interface AutoCaptionJobStatus {
+  jobId: string
+  clipId: string
+  progress: AutoCaptionProgress
+}
+
 export interface AutoCaptionBaselineLoadResult {
   records: AutoCaptionBaseline[]
   malformedCount: number
@@ -377,6 +383,7 @@ export interface DesktopApi {
   autoCaptionHealth(): Promise<AutoCaptionHealth>
   startAutoCaption(project: ProjectFile, selectedClipIds: string[], settings?: AutoCaptionSettings): Promise<AutoCaptionStartResult>
   cancelAutoCaption(jobId: string): Promise<boolean>
+  getAutoCaptionStatus(jobId: string): Promise<AutoCaptionJobStatus | null>
   loadAutoCaptionBaselines(): Promise<AutoCaptionBaselineLoadResult>
   loadSubtitleTemplates(): Promise<SubtitleTemplateLoadResult>
   setDefaultSubtitleTemplate(id: string): Promise<SubtitleTemplateLoadResult>

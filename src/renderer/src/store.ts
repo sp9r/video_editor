@@ -265,12 +265,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             if (progress.state === 'completed' || progress.state === 'failed') terminalBeforeStart = progress
             return
           }
-          set({ autoCaptionProgress: progress })
           if (settled) return
+          set({ autoCaptionProgress: progress })
           if (progress.state === 'failed') {
             settled = true
             unsubscribe()
-            reject(new Error(progress.errorCode === 'CANCELLED' ? '自動字幕をキャンセルしました。' : progress.message))
+            reject(new Error(progress.errorCode === 'CANCELLED'
+              ? '自動字幕をキャンセルしました。'
+              : `${progress.message} (${progress.errorCode ?? 'WORKER_FAILED'})`))
           } else if (progress.state === 'completed' && progress.result) {
             settled = true
             unsubscribe()
@@ -281,15 +283,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           ? window.spectra!.startAutoCaption(project, selectedIds, settings)
           : window.spectra!.startAutoCaption(project, selectedIds)
         void start.then(
-          (started) => {
+          async (started) => {
             startedJobId = started.jobId
             set({ autoCaptionJobId: started.jobId })
-            if (terminalBeforeStart && !settled) {
-              const terminal = terminalBeforeStart
+            // IPC progress is a push notification. Reconcile once through
+            // main-process state as well, so a completed result is not lost
+            // when the renderer was busy, reloaded, or briefly absent.
+            let terminal = terminalBeforeStart
+            if (!terminal && typeof window.spectra?.getAutoCaptionStatus === 'function') {
+              try {
+                terminal = (await window.spectra.getAutoCaptionStatus(started.jobId))?.progress
+              } catch {
+                // The push subscription remains authoritative while the job
+                // is running; a transient status query failure is retry-safe.
+              }
+            }
+            if (terminal && terminal.jobId === started.jobId && !settled) {
               if (terminal.state === 'failed') {
                 settled = true
                 unsubscribe()
-                reject(new Error(terminal.errorCode === 'CANCELLED' ? '自動字幕をキャンセルしました。' : terminal.message))
+                reject(new Error(terminal.errorCode === 'CANCELLED'
+                  ? '自動字幕をキャンセルしました。'
+                  : `${terminal.message} (${terminal.errorCode ?? 'WORKER_FAILED'})`))
               } else if (terminal.result) {
                 settled = true
                 unsubscribe()
@@ -344,8 +359,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   cancelAutoCaption: async () => {
     const jobId = get().autoCaptionJobId
     if (!jobId || !window.spectra) return
-    await window.spectra.cancelAutoCaption(jobId)
-    set((state) => ({ autoCaptionProgress: state.autoCaptionProgress ? { ...state.autoCaptionProgress, message: 'キャンセル中…' } : null }))
+    const requested = await window.spectra.cancelAutoCaption(jobId)
+    if (requested) set((state) => ({ autoCaptionProgress: state.autoCaptionProgress ? { ...state.autoCaptionProgress, message: 'キャンセル中…' } : null }))
   },
   setUserSubtitleTemplates: (templates) => set({ userSubtitleTemplates: structuredClone(templates) }),
   setDefaultSubtitleTemplateId: (id) => set({ defaultSubtitleTemplateId: id }),

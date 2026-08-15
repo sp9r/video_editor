@@ -17,6 +17,7 @@ export const IPC = {
   autoCaptionHealth: 'auto-caption:health',
   autoCaptionStart: 'auto-caption:start',
   autoCaptionCancel: 'auto-caption:cancel',
+  autoCaptionStatus: 'auto-caption:status',
   autoCaptionProgress: 'auto-caption:progress',
   autoCaptionBaselinesLoad: 'auto-caption:baselines-load',
   subtitleTemplatesLoad: 'subtitle-templates:load',

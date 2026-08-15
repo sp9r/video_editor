@@ -12,7 +12,7 @@ import {
   type AutoCaptionResult,
   type AutoCaptionSettings
 } from '../../shared/auto-caption-contract.js'
-import type { AutoCaptionHealth, AutoCaptionStartResult, ProjectFile, TimelineClip } from '../../shared/types.js'
+import type { AutoCaptionHealth, AutoCaptionJobStatus, AutoCaptionStartResult, ProjectFile, TimelineClip } from '../../shared/types.js'
 import { defaultProcessExecutor, type ProcessExecutor } from '../ffmpeg/process.js'
 import { discoverAutoCaptionWorker, type AutoCaptionWorkerDiscovery } from './worker-discovery.js'
 import { saveAutoCaptionBaseline } from './auto-caption-baseline.js'
@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS: AutoCaptionSettings = {
 const DEFAULT_TIMEOUT_MS = 6 * 60 * 60 * 1000
 const MAX_PROGRESS_BYTES = 8 * 1024 * 1024
 const MAX_RESULT_BYTES = 64 * 1024 * 1024
+const TERMINAL_RETENTION_MS = 15 * 60 * 1000
 const PATH_VALUE = /(?:[A-Za-z]:[\\/]|\\\\|\/(?:Users|home|private|tmp|var)\/)/
 
 export interface AutoCaptionProgressEvent extends AutoCaptionProgress {
@@ -33,6 +34,10 @@ export interface AutoCaptionProgressEvent extends AutoCaptionProgress {
 interface ActiveJob {
   controller: AbortController
   clipId: string
+}
+
+interface RetainedJob extends AutoCaptionJobStatus {
+  expiresAt: number
 }
 
 export interface AutoCaptionServiceOptions {
@@ -73,6 +78,7 @@ export class AutoCaptionService {
   private readonly executor: ProcessExecutor
   private readonly timeoutMs: number
   private readonly active = new Map<string, ActiveJob>()
+  private readonly retained = new Map<string, RetainedJob>()
   private readonly discover: DiscoverWorker
 
   constructor(private readonly options: AutoCaptionServiceOptions) {
@@ -131,6 +137,16 @@ export class AutoCaptionService {
     return true
   }
 
+  status(jobId: string): AutoCaptionJobStatus | null {
+    const retained = this.retained.get(jobId)
+    if (!retained) return null
+    if (retained.expiresAt <= Date.now()) {
+      this.retained.delete(jobId)
+      return null
+    }
+    return { jobId: retained.jobId, clipId: retained.clipId, progress: structuredClone(retained.progress) }
+  }
+
   private async runJob({
     jobId,
     project,
@@ -165,8 +181,22 @@ export class AutoCaptionService {
     let progressBuffer = ''
     let progressBytes = 0
     let malformedProgress = false
+    let terminalEmitted = false
+    let workerFailure: AutoCaptionProgress | undefined
+    let phase = 'workspace'
     const emit = (progress: AutoCaptionProgressEvent): void => {
-      onProgress({ ...progress, message: safeMessage(progress.message) })
+      if (terminalEmitted) return
+      const safeProgress = { ...progress, message: safeMessage(progress.message) }
+      if (safeProgress.state === 'completed' || safeProgress.state === 'failed') {
+        terminalEmitted = true
+        this.retained.set(jobId, { jobId, clipId: clip.id, progress: safeProgress, expiresAt: Date.now() + TERMINAL_RETENTION_MS })
+      }
+      try {
+        onProgress(safeProgress)
+      } catch {
+        // A renderer may have closed while the worker was still running. The
+        // retained terminal status remains available through status().
+      }
     }
     const consumeProgress = (chunk: string): void => {
       progressBytes += Buffer.byteLength(chunk, 'utf8')
@@ -182,7 +212,14 @@ export class AutoCaptionService {
         if (!line.trim()) continue
         try {
           const progress = parseAutoCaptionProgress(JSON.parse(line))
-          if (progress.jobId !== jobId || progress.version !== AUTO_CAPTION_PROGRESS_VERSION) throw new Error('progress identity mismatch')
+          if (progress.jobId !== jobId || progress.version !== AUTO_CAPTION_PROGRESS_VERSION) continue
+          // A worker's completed line is only a signal. The service emits the
+          // terminal completion after the result artifact has been validated.
+          if (progress.state === 'completed') continue
+          if (progress.state === 'failed') {
+            workerFailure = progress
+            continue
+          }
           emit(progress)
         } catch {
           malformedProgress = true
@@ -191,6 +228,7 @@ export class AutoCaptionService {
       }
     }
     try {
+      phase = 'workspace'
       workspace = await mkdtemp(path.join(os.tmpdir(), 'spectra-auto-caption-'))
       requestPath = path.join(workspace, 'request.json')
       resultPath = path.join(workspace, 'result.json')
@@ -198,6 +236,7 @@ export class AutoCaptionService {
       await writeFile(requestPath, `${JSON.stringify(request)}\n`, 'utf8')
       const args = [discovery.scriptPath, '--request', requestPath, '--output', resultPath, '--acceleration-mode', settings.accelerationMode ?? 'auto']
       if (discovery.parallel && settings.silenceCut !== 'off') args.push('--silence-output', silencePath)
+      phase = 'worker'
       await this.executor.run({
         command: discovery.command,
         args,
@@ -210,25 +249,38 @@ export class AutoCaptionService {
       if (progressBuffer.trim()) consumeProgress(`${progressBuffer}\n`)
       if (malformedProgress) throw new Error('malformed progress')
       if (controller.signal.aborted) throw new Error('cancelled')
+      if (workerFailure) throw new Error(workerFailure.errorCode ?? 'worker reported failure')
+      phase = 'result_validation'
       const resultStat = await stat(resultPath)
       if (!resultStat.isFile() || resultStat.size <= 0 || resultStat.size > MAX_RESULT_BYTES) throw new Error('invalid result size')
       const result = parseAutoCaptionResult(JSON.parse(await readFile(resultPath, 'utf8')))
       if (result.jobId !== jobId || result.sourceStartUs !== clip.sourceInUs || result.sourceEndUs !== clip.sourceInUs + clip.durationUs) throw new Error('result identity or range mismatch')
       assertSafeDiagnostics(result)
+      phase = 'baseline'
       await saveAutoCaptionBaseline({ userDataPath: this.options.userDataPath, project, mediaPath, clip, result, settings })
       let silenceAnalysis: AutoCaptionSilenceAnalysis | undefined
       if (discovery.parallel && settings.silenceCut !== 'off') {
+        phase = 'silence_validation'
         const silenceStat = await stat(silencePath)
         if (!silenceStat.isFile() || silenceStat.size <= 0 || silenceStat.size > MAX_RESULT_BYTES) throw new Error('invalid silence result size')
         silenceAnalysis = parseAutoCaptionSilenceAnalysis(JSON.parse(await readFile(silencePath, 'utf8')))
         assertSafeSilenceAnalysis(silenceAnalysis)
       }
+      phase = 'terminal_publish'
       emit({ version: AUTO_CAPTION_PROGRESS_VERSION, jobId, state: 'completed', ratio: 1, message: '自動字幕を完了しました。', result, ...(silenceAnalysis ? { silenceAnalysis } : {}) })
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
       const malformedResult = /result|JSON|Unexpected token|unsafe worker|identity|source range/i.test(message)
-      const errorCode = malformedProgress ? 'MALFORMED_OUTPUT' : controller.signal.aborted || message === 'cancelled' ? 'CANCELLED' : message.includes('timed out') ? 'TIMEOUT' : malformedResult ? 'MALFORMED_OUTPUT' : 'WORKER_FAILED'
-      emit({ version: AUTO_CAPTION_PROGRESS_VERSION, jobId, state: 'failed', ratio: 0, message: errorCode === 'CANCELLED' ? '自動字幕をキャンセルしました。' : '自動字幕を完了できませんでした。', errorCode })
+      const errorCode = malformedProgress ? 'MALFORMED_OUTPUT' : controller.signal.aborted || message === 'cancelled' ? 'CANCELLED' : workerFailure?.errorCode ?? (message.includes('timed out') ? 'TIMEOUT' : malformedResult ? 'MALFORMED_OUTPUT' : 'WORKER_FAILED')
+      emit({
+        version: AUTO_CAPTION_PROGRESS_VERSION,
+        jobId,
+        state: 'failed',
+        ratio: 0,
+        message: errorCode === 'CANCELLED' ? '自動字幕をキャンセルしました。' : `自動字幕を完了できませんでした。（${phase}）`,
+        errorCode,
+        diagnostics: errorCode === 'CANCELLED' ? undefined : [{ level: 'error', code: `AUTO_CAPTION_${phase.toUpperCase()}`, message: `failure phase=${phase}; reason=${safeMessage(message).slice(0, 200) || 'unknown'}` }]
+      })
     } finally {
       this.active.delete(jobId)
       if (workspace) await rm(workspace, { recursive: true, force: true }).catch(() => undefined)
