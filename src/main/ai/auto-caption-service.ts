@@ -6,6 +6,8 @@ import {
   AUTO_CAPTION_PROGRESS_VERSION,
   parseAutoCaptionProgress,
   parseAutoCaptionResult,
+  parseAutoCaptionSilenceAnalysis,
+  type AutoCaptionSilenceAnalysis,
   type AutoCaptionProgress,
   type AutoCaptionResult,
   type AutoCaptionSettings
@@ -48,6 +50,10 @@ const assertSafeDiagnostics = (result: AutoCaptionResult): void => {
   if (PATH_VALUE.test(result.provider) || PATH_VALUE.test(result.model)) throw new Error('unsafe worker metadata')
   for (const diagnostic of result.diagnostics) if (PATH_VALUE.test(diagnostic.message)) throw new Error('unsafe worker diagnostic')
   if (result.fallback.reason && PATH_VALUE.test(result.fallback.reason)) throw new Error('unsafe worker fallback')
+}
+
+const assertSafeSilenceAnalysis = (analysis: AutoCaptionSilenceAnalysis): void => {
+  for (const diagnostic of analysis.diagnostics) if (PATH_VALUE.test(diagnostic.message)) throw new Error('unsafe silence diagnostic')
 }
 
 const selectedClip = (project: ProjectFile, selectedClipIds: readonly string[]): Extract<TimelineClip, { kind: 'video' | 'audio' }> => {
@@ -143,6 +149,7 @@ export class AutoCaptionService {
     let workspace: string | undefined
     let requestPath = ''
     let resultPath = ''
+    let silencePath = ''
     const request = {
       version: 'spectra.auto-caption.request.v1',
       jobId,
@@ -183,10 +190,13 @@ export class AutoCaptionService {
       workspace = await mkdtemp(path.join(os.tmpdir(), 'spectra-auto-caption-'))
       requestPath = path.join(workspace, 'request.json')
       resultPath = path.join(workspace, 'result.json')
+      silencePath = path.join(workspace, 'silence_analysis.json')
       await writeFile(requestPath, `${JSON.stringify(request)}\n`, 'utf8')
+      const args = [discovery.scriptPath, '--request', requestPath, '--output', resultPath]
+      if (discovery.parallel) args.push('--silence-output', silencePath)
       await this.executor.run({
         command: discovery.command,
-        args: [discovery.scriptPath, '--request', requestPath, '--output', resultPath],
+        args,
         cwd: discovery.root,
         signal: controller.signal,
         timeoutMs: this.timeoutMs,
@@ -202,7 +212,14 @@ export class AutoCaptionService {
       if (result.jobId !== jobId || result.sourceStartUs !== clip.sourceInUs || result.sourceEndUs !== clip.sourceInUs + clip.durationUs) throw new Error('result identity or range mismatch')
       assertSafeDiagnostics(result)
       await saveAutoCaptionBaseline({ userDataPath: this.options.userDataPath, project, mediaPath, clip, result, settings })
-      emit({ version: AUTO_CAPTION_PROGRESS_VERSION, jobId, state: 'completed', ratio: 1, message: '自動字幕を完了しました。', result })
+      let silenceAnalysis: AutoCaptionSilenceAnalysis | undefined
+      if (discovery.parallel) {
+        const silenceStat = await stat(silencePath)
+        if (!silenceStat.isFile() || silenceStat.size <= 0 || silenceStat.size > MAX_RESULT_BYTES) throw new Error('invalid silence result size')
+        silenceAnalysis = parseAutoCaptionSilenceAnalysis(JSON.parse(await readFile(silencePath, 'utf8')))
+        assertSafeSilenceAnalysis(silenceAnalysis)
+      }
+      emit({ version: AUTO_CAPTION_PROGRESS_VERSION, jobId, state: 'completed', ratio: 1, message: '自動字幕を完了しました。', result, ...(silenceAnalysis ? { silenceAnalysis } : {}) })
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
       const malformedResult = /result|JSON|Unexpected token|unsafe worker|identity|source range/i.test(message)

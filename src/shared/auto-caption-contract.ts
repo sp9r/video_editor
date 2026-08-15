@@ -28,7 +28,28 @@ export interface AutoCaptionSettings {
   segmentationMode: SegmentationMode
 }
 
-export type AutoCaptionProgressState = 'preparing' | 'transcribing' | 'segmenting' | 'completed' | 'failed'
+export type AutoCaptionProgressState = 'preparing' | 'transcribing' | 'silence_analyzing' | 'segmenting' | 'completed' | 'failed'
+
+export interface AutoCaptionSilenceAnalysis {
+  silences: Array<{
+    startUs: number
+    endUs: number
+    durationUs: number
+    removedRanges?: Array<{ startUs: number; endUs: number; durationUs: number }>
+    speechProtected?: boolean
+  }>
+  keepRanges: Array<{ startUs: number; endUs: number; durationUs: number }>
+  removedDurationUs: number
+  settings: {
+    profile: string
+    minSilenceUs: number
+    retainPauseUs: number
+    noiseDb: number
+    speechProtectionUs: number
+    fillerRemoval: false
+  }
+  diagnostics: AutoCaptionDiagnostic[]
+}
 
 export interface AutoCaptionProgress {
   version: typeof AUTO_CAPTION_PROGRESS_VERSION
@@ -37,6 +58,8 @@ export interface AutoCaptionProgress {
   ratio: number
   message: string
   errorCode?: string
+  diagnostics?: AutoCaptionDiagnostic[]
+  silenceAnalysis?: AutoCaptionSilenceAnalysis
   result?: AutoCaptionResult
 }
 
@@ -222,6 +245,60 @@ const parseDiagnostics = (value: unknown): AutoCaptionDiagnostic[] => {
   })
 }
 
+const parseSilenceRange = (value: unknown, label: string): { startUs: number; endUs: number; durationUs: number } => {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`)
+  assertKeys(value, ['startUs', 'endUs', 'durationUs'], label)
+  const startUs = integerUs(own(value, 'startUs'), `${label}.startUs`)
+  const endUs = integerUs(own(value, 'endUs'), `${label}.endUs`)
+  const durationUs = integerUs(own(value, 'durationUs'), `${label}.durationUs`)
+  if (endUs <= startUs || durationUs !== endUs - startUs) throw new Error(`${label} has invalid timing`)
+  return { startUs, endUs, durationUs }
+}
+
+const parseSilenceAnalysis = (value: unknown): AutoCaptionSilenceAnalysis => {
+  if (!isRecord(value)) throw new Error('silenceAnalysis must be an object')
+  assertNoForbiddenFields(value, 'silenceAnalysis')
+  assertKeys(value, ['silences', 'keepRanges', 'removedDurationUs', 'settings', 'diagnostics'], 'silenceAnalysis')
+  const silences = own(value, 'silences')
+  const keepRanges = own(value, 'keepRanges')
+  if (!Array.isArray(silences) || !Array.isArray(keepRanges)) throw new Error('silenceAnalysis ranges must be arrays')
+  const parsedSilences = silences.map((item, index) => {
+    if (!isRecord(item)) throw new Error(`silences[${index}] must be an object`)
+    assertKeys(item, ['startUs', 'endUs', 'durationUs', 'removedRanges', 'speechProtected'], `silences[${index}]`)
+    const base = parseSilenceRange({ startUs: item.startUs, endUs: item.endUs, durationUs: item.durationUs }, `silences[${index}]`)
+    const removedRanges = item.removedRanges === undefined ? undefined : (() => {
+      if (!Array.isArray(item.removedRanges)) throw new Error(`silences[${index}].removedRanges must be an array`)
+      return item.removedRanges.map((range, rangeIndex) => parseSilenceRange(range, `silences[${index}].removedRanges[${rangeIndex}]`))
+    })()
+    if (item.speechProtected !== undefined && typeof item.speechProtected !== 'boolean') throw new Error(`silences[${index}].speechProtected is invalid`)
+    return { ...base, ...(removedRanges ? { removedRanges } : {}), ...(item.speechProtected === undefined ? {} : { speechProtected: item.speechProtected }) }
+  })
+  const parsedKeepRanges = keepRanges.map((item, index) => parseSilenceRange(item, `keepRanges[${index}]`))
+  const removedDurationUs = integerUs(own(value, 'removedDurationUs'), 'silenceAnalysis.removedDurationUs')
+  const settings = own(value, 'settings')
+  if (!isRecord(settings)) throw new Error('silenceAnalysis.settings must be an object')
+  assertKeys(settings, ['profile', 'minSilenceUs', 'retainPauseUs', 'noiseDb', 'speechProtectionUs', 'fillerRemoval'], 'silenceAnalysis.settings')
+  if (settings.fillerRemoval !== false) throw new Error('silenceAnalysis.settings.fillerRemoval must be false')
+  const noiseDb = settings.noiseDb
+  if (typeof noiseDb !== 'number' || !Number.isFinite(noiseDb)) throw new Error('silenceAnalysis.settings.noiseDb is invalid')
+  return {
+    silences: parsedSilences,
+    keepRanges: parsedKeepRanges,
+    removedDurationUs,
+    settings: {
+      profile: requiredString(own(settings, 'profile'), 'silenceAnalysis.settings.profile', 32),
+      minSilenceUs: integerUs(own(settings, 'minSilenceUs'), 'silenceAnalysis.settings.minSilenceUs'),
+      retainPauseUs: integerUs(own(settings, 'retainPauseUs'), 'silenceAnalysis.settings.retainPauseUs'),
+      noiseDb,
+      speechProtectionUs: integerUs(own(settings, 'speechProtectionUs'), 'silenceAnalysis.settings.speechProtectionUs'),
+      fillerRemoval: false
+    },
+    diagnostics: parseDiagnostics(own(value, 'diagnostics'))
+  }
+}
+
+export const parseAutoCaptionSilenceAnalysis = (value: unknown): AutoCaptionSilenceAnalysis => parseSilenceAnalysis(value)
+
 const parseFallback = (value: unknown): AutoCaptionFallback => {
   if (!isRecord(value)) throw new Error('fallback must be an object')
   assertKeys(value, ['used', 'reason'], 'fallback')
@@ -283,20 +360,24 @@ export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
 
 export const parseAutoCaptionProgress = (input: unknown): AutoCaptionProgress => {
   if (!isRecord(input)) throw new Error('auto-caption progress must be an object')
-  assertKeys(input, ['version', 'jobId', 'state', 'ratio', 'message', 'errorCode'], 'auto-caption progress')
+  assertKeys(input, ['version', 'jobId', 'state', 'ratio', 'message', 'errorCode', 'diagnostics', 'silenceAnalysis'], 'auto-caption progress')
   if (own(input, 'version') !== AUTO_CAPTION_PROGRESS_VERSION) throw new Error('unsupported auto-caption progress version')
   const state = requiredString(own(input, 'state'), 'progress.state', 32) as AutoCaptionProgressState
-  if (!['preparing', 'transcribing', 'segmenting', 'completed', 'failed'].includes(state)) throw new Error('progress.state is invalid')
+  if (!['preparing', 'transcribing', 'silence_analyzing', 'segmenting', 'completed', 'failed'].includes(state)) throw new Error('progress.state is invalid')
   const ratio = own(input, 'ratio')
   if (typeof ratio !== 'number' || !Number.isFinite(ratio) || ratio < 0 || ratio > 1) throw new Error('progress.ratio is invalid')
   const errorCode = input.errorCode === undefined ? undefined : identifier(input.errorCode, 'progress.errorCode')
+  const diagnostics = input.diagnostics === undefined ? undefined : parseDiagnostics(input.diagnostics)
+  const silenceAnalysis = input.silenceAnalysis === undefined ? undefined : parseSilenceAnalysis(input.silenceAnalysis)
   return {
     version: AUTO_CAPTION_PROGRESS_VERSION,
     jobId: identifier(own(input, 'jobId'), 'progress.jobId'),
     state,
     ratio,
     message: requiredString(own(input, 'message'), 'progress.message', 4096),
-    ...(errorCode ? { errorCode } : {})
+    ...(errorCode ? { errorCode } : {}),
+    ...(diagnostics ? { diagnostics } : {}),
+    ...(silenceAnalysis ? { silenceAnalysis } : {})
   }
 }
 

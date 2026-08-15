@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 
 const WORKER_SCRIPT = 'spectra_caption_worker.py'
+const PARALLEL_WORKER_SCRIPT = 'spectra_auto_processing_worker.py'
 
 export interface AutoCaptionWorkerSettings {
   workerRoot?: string
@@ -12,6 +13,7 @@ export interface AutoCaptionWorkerDiscovery {
   root: string
   scriptPath: string
   command: string
+  parallel?: boolean
 }
 
 export class AutoCaptionWorkerUnavailableError extends Error {
@@ -93,10 +95,13 @@ export const discoverAutoCaptionWorker = async ({
 
   for (const root of roots) {
     const resolvedRoot = path.resolve(root)
-    const scriptPath = path.join(resolvedRoot, WORKER_SCRIPT)
-    if (!(await existingFile(scriptPath))) continue
+    const parallelScriptPath = path.join(resolvedRoot, PARALLEL_WORKER_SCRIPT)
+    const captionScriptPath = path.join(resolvedRoot, WORKER_SCRIPT)
+    const parallel = await existingFile(parallelScriptPath)
+    const scriptPath = parallel ? parallelScriptPath : captionScriptPath
+    if (!parallel && !(await existingFile(captionScriptPath))) continue
     const command = await resolvePython(resolvedRoot, mergedSettings, environment)
-    return { root: resolvedRoot, scriptPath, command }
+    return { root: resolvedRoot, scriptPath, command, ...(parallel ? { parallel: true } : {}) }
   }
   throw new AutoCaptionWorkerUnavailableError()
 }

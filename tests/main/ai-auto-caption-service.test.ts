@@ -174,6 +174,41 @@ describe('auto-caption worker discovery and service', () => {
     expect((await loadAutoCaptionBaselines(root)).malformedCount).toBe(1)
   })
 
+  it('consumes parallel silence analysis without changing the caption result contract', async () => {
+    const root = await makeTemp('parallel-success')
+    const media = path.join(root, 'source.mp4')
+    await writeFile(media, 'generated fixture', 'utf8')
+    const fixture = makeProject(media)
+    const parallelExecutor = async (request: CommandRequest): Promise<CommandResult> => {
+      const outputPath = request.args[request.args.indexOf('--output') + 1]
+      const silencePath = request.args[request.args.indexOf('--silence-output') + 1]
+      const requestPath = request.args[request.args.indexOf('--request') + 1]
+      const payload = JSON.parse(await readFile(requestPath!, 'utf8')) as { jobId: string }
+      await writeFile(outputPath!, JSON.stringify(resultFor(payload.jobId)), 'utf8')
+      await writeFile(silencePath!, JSON.stringify({
+        silences: [{ startUs: 20_200_000, endUs: 20_800_000, durationUs: 600_000, removedRanges: [], speechProtected: false }],
+        keepRanges: [{ startUs: 20_000_000, endUs: 21_000_000, durationUs: 1_000_000 }],
+        removedDurationUs: 600_000,
+        settings: { profile: 'natural', minSilenceUs: 600_000, retainPauseUs: 180_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false },
+        diagnostics: [{ code: 'AUDIO_SIGNAL_AUTHORITY', level: 'info', message: 'signal' }]
+      }), 'utf8')
+      request.onStdout?.(JSON.stringify({ version: 'spectra.auto-caption.progress.v1', jobId: payload.jobId, state: 'silence_analyzing', ratio: 0.5, message: '無音解析中' }) + '\n')
+      return { command: request.command, args: request.args, exitCode: 0, stdout: '', stderr: '' }
+    }
+    const service = new AutoCaptionService({
+      appPath: root,
+      userDataPath: root,
+      executor: { run: parallelExecutor },
+      discover: async () => ({ ...discovery(root), parallel: true })
+    })
+    const run = await runUntilTerminal(service, fixture.project)
+    const terminal = await run.terminal
+    expect(run.events.map((event) => event.state)).toContain('silence_analyzing')
+    expect(terminal.silenceAnalysis?.settings.fillerRemoval).toBe(false)
+    expect(terminal.silenceAnalysis?.silences[0]?.startUs).toBe(20_200_000)
+    expect(JSON.stringify(terminal)).not.toContain(root)
+  })
+
   it.each([
     ['malformed', 'MALFORMED_OUTPUT'], ['oversized', 'MALFORMED_OUTPUT'], ['timeout', 'TIMEOUT'], ['nonzero', 'WORKER_FAILED']
   ] as const)('turns %s into a safe terminal failure', async (mode, errorCode) => {
