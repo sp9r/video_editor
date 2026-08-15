@@ -14,6 +14,7 @@
 
 - 12 test files／54 tests、AMD AMFとCPU `libx264` の実H.264/AAC MP4出力・ffprobe・先頭／末尾decode、Windows x64 package buildを確認した。
 - Subtitle template modelのbuilt-in immutable catalog、userData atomic CRUD、malformed record isolation、contract safe-ID validationを確認した。
+- Subtitle Inspectorのtemplate manager、defaultTemplateIdのmigration-safe persistence、sample preview、built-in保護を確認した。
 
 ### Planned
 

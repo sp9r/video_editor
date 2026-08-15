@@ -441,3 +441,10 @@ Phase 5、planning、highlight、publishing、mass Human Review、caption algori
 - `SubtitleStyle`、`maxChars`、`maxLines`をtemplateへ保存し、Unified Auto Processing dialogから新規保存・複製・更新・削除できる。壊れたrecordは無視し、Editor全体を停止させない。
 - ProjectFileへtemplate絶対pathは保存しない。自動字幕適用時はtemplateのstyleと表示制約を字幕へmaterializeする。`edit_project.v1`のschemaは変更していない。
 - 詳細は[`docs/STAGE_12_SUBTITLE_TEMPLATE_MODEL.md`](docs/STAGE_12_SUBTITLE_TEMPLATE_MODEL.md)。
+
+## 2026-08-16 Stage 13 Subtitle Template UX
+
+- 字幕Inspectorへtemplate managerを追加した。現在の字幕styleを「テンプレートとして保存」でき、適用、複製、名前変更、更新、削除、デフォルト設定、sample previewを利用できる。
+- built-inは変更・削除不可。default IDは`subtitle-templates.v1.json`へ追加保存し、旧store・削除済みuser template・malformed defaultは`default`へ安全にmigrationする。
+- sample previewは共有`SubtitleStyle`のfont、outline、shadow、background等を使い、別のFinal解釈を作らない。ProjectFile/edit_project.v1は変更していない。
+- `npm.cmd run check` 48 files / 262 tests、build、Electron startup、Accurate Preview PASS。詳細は[`docs/STAGE_13_SUBTITLE_TEMPLATE_UX.md`](docs/STAGE_13_SUBTITLE_TEMPLATE_UX.md)。
