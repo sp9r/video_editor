@@ -810,6 +810,12 @@ select {
 .review-neighborhood small { color: var(--text-dim); }
 .review-neighborhood span { overflow-wrap: anywhere; line-height: 1.35; }
 .review-baseline-note, .review-empty { margin: 0; color: var(--text-muted); font-size: 10px; line-height: 1.4; }
+
+.template-save-panel { display: grid; gap: 8px; margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-muted); }
+.template-save-panel h4 { margin: 0; font-size: 12px; }
+.template-style-summary { display: grid; gap: 3px; padding: 8px; border-radius: 6px; background: var(--surface); color: var(--text-muted); font-size: 10px; }
+.template-style-summary strong { color: var(--text); }
+.template-warning { padding: 7px 8px; border-radius: 6px; color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); font-size: 10px; line-height: 1.4; }
 .review-ratings { display: grid; gap: 5px; }
 .review-ratings .button { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 7px; min-height: 31px; padding: 5px 8px; text-align: left; }
 .review-ratings .button b { color: var(--mint); }

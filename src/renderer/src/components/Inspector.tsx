@@ -3,6 +3,8 @@ import { Captions, Image as ImageIcon, SlidersHorizontal, Volume2 } from 'lucide
 import { findSubtitleContext, subtitleWordsMatchText } from '../../../shared/project'
 import { subtitleEditUnits } from '../../../shared/editing/edit-units'
 import type { AudioSettings, SubtitleClip, SubtitleStyle, TimelineClip, TransformSettings } from '../../../shared/types'
+import { applySubtitleTemplateToClip, deriveSubtitleTemplateGeneration } from '../../../shared/subtitle-template-seed'
+import type { SubtitleTemplateCaptionGeneration } from '../../../shared/subtitle-templates'
 import { getSubtitleTemplate, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../../shared/subtitle-templates'
 import { findClip, useEditorStore } from '../store'
 import { Button, EmptyState, Field, NumberField, Section, SelectField } from './Controls'
@@ -113,8 +115,10 @@ function AudioEditor({ clip }: { clip: Extract<TimelineClip, { kind: 'video' | '
 
 function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.Element {
   const {
+    project,
     userSubtitleTemplates,
     defaultSubtitleTemplateId,
+    autoCaptionSettingsSeed,
     setUserSubtitleTemplates,
     setDefaultSubtitleTemplateId,
     patchClip,
@@ -122,21 +126,26 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
     showNotice
   } = useEditorStore()
   const [templateId, setTemplateId] = useState(defaultSubtitleTemplateId)
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false)
+  const [saveName, setSaveName] = useState('字幕テンプレート')
+  const [saveGeneration, setSaveGeneration] = useState<Pick<SubtitleTemplateCaptionGeneration, 'maxChars' | 'maxLines' | 'segmentationMode'>>({ maxChars: 32, maxLines: 2, segmentationMode: 'auto' })
+  const [saveSeedSource, setSaveSeedSource] = useState<'baseline' | 'current'>('current')
   useEffect(() => setTemplateId(defaultSubtitleTemplateId), [defaultSubtitleTemplateId])
 
   const selected = getSubtitleTemplate(templateId, userSubtitleTemplates)
   const selectedUser = userSubtitleTemplates.find((template) => template.id === templateId)
   const isUserTemplate = Boolean(selectedUser)
-  const templateDraft = (name: string, style: SubtitleStyle, source?: UserSubtitleTemplate): SubtitleTemplateDraft => ({
+  const templateGenerationDefaults = (style: SubtitleStyle): SubtitleTemplateCaptionGeneration => ({
+    maxChars: 32,
+    maxLines: 2,
+    segmentationMode: 'auto',
+    layoutConstraints: { maxWidthPercent: style.maxWidthPercent }
+  })
+  const templateDraft = (name: string, style: SubtitleStyle, generation = templateGenerationDefaults(style)): SubtitleTemplateDraft => ({
     name,
     style: structuredClone(style),
-    captionGeneration: structuredClone(source ? {
-      ...source.captionGeneration,
-      layoutConstraints: { maxWidthPercent: style.maxWidthPercent }
-    } : {
-      maxChars: 32,
-      maxLines: 2,
-      segmentationMode: 'auto',
+    captionGeneration: structuredClone({
+      ...generation,
       layoutConstraints: { maxWidthPercent: style.maxWidthPercent }
     })
   })
@@ -153,18 +162,43 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
   }
   const applyTemplate = (): void => {
     if (!selected) return
-    patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, style: structuredClone(selected.style) } : current)
+    patchClip(clip.id, (current) => current.kind === 'subtitle' ? applySubtitleTemplateToClip(current, selected) : current)
     showNotice(`「${'name' in selected ? selected.name : selected.label}」を字幕へ適用しました。`, 'success')
+  }
+  const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle' && track.clips.some((candidate) => candidate.id === clip.id))
+  const mixedStyle = Boolean(subtitleTrack?.clips.some((candidate) => candidate.kind === 'subtitle' && JSON.stringify(candidate.style) !== JSON.stringify(clip.style)))
+  const openSaveDialog = async (): Promise<void> => {
+    const api = getDesktopApi()
+    if (!api) return
+    let lineage: { maxChars?: number; maxLines?: number; segmentationMode?: 'auto' | 'rule' | 'llm' } | undefined
+    if (clip.sourceJobId) {
+      try {
+        const baselines = await api.loadAutoCaptionBaselines()
+        const baseline = baselines.records.find((record) => record.jobId === clip.sourceJobId)
+        if (baseline) lineage = baseline.settings
+      } catch {
+        // A missing/malformed baseline falls back to the current Auto Processing settings.
+      }
+    }
+    const generation = deriveSubtitleTemplateGeneration({ clip, currentSettings: autoCaptionSettingsSeed, lineage })
+    setSaveName('字幕テンプレート')
+    setSaveGeneration({ maxChars: generation.maxChars, maxLines: generation.maxLines, segmentationMode: generation.segmentationMode })
+    setSaveSeedSource(lineage ? 'baseline' : 'current')
+    setSaveDialogOpen(true)
   }
   const saveCurrentAsTemplate = async (): Promise<void> => {
     const api = getDesktopApi()
     if (!api) return
-    const name = window.prompt('テンプレート名', '字幕テンプレート')?.trim()
-    if (!name) return
+    const name = saveName.trim()
+    if (!name) {
+      showNotice('テンプレート名を入力してください。', 'warning')
+      return
+    }
     try {
-      const created = await api.createSubtitleTemplate(templateDraft(name, clip.style, selectedUser))
+      const created = await api.createSubtitleTemplate(templateDraft(name, clip.style, { ...saveGeneration, layoutConstraints: { maxWidthPercent: clip.style.maxWidthPercent } }))
       setUserSubtitleTemplates([...userSubtitleTemplates, created])
       setTemplateId(created.id)
+      setSaveDialogOpen(false)
       showNotice(`「${created.name}」を保存しました。`, 'success')
     } catch {
       showNotice('テンプレートを保存できませんでした。', 'error')
@@ -176,7 +210,7 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
     const name = window.prompt('複製後のテンプレート名', `${'name' in selected ? selected.name : selected.label} copy`)?.trim()
     if (!name) return
     try {
-      const created = await api.duplicateSubtitleTemplate(templateDraft(name, selected.style, 'name' in selected ? selected : undefined))
+      const created = await api.duplicateSubtitleTemplate(templateDraft(name, selected.style, selected.captionGeneration))
       setUserSubtitleTemplates([...userSubtitleTemplates, created])
       setTemplateId(created.id)
       showNotice(`「${created.name}」を複製しました。`, 'success')
@@ -190,7 +224,7 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
     const name = window.prompt('新しいテンプレート名', selectedUser.name)?.trim()
     if (!name || name === selectedUser.name) return
     try {
-      const updated = await api.updateSubtitleTemplate(selectedUser.id, templateDraft(name, selectedUser.style, selectedUser))
+      const updated = await api.updateSubtitleTemplate(selectedUser.id, templateDraft(name, selectedUser.style, selectedUser.captionGeneration))
       setUserSubtitleTemplates(userSubtitleTemplates.map((template) => template.id === updated.id ? updated : template))
       showNotice(`「${updated.name}」へ名前を変更しました。`, 'success')
     } catch {
@@ -201,7 +235,7 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
     const api = getDesktopApi()
     if (!api || !selectedUser) return
     try {
-      const updated = await api.updateSubtitleTemplate(selectedUser.id, templateDraft(selectedUser.name, clip.style, selectedUser))
+      const updated = await api.updateSubtitleTemplate(selectedUser.id, templateDraft(selectedUser.name, clip.style, selectedUser.captionGeneration))
       setUserSubtitleTemplates(userSubtitleTemplates.map((template) => template.id === updated.id ? updated : template))
       showNotice(`「${updated.name}」を現在の字幕styleで更新しました。`, 'success')
     } catch {
@@ -243,7 +277,7 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
           {selected && <div style={templatePreviewStyle(selected.style)}>{TEMPLATE_SAMPLE}</div>}
         </div>
         <div className="template-actions">
-          <Button className="primary-button" onClick={() => void saveCurrentAsTemplate()}>テンプレートとして保存</Button>
+          <Button className="primary-button" onClick={() => void openSaveDialog()}>テンプレートとして保存</Button>
           <Button className="subtle-button" disabled={!selected} title={selected ? '選択中templateを字幕へ適用' : 'templateを選択してください'} onClick={applyTemplate}>適用</Button>
           <Button className="subtle-button" disabled={!selected} title={selected ? '選択中templateを複製' : 'templateを選択してください'} onClick={() => void duplicateTemplate()}>複製</Button>
           <Button className="subtle-button" disabled={!isUserTemplate} title={isUserTemplate ? 'ユーザーtemplateの名前を変更' : '組み込みtemplateは変更できません'} onClick={() => void renameTemplate()}>名前変更</Button>
@@ -256,6 +290,21 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
           applySubtitleStyleToTrack(clip.id, selected.style)
           showNotice(`この字幕track全体へ「${'name' in selected ? selected.name : selected.label}」を適用しました。`, 'success')
         }}>字幕track全体へ適用</Button>
+        {saveDialogOpen && (
+          <div className="template-save-panel" role="dialog" aria-label="字幕からテンプレートを保存">
+            <h4>字幕からテンプレートを保存</h4>
+            <label className="field"><span className="field-label">名前</span><input value={saveName} onChange={(event) => setSaveName(event.target.value)} /></label>
+            <div className="field-grid">
+              <label className="field"><span className="field-label">最大文字数</span><input type="number" min={1} max={10000} value={saveGeneration.maxChars} onChange={(event) => setSaveGeneration((current) => ({ ...current, maxChars: Math.max(1, Math.min(10000, Number(event.target.value) || 1)) }))} /></label>
+              <label className="field"><span className="field-label">最大行数</span><input type="number" min={1} max={16} value={saveGeneration.maxLines} onChange={(event) => setSaveGeneration((current) => ({ ...current, maxLines: Math.max(1, Math.min(16, Number(event.target.value) || 1)) }))} /></label>
+            </div>
+            <label className="field"><span className="field-label">字幕品質</span><select value={saveGeneration.segmentationMode} onChange={(event) => setSaveGeneration((current) => ({ ...current, segmentationMode: event.target.value as SubtitleTemplateCaptionGeneration['segmentationMode'] }))}><option value="auto">高品質（自動）</option><option value="rule">ルール</option><option value="llm">LLM</option></select></label>
+            <div className="template-style-summary"><strong>見た目</strong><span>{clip.style.fontFamily} / {clip.style.fontSize}px / {clip.style.bold ? '太字' : '標準'} / {clip.style.italic ? '斜体' : '標準'}</span><span>文字 {clip.style.color} · 縁取り {clip.style.outlineColor} {clip.style.outlineWidth}px · 幅 {clip.style.maxWidthPercent}%</span></div>
+            <small className="field-hint">{saveSeedSource === 'baseline' ? 'この字幕の自動字幕baseline設定を初期値にしました。' : '対応baselineがないため、現在のAuto Processing設定を初期値にしました。本文の長さからは推測していません。'}</small>
+            {mixedStyle && <div className="template-warning" role="alert">同じ字幕trackに異なるstyleがあります。保存には選択中の字幕styleを使用します。</div>}
+            <div className="template-actions"><Button className="subtle-button" onClick={() => setSaveDialogOpen(false)}>キャンセル</Button><Button className="primary-button" onClick={() => void saveCurrentAsTemplate()}>保存</Button></div>
+          </div>
+        )}
         <small className="field-hint">{defaultSubtitleTemplateId === templateId ? '現在のデフォルト' : '選択中のtemplate'} · Finalと同じSubtitleStyleを使って表示します。</small>
       </div>
     </Section>

@@ -48,6 +48,7 @@ interface EditorState {
   autoCaptionJobId: string | null
   userSubtitleTemplates: UserSubtitleTemplate[]
   defaultSubtitleTemplateId: string
+  autoCaptionSettingsSeed: Pick<AutoCaptionSettings, 'maxChars' | 'maxLines' | 'segmentationMode'>
   savedFingerprint: string
   transactionBase: ProjectFile | null
   clipboard: ClipboardItem[]
@@ -74,6 +75,7 @@ interface EditorState {
   cancelAutoCaption(): Promise<void>
   setUserSubtitleTemplates(templates: UserSubtitleTemplate[]): void
   setDefaultSubtitleTemplateId(id: string): void
+  setAutoCaptionSettingsSeed(settings: Pick<AutoCaptionSettings, 'maxChars' | 'maxLines' | 'segmentationMode'>): void
   hydrateFullCorrectionSessions(sessions: FullCorrectionSession[]): void
   startFullCorrection(): Promise<boolean>
   finishFullCorrection(): Promise<FullCorrectionSession | null>
@@ -156,6 +158,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   autoCaptionJobId: null,
   userSubtitleTemplates: [],
   defaultSubtitleTemplateId: 'default',
+  autoCaptionSettingsSeed: { maxChars: 32, maxLines: 2, segmentationMode: 'auto' },
   applyProject: (project, options = {}) => {
     const current = get().project
     if (project === current) return
@@ -369,6 +372,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   setUserSubtitleTemplates: (templates) => set({ userSubtitleTemplates: structuredClone(templates) }),
   setDefaultSubtitleTemplateId: (id) => set({ defaultSubtitleTemplateId: id }),
+  setAutoCaptionSettingsSeed: (settings) => set({ autoCaptionSettingsSeed: structuredClone(settings) }),
   hydrateFullCorrectionSessions: (sessions) => {
     const current = get().project
     const active = sessions

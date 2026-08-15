@@ -1,5 +1,13 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-16 Night 09 Create Subtitle Template From Timeline Subtitle
+
+- Timelineで選択したSubtitleClipから、SubtitleStyle全体、clip-held maxLines、layout constraintをtemplate保存dialogへ引き継ぐようにした。
+- `sourceJobId`に対応する`experimental.auto-caption-baseline.v1`があればmaxChars／segmentationMode／baseline maxLinesを初期値にし、baselineがない場合は現在のAuto Processing設定をseedにする。字幕本文の長さからmaxCharsを推測しない。
+- 保存dialogで名前、最大文字数、最大行数、字幕品質をユーザーが確認・変更できる。track内にstyle混在がある場合は選択字幕styleをauthorityとする警告を表示する。
+- template適用はstyleだけでなくmaxLinesも同じhistory operationで反映する。`src/shared/subtitle-template-seed.ts`とshared testsでseed優先順位と新規字幕への適用を固定した。
+- `npm.cmd run check`: **50 files / 282 tests PASS**、`npm.cmd run build`: **PASS**。Night 09ではStage 5以降、mass review、learning、publishへ進んでいない。
+
 ## 2026-08-16 Stage 16 Integrated GPU Auto Edit Transaction
 
 - selected clipからworker/GPU health、bounded source preparation、Whisperとsignal silence analysis、caption segmentation、keep-range mapping、linked A/V segmentation、selected subtitle template、baseline保存、Project applyまでの既存統合経路を監査した。

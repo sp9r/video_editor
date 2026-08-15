@@ -65,6 +65,7 @@ export default function App(): React.JSX.Element {
     autoCaptionSelected,
     setUserSubtitleTemplates: setStoreUserSubtitleTemplates,
     setDefaultSubtitleTemplateId,
+    setAutoCaptionSettingsSeed,
     defaultSubtitleTemplateId,
     cancelAutoCaption,
     autoCaptionJobId,
@@ -92,6 +93,14 @@ export default function App(): React.JSX.Element {
   })
   const [captionSummary, setCaptionSummary] = useState<{ captionCount: number; rawWordCount: number; fallbackUsed: boolean } | null>(null)
   const reviewEnabled = useReviewStore((state) => state.enabled)
+
+  useEffect(() => {
+    setAutoCaptionSettingsSeed({
+      maxChars: captionSettings.maxChars,
+      maxLines: captionSettings.maxLines ?? 2,
+      segmentationMode: captionSettings.segmentationMode
+    })
+  }, [captionSettings.maxChars, captionSettings.maxLines, captionSettings.segmentationMode, setAutoCaptionSettingsSeed])
 
   useEffect(() => {
     useReviewStore.getState().stop()
