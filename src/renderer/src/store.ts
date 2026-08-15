@@ -93,6 +93,7 @@ interface EditorState {
   pasteClipboard(atUs?: TimeUs): void
   duplicateSelected(): void
   applySubtitleStyleToAll(clipId: string): void
+  applySubtitleStyleToTrack(clipId: string, style: SubtitleStyle): void
   patchTrack(track: TimelineTrack): void
   addMediaTrack(): void
   addSubtitleTrack(): void
@@ -582,6 +583,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         if (clip.kind === 'subtitle') clip.style = structuredClone(style)
       }
     }
+    next.updatedAt = new Date().toISOString()
+    get().applyProject(next)
+  },
+  applySubtitleStyleToTrack: (clipId, style) => {
+    const project = get().project
+    const sourceTrack = project.tracks.find((track) => track.kind === 'subtitle' && track.clips.some((clip) => clip.id === clipId))
+    if (!sourceTrack) return
+    const next = cloneProject(project)
+    const target = next.tracks.find((track) => track.id === sourceTrack.id)
+    if (!target || target.kind !== 'subtitle') return
+    target.clips = target.clips.map((clip) => clip.kind === 'subtitle' ? { ...clip, style: structuredClone(style) } : clip)
     next.updatedAt = new Date().toISOString()
     get().applyProject(next)
   },

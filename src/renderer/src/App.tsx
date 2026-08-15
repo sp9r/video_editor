@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { createEmptyProject } from '../../shared/project'
 import type { AutoCaptionSettings } from '../../shared/auto-caption-contract'
-import { getSubtitleTemplateStyleForId, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../shared/subtitle-templates'
+import { getSubtitleTemplateSettings, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { EncoderReport, ProjectFile } from '../../shared/types'
 import { BrandMark } from './components/Brand'
 import { Button, IconButton } from './components/Controls'
@@ -108,23 +108,23 @@ export default function App(): React.JSX.Element {
       setUserSubtitleTemplates(catalog.userTemplates)
       setStoreUserSubtitleTemplates(catalog.userTemplates)
       setDefaultSubtitleTemplateId(catalog.defaultTemplateId)
-      const selected = catalog.userTemplates.find((template) => template.id === catalog.defaultTemplateId)
-        ?? SUBTITLE_TEMPLATES.find((template) => template.id === catalog.defaultTemplateId)
+      const settings = getSubtitleTemplateSettings(catalog.defaultTemplateId, catalog.userTemplates)
       setCaptionSettings((current) => ({
         ...current,
         subtitleTemplate: catalog.defaultTemplateId,
-        ...(selected ? { maxChars: selected.maxChars, maxLines: selected.maxLines } : {})
+        maxChars: settings.maxChars,
+        maxLines: settings.maxLines
       }))
     }).catch(() => undefined)
   }, [setDefaultSubtitleTemplateId, setStoreUserSubtitleTemplates])
 
   useEffect(() => {
-    const selected = userSubtitleTemplates.find((template) => template.id === defaultSubtitleTemplateId)
-      ?? SUBTITLE_TEMPLATES.find((template) => template.id === defaultSubtitleTemplateId)
+    const settings = getSubtitleTemplateSettings(defaultSubtitleTemplateId, userSubtitleTemplates)
     setCaptionSettings((current) => ({
       ...current,
       subtitleTemplate: defaultSubtitleTemplateId,
-      ...(selected ? { maxChars: selected.maxChars, maxLines: selected.maxLines } : {})
+      maxChars: settings.maxChars,
+      maxLines: settings.maxLines
     }))
   }, [defaultSubtitleTemplateId, userSubtitleTemplates])
 
@@ -330,21 +330,21 @@ export default function App(): React.JSX.Element {
   const selectedSubtitleTemplate = (): SubtitleTemplateDraft => {
     const selected = userSubtitleTemplates.find((template) => template.id === captionSettings.subtitleTemplate)
       ?? SUBTITLE_TEMPLATES.find((template) => template.id === captionSettings.subtitleTemplate)
+    const settings = getSubtitleTemplateSettings(captionSettings.subtitleTemplate, userSubtitleTemplates)
     return {
       name: selected ? ('name' in selected ? selected.name : selected.label) : '新しい字幕テンプレート',
-      style: selected?.style ? structuredClone(selected.style) : getSubtitleTemplateStyleForId('default', userSubtitleTemplates),
-      maxChars: captionSettings.maxChars,
-      maxLines: captionSettings.maxLines ?? 2
+      style: settings.style,
+      maxChars: captionSettings.maxChars ?? settings.maxChars,
+      maxLines: captionSettings.maxLines ?? settings.maxLines
     }
   }
 
   const selectSubtitleTemplate = (id: string): void => {
-    const selected = userSubtitleTemplates.find((template) => template.id === id)
-      ?? SUBTITLE_TEMPLATES.find((template) => template.id === id)
     setCaptionSettings((current) => ({
       ...current,
       subtitleTemplate: id,
-      ...(selected ? { maxChars: selected.maxChars, maxLines: selected.maxLines } : {})
+      maxChars: getSubtitleTemplateSettings(id, userSubtitleTemplates).maxChars,
+      maxLines: getSubtitleTemplateSettings(id, userSubtitleTemplates).maxLines
     }))
   }
 

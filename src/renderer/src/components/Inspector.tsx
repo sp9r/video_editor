@@ -118,6 +118,7 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
     setUserSubtitleTemplates,
     setDefaultSubtitleTemplateId,
     patchClip,
+    applySubtitleStyleToTrack,
     showNotice
   } = useEditorStore()
   const [templateId, setTemplateId] = useState(defaultSubtitleTemplateId)
@@ -243,6 +244,11 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
           <Button className="subtle-button" disabled={!isUserTemplate} onClick={() => void deleteTemplate()}>削除</Button>
           <Button className="subtle-button" disabled={!selected || defaultSubtitleTemplateId === templateId} onClick={() => void setAsDefault()}>デフォルトに設定</Button>
         </div>
+        <Button className="subtle-button" disabled={!selected} onClick={() => {
+          if (!selected) return
+          applySubtitleStyleToTrack(clip.id, selected.style)
+          showNotice(`この字幕track全体へ「${'name' in selected ? selected.name : selected.label}」を適用しました。`, 'success')
+        }}>字幕track全体へ適用</Button>
         <small className="field-hint">{defaultSubtitleTemplateId === templateId ? '現在のデフォルト' : '選択中のtemplate'} · Finalと同じSubtitleStyleを使って表示します。</small>
       </div>
     </Section>

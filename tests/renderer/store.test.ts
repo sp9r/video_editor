@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { addClipToTrack, createClipForAsset, createEmptyProject, createTrack, validateProject } from '../../src/shared/project'
 import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
-import { DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile, type TimelineClip } from '../../src/shared/types'
+import { DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile, type SubtitleClip, type TimelineClip } from '../../src/shared/types'
 import { useEditorStore } from '../../src/renderer/src/store'
 
 const asset: MediaAsset = {
@@ -171,6 +171,24 @@ describe('editor history and linked selection', () => {
     const subtitles = useEditorStore.getState().project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'subtitle')
     expect(subtitles).toHaveLength(2)
     expect(subtitles.every((clip) => clip.kind === 'subtitle' && clip.style.fontFamily === 'Custom Font' && clip.style.maxWidthPercent === 85)).toBe(true)
+  })
+
+  it('applies a template style to only the selected subtitle track in one undoable operation', () => {
+    const project = fixture()
+    const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle')!
+    const first: SubtitleClip = {
+      id: 'caption-track-1', name: '字幕track 1', kind: 'subtitle', startUs: 1_000_000, durationUs: 1_000_000, sourceInUs: 0,
+      enabled: true, text: 'track 1', style: structuredClone(DEFAULT_SUBTITLE_STYLE)
+    }
+    subtitleTrack.clips.push(first)
+    const secondTrack = { ...subtitleTrack, id: 'subtitle-2', name: '字幕track 2', clips: [{ ...first, id: 'caption-track-2', text: 'track 2' }] }
+    project.tracks.push(secondTrack)
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().applySubtitleStyleToTrack('caption-track-1', { ...DEFAULT_SUBTITLE_STYLE, fontFamily: 'Template Font' })
+    const tracks = useEditorStore.getState().project.tracks.filter((track) => track.kind === 'subtitle')
+    expect(tracks[0]?.clips[0]?.kind === 'subtitle' ? tracks[0].clips[0].style.fontFamily : undefined).toBe('Template Font')
+    expect(tracks[1]?.clips[0]?.kind === 'subtitle' ? tracks[1].clips[0].style.fontFamily : undefined).toBe(DEFAULT_SUBTITLE_STYLE.fontFamily)
+    expect(useEditorStore.getState().past).toHaveLength(1)
   })
 
   it('updates subtitle split and merge immediately and keeps them undoable', () => {

@@ -36,6 +36,12 @@ export interface SubtitleTemplateLoadResult {
   defaultTemplateId: SubtitleTemplateId
 }
 
+export interface SubtitleTemplateSettings {
+  style: SubtitleStyle
+  maxChars: number
+  maxLines: number
+}
+
 const template = (id: SubtitleTemplateId, label: string, style: Partial<SubtitleStyle>): SubtitleTemplateOption => ({
   id,
   label,
@@ -67,4 +73,16 @@ export const getSubtitleTemplateStyleForId = (
 ): SubtitleStyle => {
   const selected = getSubtitleTemplate(id, userTemplates)
   return structuredClone(selected?.style ?? DEFAULT_SUBTITLE_STYLE)
+}
+
+export const getSubtitleTemplateSettings = (
+  id: SubtitleTemplateId = 'default',
+  userTemplates: readonly UserSubtitleTemplate[] = []
+): SubtitleTemplateSettings => {
+  const selected = getSubtitleTemplate(id, userTemplates)
+  return {
+    style: structuredClone(selected?.style ?? DEFAULT_SUBTITLE_STYLE),
+    maxChars: selected?.maxChars ?? 32,
+    maxLines: selected?.maxLines ?? 2
+  }
 }
