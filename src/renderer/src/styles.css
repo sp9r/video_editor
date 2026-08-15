@@ -508,6 +508,9 @@ select {
 .media-meta { display: flex; flex-direction: column; gap: 2px; padding: 6px 7px; }
 .media-meta strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .media-meta small { overflow: hidden; color: var(--text-dim); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.media-add-to-timeline { display: block; width: calc(100% - 10px); margin: 0 5px 5px; padding: 4px 5px; color: var(--mint); font-size: 9px; font-weight: 700; background: #16312d; border: 1px solid #2e6c5d; border-radius: 3px; cursor: pointer; }
+.media-add-to-timeline:hover:not(:disabled) { background: #1d4b42; border-color: var(--mint); }
+.media-add-to-timeline:disabled { color: var(--text-muted); background: #20252b; border-color: #343b43; cursor: not-allowed; }
 .offline-overlay { position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; gap: 5px; color: #ffd7d9; font-size: 9px; font-weight: 700; background: repeating-linear-gradient(-45deg, rgb(70 17 22 / 0.82) 0 8px, rgb(35 14 17 / 0.82) 8px 16px); }
 .media-item.is-offline .media-meta strong { color: #d9a8aa; text-decoration: line-through; }
 .relink-button { position: absolute; right: 5px; bottom: 5px; z-index: 4; padding: 3px 6px; color: #ffd7d9; font-size: 9px; font-weight: 700; background: #5b242a; border: 1px solid #bf6871; border-radius: 3px; cursor: pointer; }

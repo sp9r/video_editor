@@ -13,7 +13,7 @@ import {
   Video
 } from 'lucide-react'
 import { makeId } from '../../../shared/project'
-import type { MediaAsset, ProbeResult } from '../../../shared/types'
+import { isMediaTrack, type MediaAsset, type ProbeResult } from '../../../shared/types'
 import { useEditorStore } from '../store'
 import { EmptyState, IconButton } from './Controls'
 
@@ -32,7 +32,7 @@ const formatDuration = (durationUs: number): string => {
 const kindLabel = (kind: MediaAsset['kind']): string => ({ video: '映像', audio: '音声', image: '画像' })[kind]
 
 export default function MediaBin(): React.JSX.Element {
-  const { project, selectedAssetId, selectAsset, addAssets, relinkAsset, showNotice } = useEditorStore()
+  const { project, selectedAssetId, selectAsset, addAssets, addAssetClip, playheadUs, relinkAsset, showNotice } = useEditorStore()
   const [query, setQuery] = useState('')
   const [view, setView] = useState<'grid' | 'list'>('grid')
   const [dragActive, setDragActive] = useState(false)
@@ -161,6 +161,17 @@ export default function MediaBin(): React.JSX.Element {
                   <strong title={asset.name}>{asset.name}</strong>
                   <small>{kindLabel(asset.kind)}{asset.width ? ` · ${asset.width}×${asset.height}` : ''}</small>
                 </span>
+              </button>
+              <button
+                type="button"
+                className="media-add-to-timeline"
+                disabled={asset.offline || !project.tracks.some(isMediaTrack)}
+                onClick={() => {
+                  const track = project.tracks.find((candidate) => isMediaTrack(candidate))
+                  if (track) addAssetClip(asset.id, track.id, playheadUs)
+                }}
+              >
+                タイムラインへ追加
               </button>
               {asset.offline && <button type="button" className="relink-button" onClick={() => void relink(asset)}>再リンク</button>}
             </article>
