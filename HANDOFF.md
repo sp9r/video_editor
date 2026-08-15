@@ -1,5 +1,14 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-15 Stage 7 Full-Correction Session / Whole Track Before-After Capture
+
+- Auto Caption trackの字幕を選択して「全文修正」を開始し、通常のEditor操作で全trackを修正後、「修正完了」でbefore/after差分summaryを保存するworkflowを追加した。途中ratingは不要。
+- beforeは`experimental.auto-caption-baseline.v1`から再構成し、afterはfinish時点の同じtrackから取得。`sourceJobId`、`sourceCaptionId`、raw word ID、editUnit IDでunchanged / split / merge / boundary_move / text_edit / delete / timing_edit / mixedを導出する。
+- active sessionはuserDataの`experimental.full-correction.v1`へatomic保存し、crash/reload後にresume可能。artifactはpath/credential/media本体を含まない。
+- 既存A/B/C/D Review Mode、`experimental.phase3.5b1`、`edit_project.v1`、caption algorithmは変更していない。
+- 詳細: `docs/PHASE_7_FULL_CORRECTION_SESSION.md`
+- Stage 7専用テストを追加。Stage 8、publish、mass Human Reviewは未着手。
+
 ## 2026-08-15 Stage 6 Caption Display Constraints / max_chars + max_lines
 
 - Stage 1/2からworkerへ渡っていた`maxLines`が、video_editorのProject Model・Preview・ASSへ保存／伝播されていなかった欠落を修正した。`max_chars`はcaption block境界、`max_lines`は表示layout制約として分離した。
