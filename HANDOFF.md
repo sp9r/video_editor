@@ -1,5 +1,14 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-15 Stage 6 Caption Display Constraints / max_chars + max_lines
+
+- Stage 1/2からworkerへ渡っていた`maxLines`が、video_editorのProject Model・Preview・ASSへ保存／伝播されていなかった欠落を修正した。`max_chars`はcaption block境界、`max_lines`は表示layout制約として分離した。
+- 内部`.spectra`のSubtitleClipへoptional `maxLines`（1〜16）を追加。`edit_project.v1`は変更せず、旧Projectとcontract importは既定2行で動作する。
+- canonical `SubtitleRenderSpec`が同じwrapped text、line count、diagnosticをCSS PreviewとFinal libassへ供給する。overflow時は本文を破壊せず`MAX_LINES_EXCEEDED`を出す。
+- Auto Caption dialogへ最大行数（既定2）を追加し、worker request、baseline、generated captionへ伝播する。
+- Accurate Preview overlayとFinal libass frameの実画像line-bandを比較するintegration testを追加。詳細は`docs/PHASE_6_MAX_LINES_READINESS.md`。
+- Gateは全テスト・build・visual smoke完了後に確定する。
+
 ## 2026-08-15 Stage 5 Japanese Edit Boundary / Timing Readiness Gate
 
 - 病理的な日本語raw word `皆さんこんばんはアルマジロウです` を4つのderived edit unitへ分解し、concat fidelity、parent source identity、単調時刻、`estimated` provenanceを専用回帰で固定した。内部境界は比例配分であり、acoustic alignmentとは扱わない。
