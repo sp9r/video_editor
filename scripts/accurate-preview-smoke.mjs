@@ -160,7 +160,7 @@ const analyzeScreenshots = (fastBuffer, accurateBuffer, report) => {
   } : null
   const fastAnchorToSpec = fastAnchor && expectedAnchor ? { x: fastAnchor.x - expectedAnchor.x, y: fastAnchor.y - expectedAnchor.y } : null
   const accurateAnchorToSpec = accurateAnchor && expectedAnchor ? { x: accurateAnchor.x - expectedAnchor.x, y: accurateAnchor.y - expectedAnchor.y } : null
-  const shadowWithinLimit = Boolean(fastShadow && accurateShadow && fastShadow.width <= fastWhite.width * 2 && accurateShadow.width <= accurateWhite.width * 2)
+  const shadowWithinLimit = Boolean(fastShadow && accurateShadow && fastWhite && accurateWhite && fastShadow.width <= fastWhite.width * 2 && accurateShadow.width <= accurateWhite.width * 2)
   const heightTolerance = Number(report.subtitleSpec?.fontSizePx ?? 0) < 64 ? 0.25 : 0.15
   const result = {
     scene,
