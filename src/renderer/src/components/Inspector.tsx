@@ -2,12 +2,13 @@
 import { Captions, Image as ImageIcon, SlidersHorizontal, Volume2 } from 'lucide-react'
 import { findSubtitleContext, subtitleWordsMatchText } from '../../../shared/project'
 import { subtitleEditUnits } from '../../../shared/editing/edit-units'
-import type { AudioSettings, SubtitleClip, SubtitleStyle, TimelineClip, TransformSettings } from '../../../shared/types'
+import { DEFAULT_SUBTITLE_STYLE, type AudioSettings, type SubtitleClip, type SubtitleStyle, type TimelineClip, type TransformSettings } from '../../../shared/types'
 import { applySubtitleTemplateToClip, deriveSubtitleTemplateGeneration } from '../../../shared/subtitle-template-seed'
 import type { SubtitleTemplateCaptionGeneration } from '../../../shared/subtitle-templates'
 import { getSubtitleTemplate, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../../shared/subtitle-templates'
 import { findClip, useEditorStore } from '../store'
 import { Button, EmptyState, Field, NumberField, Section, SelectField } from './Controls'
+import SubtitleTemplatePreview from './SubtitleTemplatePreview'
 
 const numberValue = (value: string, fallback = 0): number => {
   const parsed = Number(value)
@@ -15,32 +16,6 @@ const numberValue = (value: string, fallback = 0): number => {
 }
 
 const FALLBACK_FONTS = ['Noto Sans JP', 'Yu Gothic UI', 'Meiryo', 'Arial', 'sans-serif']
-const TEMPLATE_SAMPLE = '皆さんこんばんは\nアルマジロウです'
-
-const withAlpha = (color: string, opacity: number): string => {
-  const match = /^#([0-9a-f]{6})$/i.exec(color)
-  if (!match) return color
-  const value = match[1] ?? '000000'
-  return `rgba(${Number.parseInt(value.slice(0, 2), 16)}, ${Number.parseInt(value.slice(2, 4), 16)}, ${Number.parseInt(value.slice(4, 6), 16)}, ${opacity})`
-}
-
-const templatePreviewStyle = (style: SubtitleStyle): React.CSSProperties => ({
-  color: style.color,
-  fontFamily: style.fontFamily,
-  fontSize: `${Math.min(56, Math.max(18, style.fontSize * 0.55))}px`,
-  fontWeight: style.bold ? 700 : 400,
-  fontStyle: style.italic ? 'italic' : 'normal',
-  letterSpacing: `${style.letterSpacing}px`,
-  lineHeight: style.lineHeight,
-  textAlign: 'center',
-  whiteSpace: 'pre-line',
-  WebkitTextStroke: `${Math.min(8, style.outlineWidth * 0.55)}px ${style.outlineColor}`,
-  textShadow: style.shadowBlur > 0 ? `0 2px ${Math.min(20, style.shadowBlur * 0.55)}px ${style.shadowColor}` : 'none',
-  backgroundColor: withAlpha(style.backgroundColor, style.backgroundOpacity),
-  padding: '10px 18px',
-  maxWidth: '100%'
-})
-
 const hasTransform = (clip: TimelineClip): clip is Extract<TimelineClip, { kind: 'video' | 'image' }> =>
   clip.kind === 'video' || clip.kind === 'image'
 
@@ -273,9 +248,7 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
           <optgroup label="組み込み（変更不可）">{SUBTITLE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</optgroup>
           {userSubtitleTemplates.length > 0 && <optgroup label="ユーザー">{userSubtitleTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</optgroup>}
         </select>
-        <div className="subtitle-template-preview" aria-label="字幕template sample preview">
-          {selected && <div style={templatePreviewStyle(selected.style)}>{TEMPLATE_SAMPLE}</div>}
-        </div>
+        <SubtitleTemplatePreview style={selected?.style ?? DEFAULT_SUBTITLE_STYLE} maxLines={selected?.captionGeneration.maxLines ?? 2} />
         <div className="template-actions">
           <Button className="primary-button" onClick={() => void openSaveDialog()}>テンプレートとして保存</Button>
           <Button className="subtle-button" disabled={!selected} title={selected ? '選択中templateを字幕へ適用' : 'templateを選択してください'} onClick={applyTemplate}>適用</Button>

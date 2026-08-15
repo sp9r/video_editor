@@ -24,9 +24,19 @@ Managerでは、新規作成、Timeline字幕から作成、適用、複製、�
 
 削除時は確認を表示する。削除対象がdefaultだった場合はmain-process serviceが`default`へ戻し、rendererも同じcatalogへ追従する。malformed user recordはserviceのload時に個別隔離され、正常なrecordとbuilt-inの表示を止めない。
 
-## sample preview
+## sample preview and parity
 
-Inspector内で「皆さんこんばんは / アルマジロウです」を表示する。font、size、bold/italic、letter spacing、line height、foreground、outline、shadow、background opacityを選択templateのstyleから反映する。これは別の字幕modelを作らず、Final/libassへ渡るstyleと同じ値を使う軽量なpresentation previewである。
+Inspector、Auto Processing、Template Managerのsample previewは、別々の縮小CSS計算を持たない。`SubtitleTemplatePreview`が1920×1080の仮想16:9 sceneを作り、`buildSubtitleRenderSpec()`、shared wrapping、anchor、maxWidth、font、outline、shadow、background、animationを同じ入力から計算する。表示領域へ縮小するだけなので、templateを保存した字幕へ適用した場合と同じgeometry semanticsになる。
+
+静止字幕のFast Previewは`renderSubtitleOverlay()`によるASS/libass overlay、停止中のAccurate PreviewとFinalは同じlibass/Render Planをauthorityとする。Template Managerのsampleは編集時に軽量に確認できるpresentation previewであり、pixel authorityではない。CSS/libassのアンチエイリアス、blur形状、font rasterization差は許容する。
+
+実FFmpeg回帰では、built-in 3種とTimeline字幕から作成した代表user templateを、次の日本語fixtureで比較する。
+
+- 1行、2行、最大幅付近、長い日本語、数字・英字混在
+- Accurate subtitle overlayとFinal libass frameのglyph center、line count、visibility
+- template適用後のstyle/maxLinesとtemplate settingsの一致
+
+この回帰は`tests/main/ffmpeg-integration.test.ts`の`representative timeline template`ケースで実施する。
 
 ## default persistence
 
@@ -48,8 +58,10 @@ Auto Processingで最後に成功適用したtemplate IDはStage 14のapp-level�
 
 - userData serviceのbuilt-in/user default、unknown default、delete fallbackを回帰テスト
 - Timeline字幕seed（baseline優先、current settings fallback、本文長非推測）と、template適用時のstyle/maxLines保持をshared testで検証
-- `npm.cmd run check`: 50 files / 282 tests
+- `npm.cmd run check`: 51 files / 289 tests
 - `npm.cmd run build`
 - `npm.cmd run smoke:electron`
 - `npm.cmd run smoke:accurate-preview`
 - `npm.cmd run smoke:electron`: template managerを含むproduction rendererのasset、DOM、preload、console errorなしを確認
+- `npm.cmd run subtitle:parity` / `npm.cmd run subtitle:geometry`: Fast/Accurate/Finalの既存pixel geometry gateを確認
+- `tests/main/ffmpeg-integration.test.ts`: 代表user templateの日本語1行、2行、最大幅付近、長文、数字・英字混在をAccurate overlay／Final libassで確認

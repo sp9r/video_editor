@@ -18,7 +18,7 @@ import {
 import { createEmptyProject } from '../../shared/project'
 import type { AutoCaptionSettings } from '../../shared/auto-caption-contract'
 import { getSubtitleTemplate, getSubtitleTemplateSettings, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../shared/subtitle-templates'
-import type { EncoderReport, ProjectFile, SubtitleStyle } from '../../shared/types'
+import type { EncoderReport, ProjectFile } from '../../shared/types'
 import { BrandMark } from './components/Brand'
 import { Button, IconButton } from './components/Controls'
 import ExportDialog from './components/ExportDialog'
@@ -28,6 +28,7 @@ import Preview from './components/Preview'
 import Timeline from './components/Timeline'
 import ReviewPanel from './components/ReviewPanel'
 import SubtitleTemplateManagerPanel from './components/SubtitleTemplateManagerPanel'
+import SubtitleTemplatePreview from './components/SubtitleTemplatePreview'
 import { useEditorStore } from './store'
 import { useReviewStore } from './review-store'
 import { autoCaptionControlState } from './action-state'
@@ -36,29 +37,6 @@ const isTypingTarget = (target: EventTarget | null): boolean => {
   const element = target as HTMLElement | null
   return Boolean(element?.closest('input, textarea, select, [contenteditable="true"]'))
 }
-
-const withAlpha = (color: string, opacity: number): string => {
-  const match = /^#([0-9a-f]{6})$/i.exec(color)
-  if (!match) return color
-  const value = match[1] ?? '000000'
-  return `rgba(${Number.parseInt(value.slice(0, 2), 16)}, ${Number.parseInt(value.slice(2, 4), 16)}, ${Number.parseInt(value.slice(4, 6), 16)}, ${opacity})`
-}
-
-const subtitleTemplatePreviewStyle = (style: SubtitleStyle): React.CSSProperties => ({
-  color: style.color,
-  fontFamily: style.fontFamily,
-  fontSize: `${Math.min(32, Math.max(14, style.fontSize * 0.38))}px`,
-  fontWeight: style.bold ? 700 : 400,
-  fontStyle: style.italic ? 'italic' : 'normal',
-  letterSpacing: `${style.letterSpacing * 0.5}px`,
-  lineHeight: style.lineHeight,
-  textAlign: 'center',
-  whiteSpace: 'pre-line',
-  WebkitTextStroke: `${Math.min(5, style.outlineWidth * 0.38)}px ${style.outlineColor}`,
-  textShadow: style.shadowBlur > 0 ? `0 2px ${Math.min(12, style.shadowBlur * 0.38)}px ${style.shadowColor}` : 'none',
-  backgroundColor: style.backgroundOpacity > 0 ? withAlpha(style.backgroundColor, style.backgroundOpacity) : 'transparent',
-  padding: '7px 12px'
-})
 
 export default function App(): React.JSX.Element {
   const {
@@ -582,7 +560,7 @@ export default function App(): React.JSX.Element {
                   <label className="field"><span className="field-label">最大行数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={16} value={captionSettings.maxLines ?? 2} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxLines: Math.max(1, Math.min(16, Number(event.target.value) || 2)) }))} /><span>行</span></span></label>
                   <label className="field"><span className="field-label">字幕品質</span><select disabled={captioning} value={captionSettings.segmentationMode} onChange={(event) => setCaptionSettings((current) => ({ ...current, segmentationMode: event.target.value as AutoCaptionSettings['segmentationMode'] }))}><option value="auto">高品質</option><option value="rule">ルール</option></select></label>
                   <label className="field"><span className="field-label">字幕テンプレート</span><select disabled={captioning} value={captionSettings.subtitleTemplate ?? 'default'} onChange={(event) => selectSubtitleTemplate(event.target.value)}><optgroup label="組み込み（変更不可）">{SUBTITLE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</optgroup>{userSubtitleTemplates.length > 0 && <optgroup label="ユーザー">{userSubtitleTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</optgroup>}</select></label>
-                  {selectedAutoProcessingTemplate && <div className="auto-template-preview" aria-label="選択中字幕template preview"><div style={subtitleTemplatePreviewStyle(selectedAutoProcessingTemplate.style)}>皆さんこんばんは<br />アルマジロウです</div><small>{'name' in selectedAutoProcessingTemplate ? selectedAutoProcessingTemplate.name : selectedAutoProcessingTemplate.label} · {selectedAutoProcessingTemplateSettings.maxChars}文字 / {selectedAutoProcessingTemplateSettings.maxLines}行</small></div>}
+                  {selectedAutoProcessingTemplate && <div className="auto-template-preview"><SubtitleTemplatePreview style={selectedAutoProcessingTemplate.style} maxLines={selectedAutoProcessingTemplateSettings.maxLines} /><small>{'name' in selectedAutoProcessingTemplate ? selectedAutoProcessingTemplate.name : selectedAutoProcessingTemplate.label} · {selectedAutoProcessingTemplateSettings.maxChars}文字 / {selectedAutoProcessingTemplateSettings.maxLines}行</small></div>}
                   {hasAutoProcessingOverrides && <small className="field-hint template-override-note">個別設定を使用中です。template本体は変更されません。次回template選択時にtemplate値へ戻ります。</small>}
                   <div className="template-actions"><Button disabled={captioning} title={captioning ? '生成中は変更できません' : '現在の設定を新しいtemplateとして保存'} onClick={() => void createUserSubtitleTemplate(false)}>新規保存</Button><Button disabled={captioning} title={captioning ? '生成中は変更できません' : '現在の設定をtemplateとして複製'} onClick={() => void createUserSubtitleTemplate(true)}>複製</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} title={captioning ? '生成中は変更できません' : 'ユーザーtemplateを選択すると更新できます'} onClick={() => void updateUserSubtitleTemplate()}>更新</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} title={captioning ? '生成中は変更できません' : 'ユーザーtemplateを選択すると削除できます'} onClick={() => void deleteUserSubtitleTemplate()}>削除</Button></div>
                   {autoCaptionProgress && (

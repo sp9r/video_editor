@@ -7,7 +7,8 @@ import { executeProcess } from '../../src/main/ffmpeg/process.js'
 import { FfmpegService } from '../../src/main/ffmpeg/service.js'
 import { generateAss } from '../../src/main/ffmpeg/subtitles.js'
 import { buildSubtitleRenderSpec } from '../../src/shared/subtitle-render.js'
-import { getSubtitleTemplateSettings, SUBTITLE_TEMPLATES } from '../../src/shared/subtitle-templates.js'
+import { applySubtitleTemplateToClip } from '../../src/shared/subtitle-template-seed.js'
+import { getSubtitleTemplateSettings, SUBTITLE_TEMPLATES, type UserSubtitleTemplate } from '../../src/shared/subtitle-templates.js'
 import { makeExportSettings, makeProject } from './ffmpeg-fixtures.js'
 
 describe('bundled FFmpeg integration', () => {
@@ -650,4 +651,123 @@ describe('bundled FFmpeg integration', () => {
       await rm(root, { recursive: true, force: true })
     }
   }, 120_000)
+
+  it('keeps a representative timeline template aligned across accurate overlay and final libass for Japanese cases', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-user-template-parity-'))
+    try {
+      const paths = await resolveFfmpegPaths()
+      const baseTemplate = SUBTITLE_TEMPLATES[0]
+      if (!baseTemplate) throw new Error('built-in subtitle template fixture is missing')
+      const userTemplate: UserSubtitleTemplate = {
+        version: 'spectra.subtitle-template.v2',
+        id: 'qa-timeline-template',
+        name: 'QA Timeline Japanese',
+        style: {
+          ...structuredClone(baseTemplate.style),
+          fontFamily: 'Noto Sans JP',
+          fontSize: 64,
+          color: '#ffffff',
+          outlineColor: '#111318',
+          outlineWidth: 8,
+          shadowColor: '#ff0000',
+          shadowBlur: 12,
+          backgroundColor: '#000000',
+          backgroundOpacity: 0.18,
+          bold: true,
+          alignment: 'bottom',
+          positionX: 50,
+          positionY: 86,
+          maxWidthPercent: 80,
+          animation: 'none',
+          animationDurationUs: 0
+        },
+        captionGeneration: { maxChars: 24, maxLines: 2, segmentationMode: 'rule', layoutConstraints: { maxWidthPercent: 80 } },
+        createdAt: '2026-08-16T00:00:00.000Z',
+        updatedAt: '2026-08-16T00:00:00.000Z'
+      }
+      const cases = [
+        { name: 'one-line', text: '字幕です', maxLines: 1 },
+        { name: 'two-lines', text: '皆さんこんばんは\nアルマジロウです', maxLines: 2 },
+        { name: 'near-max-width', text: 'これは最大幅に近い日本語字幕です', maxLines: 2 },
+        { name: 'long-japanese', text: '実際の長い日本語字幕を表示しても同じ幅と行数で確認できる文章です', maxLines: 2 },
+        { name: 'mixed-number-english', text: '第3回 Spectra Video Studio 2026', maxLines: 2 }
+      ]
+      const bounds = (raw: Buffer, bytesPerPixel: number, width: number, predicate: (r: number, g: number, b: number, a: number) => boolean): { left: number; top: number; right: number; bottom: number } | null => {
+        let left = width
+        let top = Math.floor(raw.length / bytesPerPixel / width)
+        let right = -1
+        let bottom = -1
+        const height = Math.floor(raw.length / bytesPerPixel / width)
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const offset = (y * width + x) * bytesPerPixel
+            if (!predicate(raw[offset] ?? 0, raw[offset + 1] ?? 0, raw[offset + 2] ?? 0, bytesPerPixel === 4 ? raw[offset + 3] ?? 0 : 255)) continue
+            left = Math.min(left, x)
+            top = Math.min(top, y)
+            right = Math.max(right, x)
+            bottom = Math.max(bottom, y)
+          }
+        }
+        return right < 0 ? null : { left, top, right, bottom }
+      }
+      const lineBands = (raw: Buffer, bytesPerPixel: number, width: number): number => {
+        const activeRows: number[] = []
+        const height = Math.floor(raw.length / bytesPerPixel / width)
+        for (let y = 0; y < height; y += 1) {
+          let count = 0
+          for (let x = 0; x < width; x += 1) {
+            const offset = (y * width + x) * bytesPerPixel
+            const r = raw[offset] ?? 0
+            const g = raw[offset + 1] ?? 0
+            const b = raw[offset + 2] ?? 0
+            const a = bytesPerPixel === 4 ? raw[offset + 3] ?? 0 : 255
+            if (a > 160 && r > 190 && g > 190 && b > 190) count += 1
+          }
+          if (count >= 3) activeRows.push(y)
+        }
+        let bands = 0
+        let previous = -100
+        for (const row of activeRows) {
+          if (row - previous > 6) bands += 1
+          previous = row
+        }
+        return bands
+      }
+
+      for (const fixture of cases) {
+        const project = makeProject()
+        project.sequence = { width: 1920, height: 1080, frameRate: { numerator: 30, denominator: 1 }, sampleRate: 48_000, backgroundColor: '#242a31' }
+        const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+        if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+        const applied = applySubtitleTemplateToClip({ ...subtitle, text: fixture.text, startUs: 0, durationUs: 1_000_000, maxLines: fixture.maxLines }, userTemplate)
+        const settings = getSubtitleTemplateSettings(userTemplate.id, [userTemplate])
+        expect(applied.style).toEqual(settings.style)
+        expect(applied.maxLines).toBe(settings.maxLines)
+        project.tracks = project.tracks.map((track) => track.kind === 'subtitle' ? { ...track, clips: [applied] } : track)
+        const spec = buildSubtitleRenderSpec(applied, project.sequence)
+        const service = new FfmpegService(paths, { workspaceRoot: join(root, fixture.name) })
+        const overlay = await service.renderSubtitleOverlay(project, 500_000)
+        const overlayRawPath = join(root, `${fixture.name}-overlay.rgba`)
+        await executeProcess({ command: paths.ffmpegPath, args: ['-hide_banner', '-loglevel', 'error', '-y', '-i', overlay.framePath, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', overlayRawPath], timeoutMs: 30_000 })
+        const overlayRaw = await readFile(overlayRawPath)
+        const assPath = join(root, `${fixture.name}.ass`)
+        const finalRawPath = join(root, `${fixture.name}-final.rgb`)
+        await writeFile(assPath, generateAss(project), 'utf8')
+        await executeProcess({ command: paths.ffmpegPath, args: ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x242a31:s=1920x1080:r=30:d=1', '-vf', `ass=filename='${fixture.name}.ass'`, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', finalRawPath], cwd: root, timeoutMs: 30_000 })
+        const finalRaw = await readFile(finalRawPath)
+        const white = (r: number, g: number, b: number, a: number): boolean => a > 160 && r > 190 && g > 190 && b > 190
+        const overlayBox = bounds(overlayRaw, 4, 1920, white)
+        const finalBox = bounds(finalRaw, 3, 1920, white)
+        expect(overlayBox, `${fixture.name} Accurate Preview glyph`).not.toBeNull()
+        expect(finalBox, `${fixture.name} Final libass glyph`).not.toBeNull()
+        if (!overlayBox || !finalBox) continue
+        expect(Math.abs((overlayBox.left + overlayBox.right) / 2 - (finalBox.left + finalBox.right) / 2), `${fixture.name} center X`).toBeLessThanOrEqual(8)
+        expect(Math.abs((overlayBox.top + overlayBox.bottom) / 2 - (finalBox.top + finalBox.bottom) / 2), `${fixture.name} center Y`).toBeLessThanOrEqual(8)
+        expect(lineBands(overlayRaw, 4, 1920), `${fixture.name} Accurate Preview line count`).toBe(lineBands(finalRaw, 3, 1920))
+        expect(lineBands(finalRaw, 3, 1920), `${fixture.name} Final line count`).toBe(spec.lineCount)
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 240_000)
 })

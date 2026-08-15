@@ -506,3 +506,9 @@ Phase 5、planning、highlight、publishing、mass Human Review、caption algori
 - 検証済みterminal statusを15分間main processへ保持し、`auto-caption:status` IPCとrenderer側の一回限りの再照合を追加した。renderer callbackが閉じた、busy、reloadされた場合もProject apply前のcompleted resultを取り逃さない。cancel後・stale failureはProjectを変更しない。
 - failureにはsafeなphase/diagnosticを付け、worker・result validation・baseline・silence validationのどこで止まったかをUI/診断で追跡できるようにした。GUI再実行では生成QA mediaで無音解析、非破壊分割、字幕track配置まで完了した。
 - video_editorは対象19 tests、full serial 48 files / 270 tests、typecheck、build、Electron startup smoke PASS。
+
+## 2026-08-16 NIGHT 13 Subtitle Template Preview / Accurate Preview / Final Parity
+
+- Inspector、Auto Processing、Template Managerのtemplate sample previewを`SubtitleTemplatePreview`へ統一した。1920×1080仮想scene上で共有`buildSubtitleRenderSpec()`を使い、wrapping、anchor、position、maxWidth、font、outline、shadow、background、animationを個別CSS近似から分離した。
+- 静止字幕のFast Previewは既存のASS/libass authoritative overlay、停止中Accurate PreviewとFinalは同一libass経路を継続。template previewは同じspecを使うpresentation確認で、pixel authorityはAccurate/Finalのまま。
+- built-in 3種とTimeline字幕由来の代表user templateについて、1行、2行、最大幅付近、長い日本語、数字・英字混在を実FFmpegでoverlay/Final比較する回帰を追加した。glyph center、line count、visible glyphを確認し、template適用後のstyle/maxLinesも検証する。
