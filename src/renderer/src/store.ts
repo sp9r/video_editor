@@ -24,6 +24,7 @@ import { applySilenceCutToProject, createSilenceCutTimeMapper } from '../../shar
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
 import type { UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { FullCorrectionSession } from '../../shared/full-correction'
+import { describeAutoCaptionBackend } from '../../shared/auto-caption-ui'
 import { createDemoProject } from './demo'
 
 type EditTool = 'select' | 'razor'
@@ -118,6 +119,10 @@ export interface AutoCaptionApplySummary {
   rawWordCount: number
   wordBearingCaptionCount: number
   fallbackUsed: boolean
+  silenceCount: number
+  removedDurationUs: number
+  whisperBackend: string
+  templateId: string
 }
 
 const HISTORY_LIMIT = 80
@@ -267,6 +272,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         let startedJobId = ''
         let terminalBeforeStart: AutoCaptionProgress | undefined
         let settled = false
+        const rejectFromProgress = (progress: AutoCaptionProgress): void => {
+          set({ autoCaptionProgress: progress })
+          settled = true
+          unsubscribe()
+          reject(new Error(progress.errorCode === 'CANCELLED'
+            ? '自動字幕をキャンセルしました。'
+            : `${progress.message} (${progress.errorCode ?? 'WORKER_FAILED'})`))
+        }
         const unsubscribe = window.spectra!.onAutoCaptionProgress((progress) => {
           if (startedJobId && progress.jobId !== startedJobId) return
           if (!startedJobId) {
@@ -276,11 +289,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           if (settled) return
           set({ autoCaptionProgress: progress })
           if (progress.state === 'failed') {
-            settled = true
-            unsubscribe()
-            reject(new Error(progress.errorCode === 'CANCELLED'
-              ? '自動字幕をキャンセルしました。'
-              : `${progress.message} (${progress.errorCode ?? 'WORKER_FAILED'})`))
+            rejectFromProgress(progress)
           } else if (progress.state === 'completed' && progress.result) {
             settled = true
             unsubscribe()
@@ -308,11 +317,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             }
             if (terminal && terminal.jobId === started.jobId && !settled) {
               if (terminal.state === 'failed') {
-                settled = true
-                unsubscribe()
-                reject(new Error(terminal.errorCode === 'CANCELLED'
-                  ? '自動字幕をキャンセルしました。'
-                  : `${terminal.message} (${terminal.errorCode ?? 'WORKER_FAILED'})`))
+                rejectFromProgress(terminal)
               } else if (terminal.result) {
                 settled = true
                 unsubscribe()
@@ -355,13 +360,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 0.96, message: '字幕をTimelineへ適用中…', result } })
       const firstCaption = applied.project.tracks.find((track) => track.id === applied.trackId)?.clips[0]
       get().applyProject(applied.project, firstCaption ? { selectClipId: firstCaption.id } : undefined)
-      const summary = { ...applied, fallbackUsed: result.fallback.used }
+      const summary: AutoCaptionApplySummary = {
+        ...applied,
+        fallbackUsed: result.fallback.used,
+        silenceCount: silenceAnalysis?.silences.length ?? 0,
+        removedDurationUs: silenceSummary?.removedDurationUs ?? silenceAnalysis?.removedDurationUs ?? 0,
+        whisperBackend: describeAutoCaptionBackend(result),
+        templateId: settings?.subtitleTemplate ?? 'default'
+      }
       set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 1, message: '字幕を配置しました。', result }, autoCaptionJobId: null })
       get().showNotice(`自動字幕を${summary.captionCount}件配置しました（raw word ${summary.rawWordCount}件${summary.fallbackUsed ? '・ルールfallback' : ''}${silenceSummary ? `・無音${(silenceSummary.removedDurationUs / 1_000_000).toFixed(2)}秒を短縮` : ''}）。`, 'success')
       return summary
     } catch (error) {
-      set((state) => ({ autoCaptionProgress: state.autoCaptionProgress ? { ...state.autoCaptionProgress, state: 'failed', ratio: 0, message: '自動字幕を配置できませんでした。' } : null, autoCaptionJobId: null }))
-      get().showNotice(`自動字幕を生成できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      set((state) => ({
+        autoCaptionProgress: state.autoCaptionProgress?.state === 'failed'
+          ? state.autoCaptionProgress
+          : state.autoCaptionProgress
+            ? { ...state.autoCaptionProgress, state: 'failed', ratio: 0, message: errorMessage || '自動字幕を完了できませんでした。', errorCode: 'AUTO_CAPTION_FAILED' }
+            : null,
+        autoCaptionJobId: null
+      }))
+      get().showNotice(`自動字幕を生成できませんでした: ${errorMessage}`, 'error')
       return null
     }
   },

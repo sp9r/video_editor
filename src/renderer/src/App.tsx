@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { createEmptyProject } from '../../shared/project'
 import type { AutoCaptionSettings } from '../../shared/auto-caption-contract'
+import { autoCaptionFailureStage, autoCaptionProgressStage, autoCaptionStageLabel, formatDurationUs } from '../../shared/auto-caption-ui'
 import { getSubtitleTemplate, getSubtitleTemplateSettings, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { EncoderReport, ProjectFile } from '../../shared/types'
 import { BrandMark } from './components/Brand'
@@ -29,7 +30,7 @@ import Timeline from './components/Timeline'
 import ReviewPanel from './components/ReviewPanel'
 import SubtitleTemplateManagerPanel from './components/SubtitleTemplateManagerPanel'
 import SubtitleTemplatePreview from './components/SubtitleTemplatePreview'
-import { useEditorStore } from './store'
+import { useEditorStore, type AutoCaptionApplySummary } from './store'
 import { useReviewStore } from './review-store'
 import { autoCaptionControlState } from './action-state'
 
@@ -95,7 +96,7 @@ export default function App(): React.JSX.Element {
     language: 'ja', maxChars: 32, maxLines: 2, segmentationMode: 'auto',
     silenceCut: 'natural', accelerationMode: 'auto', subtitleTemplate: 'default'
   })
-  const [captionSummary, setCaptionSummary] = useState<{ captionCount: number; rawWordCount: number; fallbackUsed: boolean } | null>(null)
+  const [captionSummary, setCaptionSummary] = useState<AutoCaptionApplySummary | null>(null)
   const reviewEnabled = useReviewStore((state) => state.enabled)
 
   useEffect(() => {
@@ -373,6 +374,10 @@ export default function App(): React.JSX.Element {
   const hasAutoProcessingOverrides = captionSettings.maxChars !== selectedAutoProcessingTemplateSettings.maxChars
     || (captionSettings.maxLines ?? 2) !== selectedAutoProcessingTemplateSettings.maxLines
     || captionSettings.segmentationMode !== selectedAutoProcessingTemplateSettings.segmentationMode
+  const captionProgressStage = autoCaptionProgress
+    ? autoCaptionProgress.state === 'failed' ? autoCaptionFailureStage(autoCaptionProgress) : autoCaptionProgressStage(autoCaptionProgress)
+    : null
+  const captionProgressStageLabel = captionProgressStage ? autoCaptionStageLabel(captionProgressStage) : ''
 
   const runAutoCaption = async (): Promise<void> => {
     setCaptionSummary(null)
@@ -565,20 +570,31 @@ export default function App(): React.JSX.Element {
                   <div className="template-actions"><Button disabled={captioning} title={captioning ? '生成中は変更できません' : '現在の設定を新しいtemplateとして保存'} onClick={() => void createUserSubtitleTemplate(false)}>新規保存</Button><Button disabled={captioning} title={captioning ? '生成中は変更できません' : '現在の設定をtemplateとして複製'} onClick={() => void createUserSubtitleTemplate(true)}>複製</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} title={captioning ? '生成中は変更できません' : 'ユーザーtemplateを選択すると更新できます'} onClick={() => void updateUserSubtitleTemplate()}>更新</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} title={captioning ? '生成中は変更できません' : 'ユーザーtemplateを選択すると削除できます'} onClick={() => void deleteUserSubtitleTemplate()}>削除</Button></div>
                   {autoCaptionProgress && (
                     <div className={`caption-progress ${autoCaptionProgress.state === 'failed' ? 'stage-failed' : ''}`} aria-live="polite">
-                      <div className="progress-heading"><strong>{autoCaptionProgress.state === 'preparing' ? '音声準備' : autoCaptionProgress.state === 'transcribing' ? '文字起こし' : autoCaptionProgress.state === 'silence_analyzing' ? '無音解析' : autoCaptionProgress.state === 'segmenting' ? '字幕区切り' : autoCaptionProgress.state === 'completed' ? '字幕配置' : '自動字幕'}</strong><span>{Math.round(autoCaptionProgress.ratio * 100)}%</span></div>
+                      <div className="progress-heading"><strong>{captionProgressStageLabel}</strong><span>{Math.round(autoCaptionProgress.ratio * 100)}%</span></div>
                       <div className="progress-track"><i style={{ width: `${Math.max(0, Math.min(100, autoCaptionProgress.ratio * 100))}%` }} /></div>
                       <small>{autoCaptionProgress.message}</small>
                     </div>
                   )}
-                  {captionSummary && <div className="caption-success" role="status">字幕 {captionSummary.captionCount}件・raw word {captionSummary.rawWordCount}件を新規トラックへ配置しました。{captionSummary.fallbackUsed ? ' ルールfallbackを使用しています。' : ''}</div>}
+                  {autoCaptionProgress?.state === 'failed' && !captionSummary && <div className="caption-failure" role="alert">
+                    <strong>{captionProgressStageLabel}で失敗しました</strong>
+                    <span>{autoCaptionProgress.message}</span>
+                    {autoCaptionProgress.errorCode && <small>診断コード: {autoCaptionProgress.errorCode}</small>}
+                  </div>}
+                  {captionSummary && <div className="caption-success" role="status">
+                    <strong>自動処理が完了しました</strong>
+                    <span>字幕 {captionSummary.captionCount}件・raw word {captionSummary.rawWordCount}件</span>
+                    <span>Whisper: {captionSummary.whisperBackend} · template: {captionSummary.templateId}</span>
+                    <span>無音解析: {captionSummary.silenceCount}件・{formatDurationUs(captionSummary.removedDurationUs)}短縮</span>
+                    {captionSummary.fallbackUsed && <span>字幕区切り: ルールfallbackを使用</span>}
+                  </div>}
                 </>
               )}
             </div>
             <footer className="dialog-footer">
-              <span>{captioning ? '生成中はプロジェクトを変更しません。' : autoCaptionEnabled ? '既存字幕は上書きされません。' : '自動字幕OFFでは実行できません。'}</span>
+              <span>{captioning ? '生成中はプロジェクトを変更しません。' : autoCaptionProgress?.state === 'failed' ? '失敗したProjectは変更されていません。再試行できます。' : autoCaptionEnabled ? '既存字幕は上書きされません。' : '自動字幕OFFでは実行できません。'}</span>
               <div>
                 <Button disabled={captioning && !autoCaptionJobId} title={captioning && !autoCaptionJobId ? 'ジョブの開始を待っています' : captioning ? '自動処理をキャンセル' : 'ダイアログを閉じる'} onClick={() => { if (captioning) void cancelAutoCaption(); else setCaptionDialogOpen(false) }}>{captioning ? 'キャンセル' : 'キャンセル'}</Button>
-                {!captioning && captionSummary ? <Button className="primary-button" onClick={() => setCaptionDialogOpen(false)}>閉じる</Button> : <Button className="primary-button" disabled={!autoCaptionEnabled || autoCaptionRunState.disabled} title={!autoCaptionEnabled ? '自動字幕をONにしてください' : autoCaptionRunState.label} onClick={() => void runAutoCaption()}>{captioning ? '実行中…' : '実行'}</Button>}
+                {!captioning && captionSummary ? <Button className="primary-button" onClick={() => setCaptionDialogOpen(false)}>閉じる</Button> : <Button className="primary-button" disabled={!autoCaptionEnabled || autoCaptionRunState.disabled} title={!autoCaptionEnabled ? '自動字幕をONにしてください' : autoCaptionRunState.label} onClick={() => void runAutoCaption()}>{captioning ? '実行中…' : autoCaptionProgress?.state === 'failed' ? '再試行' : '実行'}</Button>}
               </div>
             </footer>
           </section>

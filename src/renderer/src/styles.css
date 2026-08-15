@@ -727,7 +727,12 @@ select {
 .caption-progress .progress-heading { justify-content: space-between; }
 .caption-progress .progress-heading span { color: var(--text-muted); font: 9px ui-monospace, monospace; }
 .caption-progress small { display: block; margin-top: 7px; color: var(--text-muted); font-size: 9px; }
-.caption-success { padding: 10px; color: #d8f8ef; background: #17332c; border: 1px solid #347965; border-radius: 5px; font-size: 9px; line-height: 1.5; }
+.caption-success, .caption-failure { display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 5px; font-size: 9px; line-height: 1.5; }
+.caption-success { color: #d8f8ef; background: #17332c; border: 1px solid #347965; }
+.caption-success strong, .caption-failure strong { font-size: 10px; }
+.caption-success span, .caption-failure span, .caption-failure small { color: inherit; }
+.caption-failure { color: #ffe4e4; background: #351d23; border: 1px solid #82424d; }
+.caption-failure small { color: #f0adb5; font: 8px ui-monospace, monospace; }
 .export-settings { min-height: 0; overflow: auto; padding: 4px 22px 20px; }
 .export-section { padding: 14px 0 17px; border-bottom: 1px solid var(--line-soft); }
 .export-section h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 11px; }

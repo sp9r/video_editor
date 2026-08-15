@@ -228,6 +228,32 @@ describe('auto-caption worker discovery and service', () => {
     expect(JSON.stringify(terminal)).not.toContain(root)
   })
 
+  it('publishes a path-free silence validation phase when the silence artifact is malformed', async () => {
+    const root = await makeTemp('silence-validation-failure')
+    const media = path.join(root, 'source.mp4')
+    await writeFile(media, 'generated fixture', 'utf8')
+    const fixture = makeProject(media)
+    const executor = async (request: CommandRequest): Promise<CommandResult> => {
+      const requestPath = request.args[request.args.indexOf('--request') + 1]!
+      const outputPath = request.args[request.args.indexOf('--output') + 1]!
+      const silencePath = request.args[request.args.indexOf('--silence-output') + 1]!
+      const payload = JSON.parse(await readFile(requestPath, 'utf8')) as { jobId: string }
+      await writeFile(outputPath, JSON.stringify(resultFor(payload.jobId)), 'utf8')
+      await writeFile(silencePath, '{bad silence json', 'utf8')
+      return { command: request.command, args: request.args, exitCode: 0, stdout: '', stderr: '' }
+    }
+    const service = new AutoCaptionService({
+      appPath: root, userDataPath: root, executor: { run: executor },
+      discover: async () => ({ ...discovery(root), parallel: true })
+    })
+    const run = await runUntilTerminal(service, fixture.project)
+    const terminal = await run.terminal
+    expect(terminal.state).toBe('failed')
+    expect(terminal.message).toContain('silence_validation')
+    expect(terminal.diagnostics?.[0]?.code).toBe('AUTO_CAPTION_SILENCE_VALIDATION')
+    expect(JSON.stringify(terminal)).not.toContain(root)
+  })
+
   it('retains the validated terminal result when the renderer disappears and ignores stale/late completion signals', async () => {
     const root = await makeTemp('lifecycle-retained')
     const media = path.join(root, 'source.mp4')

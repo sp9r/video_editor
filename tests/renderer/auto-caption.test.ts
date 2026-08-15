@@ -194,7 +194,8 @@ describe('automatic caption insertion', () => {
       startAutoCaption, onAutoCaptionProgress: vi.fn((callback) => { progress = callback; return () => { progress = undefined } })
     } as unknown as DesktopApi
 
-    await useEditorStore.getState().autoCaptionSelected()
+    const summary = await useEditorStore.getState().autoCaptionSelected()
+    expect(summary).toMatchObject({ silenceCount: 0, removedDurationUs: 1_000_000, templateId: 'default' })
     const state = useEditorStore.getState()
     const mediaClips = state.project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'video')
     expect(mediaClips.map((clip) => [clip.sourceInUs, clip.durationUs, clip.startUs])).toEqual([[0, 1_000_000, 0], [2_000_000, 2_000_000, 1_000_000]])
@@ -228,6 +229,9 @@ describe('automatic caption insertion', () => {
     expect(useEditorStore.getState().project).toEqual(before)
     expect(useEditorStore.getState().past).toHaveLength(0)
     expect(useEditorStore.getState().notice?.message).toContain('WORKER_FAILED')
+    expect(useEditorStore.getState().autoCaptionProgress?.state).toBe('failed')
+    expect(useEditorStore.getState().autoCaptionProgress?.message).toBe('failed')
+    expect(useEditorStore.getState().autoCaptionJobId).toBeNull()
   })
 
   it('keeps the project unchanged when a started job is cancelled', async () => {

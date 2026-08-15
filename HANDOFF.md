@@ -512,3 +512,10 @@ Phase 5、planning、highlight、publishing、mass Human Review、caption algori
 - Inspector、Auto Processing、Template Managerのtemplate sample previewを`SubtitleTemplatePreview`へ統一した。1920×1080仮想scene上で共有`buildSubtitleRenderSpec()`を使い、wrapping、anchor、position、maxWidth、font、outline、shadow、background、animationを個別CSS近似から分離した。
 - 静止字幕のFast Previewは既存のASS/libass authoritative overlay、停止中Accurate PreviewとFinalは同一libass経路を継続。template previewは同じspecを使うpresentation確認で、pixel authorityはAccurate/Finalのまま。
 - built-in 3種とTimeline字幕由来の代表user templateについて、1行、2行、最大幅付近、長い日本語、数字・英字混在を実FFmpegでoverlay/Final比較する回帰を追加した。glyph center、line count、visible glyphを確認し、template適用後のstyle/maxLinesも検証する。
+
+## 2026-08-16 NIGHT 16 Auto Processing Product UX Hardening
+
+- Auto Processingのprogress表示を共有stage helperへ整理し、音声準備・文字起こし・無音解析・字幕区切り・字幕配置を表示する。main processのpath-free phase/errorCodeをrendererで保持し、Silence Analysis等の失敗箇所を明示する。
+- worker開始前に届いたterminal failureもstatus reconciliationで同じUI状態へ反映する。失敗・cancel後はProjectを変更せずjob IDを解放し、実行ボタンを再試行可能にする。
+- 成功summaryへ字幕数、raw word数、Whisper backend、template ID、silence件数、短縮時間、fallback有無を追加した。詳細は[`docs/NIGHT16_AUTO_PROCESSING_UX_QA.md`](docs/NIGHT16_AUTO_PROCESSING_UX_QA.md)。
+- targeted 25 tests、full 52 files / 293 tests、typecheck、build、Electron startup smoke、interaction state smoke PASS。
