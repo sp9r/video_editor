@@ -81,7 +81,7 @@ const registerIpcHandlers = (): void => {
       platform: process.platform,
       arch: process.arch,
       packaged: app.isPackaged,
-      smokeMode: process.env.SPECTRA_ACCURATE_PREVIEW_SMOKE === '1'
+      smokeMode: process.env.SPECTRA_ACCURATE_PREVIEW_SMOKE === '1' || process.env.SPECTRA_STARTUP_SMOKE === '1' || process.env.SPECTRA_INTERACTION_SMOKE === '1'
     }
   })
 
@@ -462,6 +462,90 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   return { ...startup, ...report }
 }
 
+const runInteractionStateSmoke = async (window: BrowserWindow): Promise<Record<string, unknown>> => {
+  const fixturePath = process.env.SPECTRA_INTERACTION_SMOKE_PROJECT
+  if (!fixturePath) throw new Error('SPECTRA_INTERACTION_SMOKE_PROJECT is required')
+  const project = validateProject(JSON.parse(await readFile(fixturePath, 'utf8')) as ProjectFile)
+  const startup = await waitForRendererStartup(window)
+  const wait = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds))
+  const readDom = async (): Promise<Record<string, unknown>> => await window.webContents.executeJavaScript(`(() => {
+    const text = (button) => button?.textContent?.replace(/\\s+/gu, '') ?? ''
+    const buttons = [...document.querySelectorAll('button')]
+    const byText = (value) => buttons.find((button) => text(button).includes(value))
+    const auto = byText('自動処理')
+    const run = byText('実行')
+    const review = byText('レビュー')
+    const correction = byText('全文修正')
+    const dialog = document.querySelector('.caption-dialog')
+    return {
+      dialog: Boolean(dialog),
+      dialogTitle: dialog?.querySelector('h2')?.textContent ?? '',
+      autoProcessing: auto ? { disabled: auto.disabled, title: auto.getAttribute('title') ?? '', text: text(auto) } : null,
+      run: run ? { disabled: run.disabled, title: run.getAttribute('title') ?? '', text: text(run) } : null,
+      review: review ? { disabled: review.disabled, text: text(review), active: review.classList.contains('is-active') } : null,
+      fullCorrection: correction ? { disabled: correction.disabled, text: text(correction) } : null,
+      saved: document.querySelector('.project-menu')?.textContent?.includes('保存済み') ?? false,
+      focusedTag: document.activeElement?.tagName ?? '',
+      rootChildCount: document.querySelector('#root')?.childElementCount ?? 0
+    }
+  })()`)
+  const dispatchProject = async (detail: Record<string, unknown>): Promise<void> => {
+    await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${JSON.stringify(detail)} }))`)
+    await wait(100)
+  }
+  const dispatchProcessing = async (state: string): Promise<void> => {
+    await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-processing', { detail: ${JSON.stringify({ state })} }))`)
+    await wait(100)
+  }
+  const click = async (selector: string): Promise<void> => {
+    await window.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(selector)})?.click()`)
+    await wait(100)
+  }
+  const clickText = async (value: string): Promise<void> => {
+    await window.webContents.executeJavaScript(`(() => { const buttons = [...document.querySelectorAll('button')]; const button = buttons.find((item) => (item.textContent ?? '').replace(/\\s+/gu, '').includes(${JSON.stringify(value)})); button?.click() })()`)
+    await wait(100)
+  }
+  const empty = structuredClone(project)
+  empty.media = []
+  empty.tracks = empty.tracks.map((track) => ({ ...track, clips: [] }))
+  const mediaOnly = structuredClone(project)
+  mediaOnly.tracks = mediaOnly.tracks.map((track) => ({ ...track, clips: [] }))
+  const offline = structuredClone(project)
+  offline.media = offline.media.map((asset) => ({ ...asset, offline: true }))
+  const transitions: Record<string, unknown> = {}
+  await dispatchProject({ project: empty })
+  transitions.emptyProject = await readDom()
+  await dispatchProject({ project: mediaOnly })
+  transitions.mediaImported = await readDom()
+  await dispatchProject({ project: mediaOnly, selectAssetId: 'night07-source' })
+  transitions.mediaSelected = await readDom()
+  await dispatchProject({ project })
+  transitions.clipOnTimeline = await readDom()
+  await dispatchProject({ project, selectClipId: 'night07-video' })
+  await clickText('自動処理')
+  transitions.clipSelected = await readDom()
+  await dispatchProcessing('running')
+  transitions.processingRunning = await readDom()
+  await dispatchProcessing('completed')
+  transitions.processingCompleted = await readDom()
+  await dispatchProcessing('failed')
+  transitions.processingFailed = await readDom()
+  await click('.caption-dialog button[aria-label^="閉じる"]')
+  transitions.modalClosed = await readDom()
+  await dispatchProject({ project, selectClipId: 'night07-caption' })
+  transitions.subtitleSelected = await readDom()
+  await clickText('レビューOFF')
+  transitions.reviewMode = await readDom()
+  await dispatchProject({ project, selectClipId: 'night07-caption' })
+  transitions.fullCorrection = await readDom()
+  await clickText('レビューON')
+  await dispatchProject({ project: offline })
+  await dispatchProject({ project: offline, selectClipId: 'night07-video' })
+  await clickText('自動処理')
+  transitions.offlineMedia = await readDom()
+  return { ...startup, transitions }
+}
+
 const start = async (): Promise<void> => {
   installMediaProtocol()
   ffmpegService = await createFfmpegService({
@@ -489,6 +573,17 @@ const start = async (): Promise<void> => {
       app.exit(0)
     } catch (error) {
       console.error(`SPECTRA_ACCURATE_PREVIEW_REPORT ${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}`)
+      app.exit(1)
+    }
+    return
+  }
+  if (process.env.SPECTRA_INTERACTION_SMOKE === '1') {
+    try {
+      const report = await runInteractionStateSmoke(mainWindow)
+      console.log(`SPECTRA_INTERACTION_REPORT ${JSON.stringify(report)}`)
+      app.exit(0)
+    } catch (error) {
+      console.error(`SPECTRA_INTERACTION_REPORT ${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}`)
       app.exit(1)
     }
     return

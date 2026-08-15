@@ -18,6 +18,7 @@
     "dev": "node scripts/dev.mjs",
     "build": "npm run typecheck && node scripts/build.mjs",
     "smoke:electron": "node scripts/electron-startup-smoke.mjs",
+    "smoke:interaction": "npm run build && node scripts/electron-interaction-state-smoke.mjs",
     "smoke:accurate-preview": "npm run build && node scripts/accurate-preview-smoke.mjs",
     "subtitle:geometry": "npm run build && node scripts/subtitle-geometry-smoke.mjs",
     "subtitle:parity": "npm run build && node scripts/subtitle-parity-harness.mjs",

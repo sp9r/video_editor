@@ -251,6 +251,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       get().showNotice('動画または音声クリップを1つだけ選択してから自動字幕を実行してください。', 'warning')
       return null
     }
+    const asset = 'assetId' in selectedClip ? project.media.find((item) => item.id === selectedClip.assetId) : undefined
+    if (!asset || asset.offline || !asset.hasAudio) {
+      get().showNotice('選択した素材の音声を利用できません。再リンクまたは音声付き素材を選択してください。', 'warning')
+      return null
+    }
     set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: '', state: 'preparing', ratio: 0, message: '音声準備中…' }, autoCaptionJobId: null })
     try {
       const health = await window.spectra.autoCaptionHealth()

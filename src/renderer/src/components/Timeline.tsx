@@ -375,6 +375,8 @@ export default function Timeline(): React.JSX.Element {
     const up = (pointerEvent: PointerEvent): void => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', cancel)
+      window.removeEventListener('blur', cancel)
       const latestTrackId = document.elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)?.closest('.track-lane')?.getAttribute('data-track-id') ?? start.targetTrackId
       if (!shouldCommitPointerEdit({
         mode,
@@ -392,8 +394,17 @@ export default function Timeline(): React.JSX.Element {
       else trim(clip.id, 'end', start.initialStartUs + start.initialDurationUs + deltaUs)
       setPointerEdit(null)
     }
+    const cancel = (): void => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', cancel)
+      window.removeEventListener('blur', cancel)
+      setPointerEdit(null)
+    }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', cancel)
+    window.addEventListener('blur', cancel)
   }
 
   const importSubtitles = async (): Promise<void> => {

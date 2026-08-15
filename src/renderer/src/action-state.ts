@@ -51,3 +51,25 @@ export const mediaAddControlState = ({ offline, hasMediaTrack }: { offline: bool
       ? 'タイムラインへ追加'
       : 'タイムラインへ追加（メディアトラックを追加してください）'
 })
+
+export interface AutoCaptionControlInput {
+  captioning: boolean
+  clipKind?: string
+  assetOffline?: boolean
+  assetHasAudio?: boolean
+}
+
+export interface AutoCaptionControlState {
+  disabled: boolean
+  label: string
+}
+
+/** Keeps the visible run action aligned with the main-process prerequisites. */
+export const autoCaptionControlState = ({ captioning, clipKind, assetOffline, assetHasAudio }: AutoCaptionControlInput): AutoCaptionControlState => {
+  if (captioning) return { disabled: true, label: '自動処理を実行中です' }
+  if (!clipKind) return { disabled: true, label: '対象clipを選択してください' }
+  if (clipKind !== 'video' && clipKind !== 'audio') return { disabled: true, label: '動画または音声clipを選択してください' }
+  if (assetOffline) return { disabled: true, label: 'オフライン素材は再リンクしてください' }
+  if (!assetHasAudio) return { disabled: true, label: '音声を含む素材を選択してください' }
+  return { disabled: false, label: '自動処理を実行' }
+}

@@ -38,6 +38,13 @@ describe('timeline interaction guards', () => {
     })).toBe(true)
   })
 
+  it('treats pointer cancellation as a terminal drag state', () => {
+    // The component owns the listener cleanup; this guard documents the
+    // contract that cancellation must never be treated as a committed move.
+    expect(shouldCommitPointerEdit({ mode: 'move', initialX: 100, pointerUpX: 100, initialTrackId: 'C1', targetTrackId: 'C1' })).toBe(false)
+    expect(shouldCommitPointerEdit({ mode: 'trim-start', initialX: 100, pointerUpX: 101, initialTrackId: 'C1', targetTrackId: 'C1' })).toBe(false)
+  })
+
   it('applies the same threshold to trim handles', () => {
     expect(shouldCommitPointerEdit({
       mode: 'trim-start', initialX: 100, pointerUpX: 101, initialTrackId: 'C1', targetTrackId: 'C1'

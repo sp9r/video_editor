@@ -29,6 +29,7 @@ import Timeline from './components/Timeline'
 import ReviewPanel from './components/ReviewPanel'
 import { useEditorStore } from './store'
 import { useReviewStore } from './review-store'
+import { autoCaptionControlState } from './action-state'
 
 const isTypingTarget = (target: EventTarget | null): boolean => {
   const element = target as HTMLElement | null
@@ -59,6 +60,7 @@ export default function App(): React.JSX.Element {
     showNotice,
     clearNotice,
     selectClip,
+    selectAsset,
     addSubtitle,
     autoCaptionSelected,
     setUserSubtitleTemplates: setStoreUserSubtitleTemplates,
@@ -200,10 +202,14 @@ export default function App(): React.JSX.Element {
     if (!window.spectra) return
     let active = true
     const onPreviewE2eProject = (event: Event): void => {
-      const detail = (event as CustomEvent<{ project?: ProjectFile; timeUs?: number }>).detail
+      const detail = (event as CustomEvent<{ project?: ProjectFile; timeUs?: number; selectClipId?: string; selectAssetId?: string }>).detail
       if (!detail?.project) return
       try {
         loadProject(detail.project)
+        if (detail.selectClipId || detail.selectAssetId) window.setTimeout(() => {
+          if (detail.selectClipId) selectClip(detail.selectClipId)
+          if (detail.selectAssetId) selectAsset(detail.selectAssetId)
+        }, 0)
         if (Number.isFinite(detail.timeUs)) setPlayhead(detail.timeUs ?? 0)
       } catch (error) {
         showNotice(`E2Eプロジェクトを読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
@@ -216,7 +222,23 @@ export default function App(): React.JSX.Element {
       active = false
       window.removeEventListener('spectra:e2e-project', onPreviewE2eProject)
     }
-  }, [loadProject, setPlayhead, showNotice])
+  }, [loadProject, selectAsset, selectClip, setPlayhead, showNotice])
+
+  useEffect(() => {
+    if (!window.spectra) return
+    let active = true
+    const onProcessingSmoke = (event: Event): void => {
+      const state = (event as CustomEvent<{ state?: string }>).detail?.state
+      if (active && state) setCaptioning(state === 'running')
+    }
+    void window.spectra.getAppInfo().then((info) => {
+      if (active && info.smokeMode) window.addEventListener('spectra:e2e-processing', onProcessingSmoke)
+    }).catch(() => undefined)
+    return () => {
+      active = false
+      window.removeEventListener('spectra:e2e-processing', onProcessingSmoke)
+    }
+  }, [])
 
   useEffect(() => {
     if (!dirty) return
@@ -312,6 +334,16 @@ export default function App(): React.JSX.Element {
   const selectedCaptionClip = selectedClipIds.length === 1
     ? project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === selectedClipIds[0])
     : undefined
+
+  const selectedCaptionAsset = selectedCaptionClip && 'assetId' in selectedCaptionClip
+    ? project.media.find((asset) => asset.id === selectedCaptionClip.assetId)
+    : undefined
+  const autoCaptionRunState = autoCaptionControlState({
+    captioning,
+    clipKind: selectedCaptionClip?.kind,
+    assetOffline: selectedCaptionAsset?.offline,
+    assetHasAudio: selectedCaptionAsset?.hasAudio
+  })
 
   const selectedAutoCaptionTrack = selectedCaptionClip?.kind === 'subtitle' && selectedCaptionClip.sourceJobId
     ? project.tracks.find((track) => track.kind === 'subtitle' && track.clips.some((clip) => clip.id === selectedCaptionClip.id))
@@ -505,7 +537,7 @@ export default function App(): React.JSX.Element {
               <span>{captioning ? '生成中はプロジェクトを変更しません。' : autoCaptionEnabled ? '既存字幕は上書きされません。' : '自動字幕OFFでは実行できません。'}</span>
               <div>
                 <Button disabled={captioning && !autoCaptionJobId} title={captioning && !autoCaptionJobId ? 'ジョブの開始を待っています' : captioning ? '自動処理をキャンセル' : 'ダイアログを閉じる'} onClick={() => { if (captioning) void cancelAutoCaption(); else setCaptionDialogOpen(false) }}>{captioning ? 'キャンセル' : 'キャンセル'}</Button>
-                {!captioning && captionSummary ? <Button className="primary-button" onClick={() => setCaptionDialogOpen(false)}>閉じる</Button> : <Button className="primary-button" disabled={captioning || !autoCaptionEnabled || !selectedCaptionClip || (selectedCaptionClip.kind !== 'video' && selectedCaptionClip.kind !== 'audio')} title={captioning ? '実行中です' : !autoCaptionEnabled ? '自動字幕をONにしてください' : !selectedCaptionClip ? '対象clipを選択してください' : selectedCaptionClip.kind !== 'video' && selectedCaptionClip.kind !== 'audio' ? '動画または音声clipを選択してください' : '自動処理を実行'} onClick={() => void runAutoCaption()}>{captioning ? '実行中…' : '実行'}</Button>}
+                {!captioning && captionSummary ? <Button className="primary-button" onClick={() => setCaptionDialogOpen(false)}>閉じる</Button> : <Button className="primary-button" disabled={!autoCaptionEnabled || autoCaptionRunState.disabled} title={!autoCaptionEnabled ? '自動字幕をONにしてください' : autoCaptionRunState.label} onClick={() => void runAutoCaption()}>{captioning ? '実行中…' : '実行'}</Button>}
               </div>
             </footer>
           </section>

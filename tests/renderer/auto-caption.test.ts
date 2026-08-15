@@ -15,6 +15,22 @@ afterEach(() => {
 })
 
 describe('automatic caption insertion', () => {
+  it('rejects offline or audio-less sources before starting a worker', async () => {
+    const startAutoCaption = vi.fn()
+    window.spectra = { startAutoCaption } as unknown as DesktopApi
+    for (const patch of [{ offline: true }, { hasAudio: false }]) {
+      const unusable = { ...asset, ...patch }
+      let project = { ...createEmptyProject('unusable auto caption'), media: [unusable] }
+      const video = { ...createClipForAsset(unusable, 0, 4_000_000), id: `unusable-${String(patch.offline ?? 'audio')}` }
+      project = addClipToTrack(project, project.tracks.find((track) => track.kind === 'media')!.id, video)
+      useEditorStore.getState().loadProject(project)
+      useEditorStore.getState().selectClip(video.id)
+      expect(await useEditorStore.getState().autoCaptionSelected()).toBeNull()
+      expect(startAutoCaption).not.toHaveBeenCalled()
+      expect(useEditorStore.getState().notice?.message).toContain('音声を利用できません')
+    }
+  })
+
   it('creates editable word-bearing subtitle clips in one undoable project change', async () => {
     let project = { ...createEmptyProject('auto caption'), media: [asset] }
     const video = { ...createClipForAsset(asset, 0, 4_000_000), id: 'auto-caption-video' }

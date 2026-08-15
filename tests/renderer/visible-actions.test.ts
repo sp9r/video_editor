@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mediaAddControlState, timelineZoomControlState, trackControlState } from '../../src/renderer/src/action-state'
+import { autoCaptionControlState, mediaAddControlState, timelineZoomControlState, trackControlState } from '../../src/renderer/src/action-state'
 
 const track = (id: string, kind: 'media' | 'subtitle', clips: unknown[] = []) => ({ id, kind, name: id, clips } as never)
 
@@ -28,5 +28,14 @@ describe('visible action prerequisites', () => {
     expect(mediaAddControlState({ offline: true, hasMediaTrack: true })).toMatchObject({ disabled: true, label: expect.stringContaining('再リンク') })
     expect(mediaAddControlState({ offline: false, hasMediaTrack: false })).toMatchObject({ disabled: true, label: expect.stringContaining('メディアトラック') })
     expect(mediaAddControlState({ offline: false, hasMediaTrack: true })).toEqual({ disabled: false, label: 'タイムラインへ追加' })
+  })
+
+  it('keeps auto-caption run disabled until the selected source is usable', () => {
+    expect(autoCaptionControlState({ captioning: false })).toEqual({ disabled: true, label: '対象clipを選択してください' })
+    expect(autoCaptionControlState({ captioning: false, clipKind: 'subtitle' })).toMatchObject({ disabled: true })
+    expect(autoCaptionControlState({ captioning: false, clipKind: 'video', assetOffline: true, assetHasAudio: true })).toEqual({ disabled: true, label: 'オフライン素材は再リンクしてください' })
+    expect(autoCaptionControlState({ captioning: false, clipKind: 'video', assetOffline: false, assetHasAudio: false })).toEqual({ disabled: true, label: '音声を含む素材を選択してください' })
+    expect(autoCaptionControlState({ captioning: false, clipKind: 'video', assetOffline: false, assetHasAudio: true })).toEqual({ disabled: false, label: '自動処理を実行' })
+    expect(autoCaptionControlState({ captioning: true, clipKind: 'video', assetOffline: false, assetHasAudio: true })).toMatchObject({ disabled: true })
   })
 })
