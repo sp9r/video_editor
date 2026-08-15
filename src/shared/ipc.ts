@@ -14,6 +14,7 @@ export const IPC = {
   previewPlan: 'preview:plan',
   previewAccurateFrame: 'preview:accurate-frame',
   previewSubtitleOverlay: 'preview:subtitle-overlay',
+  captionsGenerate: 'captions:generate',
   subtitlesImport: 'subtitles:import',
   encodersDetect: 'encoders:detect',
   exportChoosePath: 'export:choose-path',

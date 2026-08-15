@@ -349,6 +349,7 @@ export interface DesktopApi {
   createPreviewPlan(project: ProjectFile): Promise<PreviewPlan>
   renderAccuratePreviewFrame(project: ProjectFile, timeUs: TimeUs): Promise<AccuratePreviewFrameResult>
   renderSubtitleOverlay(project: ProjectFile, timeUs: TimeUs): Promise<SubtitleOverlayResult>
+  generateCaptions(project: ProjectFile, videoClipId: string): Promise<import('./automation').TranscriptAiOutput>
   detectEncoders(force?: boolean): Promise<EncoderReport>
   chooseExportPath(defaultName: string): Promise<string | null>
   startExport(project: ProjectFile, settings: ExportSettings): Promise<StartExportResult>

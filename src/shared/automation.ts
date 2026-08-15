@@ -7,13 +7,14 @@ import {
   type TransformSettings
 } from './types.js'
 import { isMediaTrack } from './types.js'
+import { deriveSubtitleEditUnits } from './editing/edit-units.js'
 
 /**
  * The automation boundary is deliberately narrower than ProjectFile. Providers
  * receive this path-free summary and may only return the edit commands below.
  */
 export const AUTOMATION_SCHEMA_VERSION = 1 as const
-export const MAX_AUTOMATION_COMMANDS = 500
+export const MAX_AUTOMATION_COMMANDS = 20_000
 export const MAX_AUTOMATION_TEXT_LENGTH = 100_000
 
 const MAX_TIME_US = 7 * 24 * 60 * 60 * 1_000_000
@@ -129,6 +130,14 @@ export interface TranscriptSegment {
   text: string
   confidence?: number
   speaker?: string
+  words?: readonly TranscriptWord[]
+}
+
+export interface TranscriptWord {
+  id: string
+  text: string
+  startUs: number
+  endUs: number
 }
 
 export interface TranscriptAiOutput {
@@ -150,6 +159,7 @@ export interface InsertSubtitleCommand {
   startUs: number
   durationUs: number
   text: string
+  words?: readonly TranscriptWord[]
 }
 
 export interface UpdateSubtitleCommand {
@@ -584,7 +594,7 @@ const parseCommand = (value: unknown, project: ProjectFile): AutomationEditComma
 
   switch (type) {
     case 'insert-subtitle': {
-      assertKeys(value, ['type', 'trackId', 'clipId', 'startUs', 'durationUs', 'text'], type)
+      assertKeys(value, ['type', 'trackId', 'clipId', 'startUs', 'durationUs', 'text', 'words'], type)
       const trackId = identifier(ownValue(value, 'trackId'), 'trackId')
       const track = findTrack(project, trackId)
       assertUnlocked(track)
@@ -592,13 +602,29 @@ const parseCommand = (value: unknown, project: ProjectFile): AutomationEditComma
       const suppliedId = ownValue(value, 'clipId')
       const clipId = suppliedId === undefined ? newId('ai-caption') : identifier(suppliedId, 'clipId')
       ensureNoClipId(project, clipId)
+      const startUs = integer(ownValue(value, 'startUs'), 'startUs')
+      const durationUs = integer(ownValue(value, 'durationUs'), 'durationUs', 1)
+      const wordsValue = ownValue(value, 'words')
+      let words: TranscriptWord[] | undefined
+      if (wordsValue !== undefined) {
+        if (!Array.isArray(wordsValue) || wordsValue.length === 0) throw new Error('words must be a non-empty array')
+        words = wordsValue.map((rawWord, index) => parseTranscriptWord(rawWord, `words[${index}]`))
+        if (words.map((word) => word.text).join('') !== requiredString(ownValue(value, 'text'), 'text', MAX_AUTOMATION_TEXT_LENGTH)) {
+          throw new Error('words must reconstruct subtitle text')
+        }
+        const endUs = startUs + durationUs
+        if (words.some((word) => word.startUs < startUs || word.endUs > endUs)) {
+          throw new Error('words must fit inside subtitle timing')
+        }
+      }
       return {
         type,
         trackId,
         clipId,
-        startUs: integer(ownValue(value, 'startUs'), 'startUs'),
-        durationUs: integer(ownValue(value, 'durationUs'), 'durationUs', 1),
-        text: requiredString(ownValue(value, 'text'), 'text', MAX_AUTOMATION_TEXT_LENGTH)
+        startUs,
+        durationUs,
+        text: requiredString(ownValue(value, 'text'), 'text', MAX_AUTOMATION_TEXT_LENGTH),
+        ...(words ? { words } : {})
       }
     }
     case 'update-subtitle': {
@@ -697,7 +723,13 @@ const applyCommandMutable = (project: ProjectFile, command: AutomationEditComman
         sourceInUs: 0,
         enabled: true,
         text: command.text,
-        style: clone(DEFAULT_SUBTITLE_STYLE)
+        style: clone(DEFAULT_SUBTITLE_STYLE),
+        ...(command.words?.length
+          ? {
+              words: command.words.map((word) => ({ ...word })),
+              editUnits: deriveSubtitleEditUnits(command.words.map((word) => ({ ...word })))
+            }
+          : {})
       })
       track.clips.sort((left, right) => left.startUs - right.startUs)
       return
@@ -829,11 +861,21 @@ const parseTranscript = (input: Record<string, unknown>): TranscriptAiOutput => 
   }
   const segments = rawSegments.map((raw, index): TranscriptSegment => {
     if (!isRecord(raw)) throw new Error(`segments[${index}] must be an object`)
-    assertKeys(raw, ['startUs', 'endUs', 'text', 'confidence', 'speaker'], `segments[${index}]`)
+    assertKeys(raw, ['startUs', 'endUs', 'text', 'confidence', 'speaker', 'words'], `segments[${index}]`)
     const startUs = integer(ownValue(raw, 'startUs'), `segments[${index}].startUs`)
     const endUs = integer(ownValue(raw, 'endUs'), `segments[${index}].endUs`, 1)
     if (endUs <= startUs) throw new Error(`segments[${index}] has an invalid range`)
     const confidenceValue = ownValue(raw, 'confidence')
+    const wordsValue = ownValue(raw, 'words')
+    let words: TranscriptWord[] | undefined
+    if (wordsValue !== undefined) {
+      if (!Array.isArray(wordsValue) || wordsValue.length === 0) throw new Error(`segments[${index}].words must be a non-empty array`)
+      words = wordsValue.map((word, wordIndex) => parseTranscriptWord(word, `segments[${index}].words[${wordIndex}]`))
+      if (words.map((word) => word.text).join('') !== requiredString(ownValue(raw, 'text'), `segments[${index}].text`, MAX_AUTOMATION_TEXT_LENGTH)) {
+        throw new Error(`segments[${index}].words do not reconstruct the segment text`)
+      }
+      if (words.some((word) => word.startUs < startUs || word.endUs > endUs)) throw new Error(`segments[${index}].words exceed segment timing`)
+    }
     return {
       startUs,
       endUs,
@@ -841,7 +883,8 @@ const parseTranscript = (input: Record<string, unknown>): TranscriptAiOutput => 
       ...(confidenceValue === undefined ? {} : { confidence: finiteNumber(confidenceValue, 'confidence', 0, 1) }),
       ...(ownValue(raw, 'speaker') === undefined
         ? {}
-        : { speaker: requiredString(ownValue(raw, 'speaker'), `segments[${index}].speaker`, 100) })
+        : { speaker: requiredString(ownValue(raw, 'speaker'), `segments[${index}].speaker`, 100) }),
+      ...(words ? { words } : {})
     }
   })
   return {
@@ -851,6 +894,20 @@ const parseTranscript = (input: Record<string, unknown>): TranscriptAiOutput => 
     ...(optionalString(ownValue(input, 'text'), 'text', MAX_AUTOMATION_TEXT_LENGTH)
       ? { text: optionalString(ownValue(input, 'text'), 'text', MAX_AUTOMATION_TEXT_LENGTH) }
       : {})
+  }
+}
+
+const parseTranscriptWord = (value: unknown, label: string): TranscriptWord => {
+  if (!isRecord(value)) throw new Error(`${label} must be an object`)
+  assertKeys(value, ['id', 'text', 'startUs', 'endUs'], label)
+  const startUs = integer(ownValue(value, 'startUs'), `${label}.startUs`)
+  const endUs = integer(ownValue(value, 'endUs'), `${label}.endUs`)
+  if (endUs < startUs) throw new Error(`${label} has an invalid range`)
+  return {
+    id: identifier(ownValue(value, 'id'), `${label}.id`),
+    text: requiredString(ownValue(value, 'text'), `${label}.text`, MAX_AUTOMATION_TEXT_LENGTH),
+    startUs,
+    endUs
   }
 }
 
@@ -919,7 +976,8 @@ export const createAutomationPlanFromOutput = (
       clipId: newId('ai-caption'),
       startUs: segment.startUs,
       durationUs: segment.endUs - segment.startUs,
-      text: segment.text
+      text: segment.text,
+      ...(segment.words ? { words: segment.words.map((word) => ({ ...word })) } : {})
     }))
   }
   if (proposal.commands.length === 0) throw new Error('Transcript contains no segments')

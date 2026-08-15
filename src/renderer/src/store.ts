@@ -19,6 +19,8 @@ import { deleteLinkedClips, EditingOperationError, isSubtitleWordBoundarySplitAv
 import { linkedClipIds } from '../../shared/editing/links'
 import { isMediaTrack } from '../../shared/types'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
+import { createAutomationPlanFromOutput, previewAutomationProposal } from '../../shared/automation'
+import type { TranscriptAiOutput } from '../../shared/automation'
 import { createDemoProject } from './demo'
 
 type EditTool = 'select' | 'razor'
@@ -59,6 +61,7 @@ interface EditorState {
   addAssets(assets: MediaAsset[]): void
   relinkAsset(assetId: string, asset: MediaAsset): void
   addAssetClip(assetId: string, trackId: string, atUs: TimeUs): void
+  autoCaptionSelected(): Promise<void>
   addSubtitle(): void
   patchClip(clipId: string, patcher: (clip: TimelineClip) => TimelineClip): void
   splitSubtitleAtWordBoundary(clipId: string, boundaryIndex: number): void
@@ -201,6 +204,29 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
     const clip = createClipForAsset(asset, Math.max(0, atUs))
     get().applyProject(addClipToTrack(project, trackId, clip), { selectClipId: clip.id })
+  },
+  autoCaptionSelected: async () => {
+    if (!window.spectra) {
+      get().showNotice('自動字幕はElectronデスクトップ版で利用できます。', 'warning')
+      return
+    }
+    const selectedVideo = get().project.tracks
+      .flatMap((track) => track.clips)
+      .find((clip) => get().selectedClipIds.includes(clip.id) && clip.kind === 'video')
+    if (!selectedVideo || selectedVideo.kind !== 'video') {
+      get().showNotice('動画クリップを1つ選択してから自動字幕を実行してください。', 'warning')
+      return
+    }
+    try {
+      const output: TranscriptAiOutput = await window.spectra.generateCaptions(get().project, selectedVideo.id)
+      const plan = createAutomationPlanFromOutput(get().project, output, { title: 'Whisper自動字幕' })
+      const preview = previewAutomationProposal(get().project, plan)
+      const firstCaption = plan.commands.find((command) => command.type === 'insert-subtitle')
+      get().applyProject(preview.project, firstCaption?.type === 'insert-subtitle' ? { selectClipId: firstCaption.clipId } : undefined)
+      get().showNotice(`自動字幕を${plan.commands.length}件生成しました。すぐに分割・結合・境界編集できます。`, 'success')
+    } catch (error) {
+      get().showNotice(`自動字幕を生成できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+    }
   },
   addSubtitle: () => {
     const { project, playheadUs } = get()

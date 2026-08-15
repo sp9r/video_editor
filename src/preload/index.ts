@@ -20,6 +20,7 @@ const api: DesktopApi = {
   createPreviewPlan: (project: ProjectFile) => ipcRenderer.invoke(IPC.previewPlan, project),
   renderAccuratePreviewFrame: (project: ProjectFile, timeUs: TimeUs) => ipcRenderer.invoke(IPC.previewAccurateFrame, project, timeUs),
   renderSubtitleOverlay: (project: ProjectFile, timeUs: TimeUs) => ipcRenderer.invoke(IPC.previewSubtitleOverlay, project, timeUs),
+  generateCaptions: (project: ProjectFile, videoClipId: string) => ipcRenderer.invoke(IPC.captionsGenerate, project, videoClipId),
   detectEncoders: (force = false) => ipcRenderer.invoke(IPC.encodersDetect, force),
   chooseExportPath: (defaultName: string) => ipcRenderer.invoke(IPC.exportChoosePath, defaultName),
   startExport: (project: ProjectFile, settings: ExportSettings) => ipcRenderer.invoke(IPC.exportStart, project, settings),

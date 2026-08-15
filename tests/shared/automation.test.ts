@@ -153,7 +153,13 @@ describe('validated automation preview and undo', () => {
       kind: 'transcript',
       language: 'ja',
       segments: [
-        { startUs: 500_000, endUs: 1_500_000, text: 'こんにちは', confidence: 0.98 },
+        {
+          startUs: 500_000,
+          endUs: 1_500_000,
+          text: 'こんにちは',
+          confidence: 0.98,
+          words: [{ id: 'source-word:0', text: 'こんにちは', startUs: 500_000, endUs: 1_500_000 }]
+        },
         { startUs: 2_000_000, endUs: 3_000_000, text: '動画編集です' }
       ]
     })
@@ -166,6 +172,10 @@ describe('validated automation preview and undo', () => {
       startUs: 500_000,
       durationUs: 1_000_000,
       text: 'こんにちは'
+    })
+    expect(preview.project.tracks[1]?.clips[0]).toMatchObject({
+      words: [{ id: 'source-word:0', text: 'こんにちは' }],
+      editUnits: [{ parentSourceWordId: 'source-word:0', timingProvenance: 'source' }]
     })
 
     const applied = applyAutomationPreview(original, preview)

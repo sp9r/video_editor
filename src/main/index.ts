@@ -13,6 +13,7 @@ import { buildSubtitleRenderSpec } from '../shared/subtitle-render'
 import { createSubtitleParityFixture } from '../shared/subtitle-parity-fixture'
 import { loadExperimentalReviewRecords, saveExperimentalReviewRecord } from './review-service'
 import type { ExperimentalReviewRecord } from '../shared/review/types'
+import { generateCaptionsForMedia } from './ai/external-caption'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
@@ -147,6 +148,17 @@ const registerIpcHandlers = (): void => {
       throw new Error('字幕overlayの時刻が不正です。')
     }
     return await requireService().renderSubtitleOverlay(validateProject(projectInput), timeUs)
+  })
+
+  ipcMain.handle(IPC.captionsGenerate, async (event, projectInput: ProjectFile, videoClipId: unknown) => {
+    assertTrustedSender(event)
+    if (typeof videoClipId !== 'string' || !videoClipId.trim()) throw new Error('自動字幕の対象動画が指定されていません。')
+    const project = validateProject(projectInput)
+    const videoClip = project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === videoClipId)
+    if (!videoClip || videoClip.kind !== 'video') throw new Error('自動字幕は動画クリップを1つ選択して実行してください。')
+    const asset = project.media.find((candidate) => candidate.id === videoClip.assetId)
+    if (!asset || asset.kind !== 'video' || asset.offline || !path.isAbsolute(asset.path)) throw new Error('自動字幕の動画素材がオフラインです。')
+    return await generateCaptionsForMedia({ appPath: app.getAppPath(), mediaPath: asset.path })
   })
 
   ipcMain.handle(IPC.waveformPeaks, async (event, request) => {

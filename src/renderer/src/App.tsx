@@ -56,7 +56,8 @@ export default function App(): React.JSX.Element {
     showNotice,
     clearNotice,
     selectClip,
-    addSubtitle
+    addSubtitle,
+    autoCaptionSelected
   } = useEditorStore()
   const [workspace, setWorkspace] = useState<'edit' | 'audio' | 'captions'>('edit')
   const [exportOpen, setExportOpen] = useState(false)
@@ -64,6 +65,7 @@ export default function App(): React.JSX.Element {
   const [recoveryStatus, setRecoveryStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [encoderReport, setEncoderReport] = useState<EncoderReport | null>(null)
   const [appError, setAppError] = useState<string | null>(null)
+  const [captioning, setCaptioning] = useState(false)
   const reviewEnabled = useReviewStore((state) => state.enabled)
 
   useEffect(() => {
@@ -253,6 +255,15 @@ export default function App(): React.JSX.Element {
     showNotice('新しいプロジェクトを作成しました。', 'success')
   }
 
+  const runAutoCaption = async (): Promise<void> => {
+    setCaptioning(true)
+    try {
+      await autoCaptionSelected()
+    } finally {
+      setCaptioning(false)
+    }
+  }
+
   return (
     <main className={`app-shell workspace-${workspace}`}>
       <header className="app-header">
@@ -279,6 +290,7 @@ export default function App(): React.JSX.Element {
             if (reviewEnabled) useReviewStore.getState().stop()
             else if (!useReviewStore.getState().start(project, useEditorStore.getState().selectedClipIds[0])) showNotice('レビュー対象の字幕がありません。', 'warning')
           }}>レビュー {reviewEnabled ? 'ON' : 'OFF'}</Button>
+          <Button disabled={captioning} onClick={() => void runAutoCaption()}><Captions size={15} />{captioning ? '文字起こし中…' : '自動字幕'}</Button>
           <Button className="primary-button export-button" onClick={() => setExportOpen(true)}><MonitorUp size={16} />書き出す</Button>
         </div>
       </header>
