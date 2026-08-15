@@ -403,7 +403,7 @@ export const validateProject = (input: unknown): ProjectFile => {
         const wordIds = new Set<string>()
         let previousEnd = clip.startUs
         for (const word of clip.words) {
-          if (!word.id || wordIds.has(word.id) || typeof word.text !== 'string' || !Number.isFinite(word.startUs) || !Number.isFinite(word.endUs) || word.startUs < clip.startUs || word.endUs <= word.startUs || word.endUs > clip.startUs + clip.durationUs || word.startUs < previousEnd) {
+          if (!word.id || wordIds.has(word.id) || typeof word.text !== 'string' || !Number.isFinite(word.startUs) || !Number.isFinite(word.endUs) || word.startUs < clip.startUs || word.endUs < word.startUs || word.endUs > clip.startUs + clip.durationUs || word.startUs < previousEnd) {
             throw new Error(`字幕の単語タイミングが不正です: ${clip.id}`)
           }
           wordIds.add(word.id)

@@ -31,7 +31,7 @@ describe('auto-caption timeline adapter', () => {
     expect(command.words?.[0]).toMatchObject({ startUs: 15_000_000, endUs: 16_000_000 })
   })
 
-  it('does not attach word truth when display text differs from owned word text', () => {
+  it('attaches ownership when the documented display normalization only removes punctuation', () => {
     const normalized = {
       ...result,
       rawWords: [{ ...result.rawWords[0]!, text: '字幕。' }],
@@ -43,7 +43,41 @@ describe('auto-caption timeline adapter', () => {
     const command = plan.commands[0]
     if (!command || command.type !== 'insert-subtitle') throw new Error('expected subtitle command')
     expect(command.text).toBe('字幕')
+    expect(command.words?.[0]).toMatchObject({ id: 'source-word:0', text: '字幕。' })
+    const applied = applyAutoCaptionResultToProject(project, clip, normalized)
+    const generated = applied.project.tracks.at(-1)?.clips[0]
+    expect(generated?.kind === 'subtitle' ? generated.editUnits?.map((unit) => unit.text) : []).toEqual(['字幕'])
+  })
+
+  it('does not attach word truth for an unrelated display mismatch', () => {
+    const corrected = {
+      ...result,
+      rawWords: [{ ...result.rawWords[0]!, text: '字幕' }],
+      captions: [{ ...result.captions[0]!, text: '別の字幕', textStatus: 'manually_corrected' as const }]
+    }
+    const project = createEmptyProject('mismatch')
+    const clip = { id: 'clip-1', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }
+    const plan = createAutoCaptionAutomationPlan(project, clip, corrected)
+    const command = plan.commands[0]
+    if (!command || command.type !== 'insert-subtitle') throw new Error('expected subtitle command')
     expect(command.words).toBeUndefined()
+  })
+
+  it('preserves point words as source metadata and derives point edit units', () => {
+    const point = {
+      ...result,
+      rawWords: [
+        { id: 'source-word:0', text: '字幕', startUs: 25_000_000, endUs: 25_000_000 },
+        { id: 'source-word:1', text: 'です', startUs: 25_000_000, endUs: 26_000_000 }
+      ],
+      captions: [{ ...result.captions[0]!, text: '字幕です', sourceWordIds: ['source-word:0', 'source-word:1'] }]
+    }
+    const project = createEmptyProject('point word')
+    const clip = { id: 'clip-1', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }
+    const applied = applyAutoCaptionResultToProject(project, clip, point)
+    const generated = applied.project.tracks.at(-1)?.clips[0]
+    expect(generated?.kind === 'subtitle' ? generated.words?.[0] : undefined).toMatchObject({ startUs: 15_000_000, endUs: 15_000_000 })
+    expect(generated?.kind === 'subtitle' ? generated.editUnits?.[0] : undefined).toMatchObject({ timingProvenance: 'point', startUs: 15_000_000, endUs: 15_000_000 })
   })
 
   it('creates a fresh named track with edit units and keeps previous tracks untouched', () => {

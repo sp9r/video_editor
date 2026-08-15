@@ -197,7 +197,7 @@ const subtitleWordsAreValid = (clip: SubtitleClip): boolean => {
   let previousEndUs = clip.startUs
   const ids = new Set<string>()
   for (const word of clip.words) {
-    if (ids.has(word.id) || !Number.isFinite(word.startUs) || !Number.isFinite(word.endUs) || word.startUs < previousEndUs || word.endUs <= word.startUs) return false
+    if (ids.has(word.id) || !Number.isFinite(word.startUs) || !Number.isFinite(word.endUs) || word.startUs < previousEndUs || word.endUs < word.startUs) return false
     ids.add(word.id)
     previousEndUs = word.endUs
   }

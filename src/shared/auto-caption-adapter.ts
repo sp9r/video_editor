@@ -13,6 +13,11 @@ const findSubtitleTrack = (project: ProjectFile, requestedTrackId?: string) => {
   return track
 }
 
+/** Keep the adapter's ownership check aligned with clip_automation's display policy. */
+const DISPLAY_PUNCTUATION = /[、。！？!?…・〜～]+/gu
+
+const normalizeCaptionOwnershipText = (text: string): string => text.replace(DISPLAY_PUNCTUATION, '')
+
 /** Convert source-absolute worker timing to one project timeline. */
 export const autoCaptionResultToTranscript = (
   clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
@@ -33,7 +38,13 @@ export const autoCaptionResultToTranscript = (
         endUs: mapAutoCaptionSourceTimeToTimelineUs(clip, word.endUs)
       }
     })
-    const wordTruth = words.length > 0 && words.every((word) => word.endUs > word.startUs) && words.map((word) => word.text).join('') === caption.text
+    const sourceWordText = words.map((word) => word.text).join('')
+    const exactWordTextMatch = sourceWordText === caption.text
+    const displayNormalizedWordTextMatch = caption.textStatus === 'display_normalized'
+      && normalizeCaptionOwnershipText(sourceWordText) === caption.text
+    const wordTruth = words.length > 0
+      && words.every((word) => word.endUs >= word.startUs)
+      && (exactWordTextMatch || displayNormalizedWordTextMatch)
     return {
       startUs: mapAutoCaptionSourceTimeToTimelineUs(clip, caption.startUs),
       endUs: mapAutoCaptionSourceTimeToTimelineUs(clip, caption.endUs),
@@ -114,7 +125,12 @@ export const applyAutoCaptionResultToProject = (
     ...(segment.words?.length
       ? {
           words: segment.words.map((word) => ({ ...word })),
-          editUnits: deriveSubtitleEditUnits(segment.words.map((word) => ({ ...word })))
+          editUnits: deriveSubtitleEditUnits(segment.words.map((word) => ({
+            ...word,
+            text: result.captions[index]?.textStatus === 'display_normalized'
+              ? normalizeCaptionOwnershipText(word.text)
+              : word.text
+          })).filter((word) => word.text.length > 0))
         }
       : {})
   }))

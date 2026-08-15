@@ -91,6 +91,26 @@ describe('editor history and linked selection', () => {
     expect(useEditorStore.getState().future).toHaveLength(0)
   })
 
+  it('clears subtitle timing metadata when inspector text diverges from source text', () => {
+    const project = createEmptyProject('subtitle text edit')
+    const track = project.tracks.find((item) => item.kind === 'subtitle')!
+    track.clips.push({
+      id: 'editable-caption', name: '編集可能字幕', kind: 'subtitle', startUs: 0, durationUs: 1_000_000, sourceInUs: 0,
+      enabled: true, text: '元字幕', style: structuredClone(DEFAULT_SUBTITLE_STYLE),
+      words: [{ id: 'source-word', text: '元字幕', startUs: 0, endUs: 1_000_000 }],
+      editUnits: [{ id: 'source-unit', text: '元字幕', parentSourceWordId: 'source-word', startUs: 0, endUs: 1_000_000, timingProvenance: 'source' }]
+    })
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().beginEditTransaction()
+    useEditorStore.getState().patchClip('editable-caption', (clip) => clip.kind === 'subtitle'
+      ? { ...clip, text: '修正字幕', words: undefined, editUnits: undefined }
+      : clip)
+    useEditorStore.getState().commitEditTransaction()
+    const edited = useEditorStore.getState().project.tracks.flatMap((item) => item.clips).find((item) => item.id === 'editable-caption')
+    expect(edited?.kind === 'subtitle' ? edited : undefined).toMatchObject({ text: '修正字幕', words: undefined, editUnits: undefined })
+    expect(() => validateProject(useEditorStore.getState().project)).not.toThrow()
+  })
+
   it('copies and pastes linked A/V as one unit with fresh IDs and link group', () => {
     const project = fixture()
     useEditorStore.getState().loadProject(project)

@@ -41,13 +41,13 @@ $env:SPECTRA_AUTO_CAPTION_PYTHON = 'C:\path\to\clip_automation\.venv\Scripts\pyt
 
 ## Output boundary
 
-正式worker outputは`spectra.auto-caption.result.v1`を持つ一時JSONで、pathやcredentialを含まない。video_editorはschema、source range、text、word ownership、integer microseconds、sizeを検証してから適用する。caption textとowned raw word textの連結が完全一致し、正のword timingを持つ場合だけ`SubtitleWord`/`SubtitleEditUnit`へattachし、不一致時は偽のword truthを作らず字幕本文だけを適用する。worker caption IDとjob IDは生成clipのlineage metadataとして保持する。
+正式worker outputは`spectra.auto-caption.result.v1`を持つ一時JSONで、pathやcredentialを含まない。video_editorはschema、source range、text、word ownership、integer microseconds、sizeを検証してから適用する。caption textとowned raw word textの連結が一致する場合だけ`SubtitleWord`/`SubtitleEditUnit`へattachする。明示的な`textStatus: "display_normalized"`では、字幕表示ポリシーで除去された句読点だけを差分として許可し、raw word本文・時刻は変更しない。wordの`startUs === endUs`は点イベントとして有効だが、逆順や範囲外は拒否する。不一致時は偽のword truthを作らず字幕本文だけを適用する。worker caption IDとjob IDは生成clipのlineage metadataとして保持する。
 
 ## Stage 4 UI / atomic apply
 
 「自動字幕」は選択clip名、言語（日本語／自動判定）、最大文字数、区切り（高品質／ルール）をdialogで受け取り、音声準備・文字起こし・字幕区切り・字幕配置をtyped progressで表示する。成功結果を全件検証した後、既存字幕を再利用せず`自動字幕`、`自動字幕 2`…の新規trackへ一度に適用する。適用はProject Modelの一つのhistory transactionなので、Ctrl+Z一回で生成track全体を戻し、Redo一回で復元できる。失敗・cancel・生成中のproject変更ではProjectFileを変更しない。
 
-字幕生成は自動的に承認済み扱いにはしない。生成後のsubtitle clipは、既存のRazor、word-boundary split、merge、ownership drag、Undo/Redo、Inspector text edit、Review Modeで直ちに修正できる。
+字幕生成は自動的に承認済み扱いにはしない。生成後のsubtitle clipは、既存のRazor、word-boundary split、merge、ownership drag、Undo/Redo、Inspector text edit、Review Modeで直ちに修正できる。Inspectorで本文を変更して元のword連結と一致しなくなった場合は、誤った対応付けを残さず`words`と`editUnits`を削除し、本文だけを安全に編集できる状態にする。これは編集後の推定境界を音響的真実として扱わないための明示的な挙動である。
 
 ## Acceptance boundary
 

@@ -119,7 +119,20 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
       </Section>
       <Section title="字幕テキスト">
         <Field label="本文" wide>
-          <textarea {...transaction} value={clip.text} rows={4} onChange={(event) => patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, text: event.target.value } : current)} />
+          <textarea
+            {...transaction}
+            value={clip.text}
+            rows={4}
+            onChange={(event) => patchClip(clip.id, (current) => {
+              if (current.kind !== 'subtitle') return current
+              // Once the displayed text changes, the generated word/edit-unit
+              // timing no longer proves ownership of the new text. Drop the
+              // derived timing metadata instead of keeping a false mapping.
+              return current.text === event.target.value
+                ? current
+                : { ...current, text: event.target.value, words: undefined, editUnits: undefined }
+            })}
+          />
         </Field>
         {clip.words?.length || editUnits?.length ? (
           <Field label="単語境界" wide>
