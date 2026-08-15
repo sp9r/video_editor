@@ -1,5 +1,13 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-15 Stage 5 Japanese Edit Boundary / Timing Readiness Gate
+
+- 病理的な日本語raw word `皆さんこんばんはアルマジロウです` を4つのderived edit unitへ分解し、concat fidelity、parent source identity、単調時刻、`estimated` provenanceを専用回帰で固定した。内部境界は比例配分であり、acoustic alignmentとは扱わない。
+- Razor split、merge、隣接caption ownership移動、Magnet snap、Alt bypass、Undo/Redoは既存shared operationと回帰テストで確認。raw word途中のsplitではraw wordを子captionへ二重所有させない。
+- 実用分類は **B: 多少ズレるがmanual correction可能**。current-source GUI受入は既存`docs/PHASE_3_5A_5_VISIBLE_GUI_ACCEPTANCE.md`のPASS記録を参照し、今回新たな実音声GUIレビューを実施したとは扱わない。
+- Gate: **EDIT BOUNDARY PRACTICAL: YES / FINE ALIGNMENT REQUIRED BEFORE HUMAN REVIEW: NO**。詳細は`docs/PHASE_5_JAPANESE_BOUNDARY_READINESS.md`。
+- Stage 5専用テスト追加後の対象回帰は48 tests PASS。全体Gateはこの後に再実行する。
+
 ## 2026-08-15 Stage 4 Auto Caption UI / Atomic Subtitle Apply
 
 - 自動字幕dialogを追加。対象clip、言語（日本語／自動判定）、最大文字数（既定32）、区切り（高品質／ルール）を指定でき、worker progressを音声準備・文字起こし・字幕区切り・字幕配置として表示する。生成中はcancel可能で、UI threadをblockしない。
