@@ -20,6 +20,8 @@
 - 既存architectureはcontract、Project Model、Render Planの境界とcorrectness・保守性を優先して変更してよい。既存だから残すとは限らない。
 - ただし理由なく全削除・ゼロからの全面rewriteはせず、変更理由と代替範囲を文書化する。
 - Phase 4以降も、既存資産の継続はcorrectnessと保守性で判断する。
+- 字幕のraw `words[]`はsource/transcript identityを表し、編集単位とは同一視しない。細粒度の操作は内部`SubtitleEditUnit`を使い、`parentSourceWordId`とtiming provenanceを保持する。
+- `SubtitleEditUnit`の`estimated`時刻を音響的なalignment truthとして扱わない。`edit_project.v1`のschemaと`words[]` semanticsは変更せず、contract import時のadapterでのみ内部単位を生成する。
 
 ## 安全な変更
 

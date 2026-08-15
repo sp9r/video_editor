@@ -143,3 +143,32 @@ Phase 4で再利用した既存コードも完成品とは扱わず、domain tes
 - 40ms latest-only schedulerでInspector burstをcoalesceし、古いFFmpeg結果をcommitしない。同一cueのstyle変更では旧overlayを保持し、新overlay完成時だけatomicに差し替える。
 - 次のstatic cueは既存visual-state cacheへprefetchし、cue boundaryではdebounceなしでcache hitを取得する。cue変更・字幕なしでは旧cueを残さない。
 - static subtitle pixelsのauthorityは`generateAss(project)` + bundled libassに限定する。animated cueのCSS表示はtemporary/non-authoritative debtとして扱う。
+
+## Subtitle structural blockers audit / Phase 3.5B handoff
+
+2026-08-15の再監査で、字幕のraw wordから編集境界までの流れを確認した。
+
+```text
+audio/video
+  -> clip_automation/transcribe.py (faster-whisper word_timestamps)
+  -> transcript_words.json (immutable source word identity/timing)
+  -> caption.py / caption_project.v2.json (caption ownership over source words)
+  -> edit_project_adapter.py (source-word:<id> optional caption words)
+  -> edit_project.v1 captions[].words
+  -> video_editor SubtitleWord
+```
+
+現行`clip_automation`にはraw Whisper word内の文字・トークン音響alignmentを生成する実装はなく、`segment.words`の`start/end/probability`が最小の正本である。したがって、raw wordをそのまま編集単位にすると、長い日本語語塊が分割不能になる。
+
+今回の解決はcontract変更ではなく、`video_editor`内部の`SubtitleEditUnit`である。`Intl.Segmenter('ja', { granularity: 'word' })`で一般化した文字列境界を作り、`parentSourceWordId`、決定的ID、正確なconcat、`source | estimated | point`のtiming provenanceを保持する。raw word全体だけが`source`、語塊内の比例配分は`estimated`であり、音響的真実とは表示しない。point wordはpointのまま保持し、そこを時間分割候補にしない。
+
+旧`.spectra`で`editUnits`が無い場合は、既存raw `words[]`をatomic unitとして扱い、境界番号・不正metadataの互換性を守る。standalone`edit_project.v1` importではadapterがedit unitsを生成する。細粒度分割の結果、raw word途中のcaptionは、誤ったsource-word ownershipを作らないため子captionの`words`を外し、`editUnits.parentSourceWordId`でsource traceabilityだけを保持する。
+
+`edit_project.v1`の`captions[].words`、`transcript_words.json`、`caption_project.v2.json`のschema・正本性は変更しない。derived edit unitは`.spectra`内部拡張であり、contractへ逆輸出しない。
+
+## Structural blockers implementation checkpoint
+
+- `SubtitleEditUnit`を表示・分割・ownership移動の共通最小単位にし、raw word内の日本語境界を`Intl.Segmenter('ja', { granularity: 'word' })`で可視化する。タイムラインのword layer、Inspector、Razor ghost、boundary drag、shared playhead snapは同じunit列を参照する。
+- Razorはhover時に最近傍の有効境界をghost表示し、click時にその境界へ分割する。隣接captionのmerge controlはboundary handleのdragと別操作で、既存store merge operationを一履歴として呼ぶ。旧context menuとlegacy raw wordsの経路は残す。
+- Snapはsubtitle選択中またはReview Mode中だけ有効。caption edge・neighbor edge・edit-unit boundaryを共通targetとして重複除去し、tieは左側、Altはcontinuous scrubへ戻る。
+- `npm.cmd run check`（36 files / 202 tests）、`npm.cmd run build`、`npm.cmd run smoke:electron`、`npm.cmd run smoke:accurate-preview`、`npm.cmd run subtitle:parity`、`npm.cmd run subtitle:geometry`を実行済み。generated fixtureのElectron manual QAではRazor ghost/click、hover merge/click、Undo/Redo、derived unit表示を確認し、QA用fixtureは保存していない。
