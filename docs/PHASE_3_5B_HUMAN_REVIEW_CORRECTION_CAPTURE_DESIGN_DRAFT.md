@@ -181,7 +181,7 @@ review開始時にbaseline snapshotを固定し、通常のUndo/RedoはProject M
 - review unit、baseline、decision、Skipのresume semanticsを固定する。
 - formal projectとreal transcriptを分けたfixtureを用意する。
 
-本Phaseの実装は開始していない。
+本Phaseの設計は本草案を基礎に実装へ反映した。実装状況と検証結果は [`docs/PHASE_3_5B_1_IMPLEMENTATION.md`](PHASE_3_5B_1_IMPLEMENTATION.md) に記録する。正式なcorrection artifact schemaとexport policyは引き続き未確定である。
 
 ## 15. keyboard workflow案
 
