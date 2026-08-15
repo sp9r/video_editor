@@ -6,6 +6,7 @@
 
 ### Fixed
 
+- Integrated Auto Editの成功／失敗／キャンセル境界を整理し、worker、無音cut、字幕template、baseline、Project適用を成功時の1 history operationとして扱う回帰を追加した。Full Correction beforeは自動編集後のcompressed timelineを保持する。
 - offline素材をメディア棚から再リンクし、既存timeline clipのasset IDを保ったままpath／metadataを更新できるようにした。
 - 書き出し画面の「ハードウェア」を「ハードウェア優先」へ改め、GPU失敗時にCPUへfallbackする実装と説明を一致させた。
 - Windows NSIS installerとportableが同一ファイル名で上書きされる設定を修正し、`-setup.exe`と`-portable.exe`を別々に生成するようにした。
@@ -17,6 +18,7 @@
 - Subtitle Inspectorのtemplate manager、defaultTemplateIdのmigration-safe persistence、sample preview、built-in保護を確認した。
 - Auto Caption template selectionのstyle/maxChars/maxLines初期適用と、既存subtitle trackへの一括style適用（one-step Undo）を確認した。
 - built-in subtitle templateを標準・白文字黒縁・大きめ強調の3種類へ整理し、1920×1080 libass実レンダリングQAを追加した。
+- Integrated Auto Editのselected template適用、Undo/Redo、worker failure、started-job cancellation、Full Correction baseline timingを検証した。
 
 ### Planned
 

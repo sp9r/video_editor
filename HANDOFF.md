@@ -1,5 +1,13 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-16 Stage 16 Integrated GPU Auto Edit Transaction
+
+- selected clipからworker/GPU health、bounded source preparation、Whisperとsignal silence analysis、caption segmentation、keep-range mapping、linked A/V segmentation、selected subtitle template、baseline保存、Project applyまでの既存統合経路を監査した。
+- worker resultとsilence artifactの検証が完了するまでProjectへ書き込まず、成功時の`applyProject()`を1回だけ行うことを回帰テストで固定した。失敗・キャンセルはProject/historyを変更しない。
+- 成功した処理はsilence cut、linked A/V、生成字幕trackを1 history entryにまとめ、Undo一回で処理前、Redo一回で処理後へ戻る。
+- Full Correction開始時のbeforeは自動編集後のgenerated trackを基準にし、immutable worker baselineの本文・source identityを保持する。silence compaction後はgenerated clipのtimeline／word timingを採用して、before時刻が旧mappingへ戻らないようにした。
+- `docs/STAGE_16_INTEGRATED_GPU_AUTO_EDIT_TRANSACTION.md`を追加。Stage 17、planning、highlight、publishing、mass Human Reviewは未着手。
+
 ## 2026-08-15 Stage 7 Full-Correction Session / Whole Track Before-After Capture
 
 - Auto Caption trackの字幕を選択して「全文修正」を開始し、通常のEditor操作で全trackを修正後、「修正完了」でbefore/after差分summaryを保存するworkflowを追加した。途中ratingは不要。
