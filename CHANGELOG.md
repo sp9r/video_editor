@@ -16,6 +16,7 @@
 - Subtitle template modelのbuilt-in immutable catalog、userData atomic CRUD、malformed record isolation、contract safe-ID validationを確認した。
 - Subtitle Inspectorのtemplate manager、defaultTemplateIdのmigration-safe persistence、sample preview、built-in保護を確認した。
 - Auto Caption template selectionのstyle/maxChars/maxLines初期適用と、既存subtitle trackへの一括style適用（one-step Undo）を確認した。
+- built-in subtitle templateを標準・白文字黒縁・大きめ強調の3種類へ整理し、1920×1080 libass実レンダリングQAを追加した。
 
 ### Planned
 

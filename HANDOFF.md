@@ -455,3 +455,9 @@ Phase 5、planning、highlight、publishing、mass Human Review、caption algori
 - 字幕Inspectorに「字幕track全体へ適用」を追加。同じsubtitle trackだけを1回のProject更新でstyle変更し、Undo 1回で戻せる。既存字幕の本文・timing・word ownership、max制約は変更しない。
 - defaultTemplateIdの起動時反映を維持。`edit_project.v1`は変更していない。
 - `npm.cmd run check` 48 files / 264 tests、build、Electron startup、Accurate Preview PASS。詳細は[`docs/STAGE_14_TEMPLATE_AWARE_AUTO_CAPTION.md`](docs/STAGE_14_TEMPLATE_AWARE_AUTO_CAPTION.md)。
+
+## 2026-08-16 Stage 15 Built-in Subtitle Templates
+
+- built-in catalogを3件へ整理した。`default`＝標準、`high-contrast`＝白文字・黒縁、`minimal`＝大きめ強調。`minimal`のIDは既存設定互換のため維持し、built-inはimmutableのまま。
+- 1920×1080、日本語2行の各templateをFFmpeg/libass経路で実レンダリングし、visible pixels・白glyph・大きめtemplateのglyph高さを確認するintegration testを追加。
+- `npm.cmd run check` 48 files / 266 tests、build、Electron startup PASS。詳細は[`docs/STAGE_15_BUILTIN_SUBTITLE_TEMPLATES.md`](docs/STAGE_15_BUILTIN_SUBTITLE_TEMPLATES.md)。
