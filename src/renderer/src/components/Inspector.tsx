@@ -130,8 +130,15 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
   const templateDraft = (name: string, style: SubtitleStyle, source?: UserSubtitleTemplate): SubtitleTemplateDraft => ({
     name,
     style: structuredClone(style),
-    maxChars: source?.maxChars ?? 32,
-    maxLines: source?.maxLines ?? 2
+    captionGeneration: structuredClone(source ? {
+      ...source.captionGeneration,
+      layoutConstraints: { maxWidthPercent: style.maxWidthPercent }
+    } : {
+      maxChars: 32,
+      maxLines: 2,
+      segmentationMode: 'auto',
+      layoutConstraints: { maxWidthPercent: style.maxWidthPercent }
+    })
   })
   const replaceCatalog = (catalog: { userTemplates: UserSubtitleTemplate[]; defaultTemplateId: string }): void => {
     setUserSubtitleTemplates(catalog.userTemplates)

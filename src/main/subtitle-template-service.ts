@@ -3,14 +3,17 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
   SUBTITLE_TEMPLATES,
+  LEGACY_SUBTITLE_TEMPLATE_VERSION,
   SUBTITLE_TEMPLATE_STORE_VERSION,
   SUBTITLE_TEMPLATE_VERSION,
+  type SubtitleTemplateCaptionGeneration,
   type SubtitleTemplateDraft,
   type SubtitleTemplateLoadResult,
   type UserSubtitleTemplate
 } from '../shared/subtitle-templates.js'
 import type { SubtitleTemplateId } from '../shared/auto-caption-contract.js'
 import type { SubtitleStyle } from '../shared/types.js'
+import type { SegmentationMode } from '../shared/auto-caption-contract.js'
 
 const STORE_FILE = 'subtitle-templates.v1.json'
 const MAX_TEMPLATES = 256
@@ -21,6 +24,8 @@ const STYLE_KEYS = [
   'backgroundColor', 'backgroundOpacity', 'bold', 'italic', 'letterSpacing', 'lineHeight',
   'alignment', 'positionX', 'positionY', 'maxWidthPercent', 'animation', 'animationDurationUs'
 ] as const
+const CAPTION_GENERATION_KEYS = ['maxChars', 'maxLines', 'segmentationMode', 'layoutConstraints'] as const
+const LAYOUT_CONSTRAINT_KEYS = ['maxWidthPercent'] as const
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -72,30 +77,57 @@ const parseStyle = (value: unknown, label = 'style'): SubtitleStyle => {
   }
 }
 
+const parseCaptionGeneration = (value: unknown, style: SubtitleStyle, label = 'captionGeneration'): SubtitleTemplateCaptionGeneration => {
+  if (!isRecord(value)) throw new Error(`${label} is invalid`)
+  assertExactKeys(value, CAPTION_GENERATION_KEYS, label)
+  if (!Number.isSafeInteger(value.maxChars) || !Number.isSafeInteger(value.maxLines)) throw new Error(`${label} counts must be integers`)
+  const segmentationMode = text(value.segmentationMode, `${label}.segmentationMode`, 16)
+  if (!['auto', 'rule', 'llm'].includes(segmentationMode)) throw new Error(`${label}.segmentationMode is invalid`)
+  if (!isRecord(value.layoutConstraints)) throw new Error(`${label}.layoutConstraints is invalid`)
+  assertExactKeys(value.layoutConstraints, LAYOUT_CONSTRAINT_KEYS, `${label}.layoutConstraints`)
+  const maxWidthPercent = finite(value.layoutConstraints.maxWidthPercent, `${label}.layoutConstraints.maxWidthPercent`, 0.1, 1_000)
+  if (maxWidthPercent !== style.maxWidthPercent) throw new Error(`${label}.layoutConstraints.maxWidthPercent must match style.maxWidthPercent`)
+  return {
+    maxChars: finite(value.maxChars, `${label}.maxChars`, 1, 10_000),
+    maxLines: finite(value.maxLines, `${label}.maxLines`, 1, 16),
+    segmentationMode: segmentationMode as SegmentationMode,
+    layoutConstraints: { maxWidthPercent }
+  }
+}
+
 const parseDraft = (value: unknown): SubtitleTemplateDraft => {
   if (!isRecord(value)) throw new Error('subtitle template is invalid')
-  assertExactKeys(value, ['name', 'style', 'maxChars', 'maxLines'], 'subtitle template')
+  assertExactKeys(value, ['name', 'style', 'captionGeneration'], 'subtitle template')
   const name = text(value.name, 'subtitle template.name', MAX_NAME_LENGTH)
   if (/[A-Za-z]:[\\/]|^[/\\]{1,2}/.test(name)) throw new Error('subtitle template.name must not be a path')
-  if (!Number.isSafeInteger(value.maxChars) || !Number.isSafeInteger(value.maxLines)) throw new Error('subtitle template counts must be integers')
+  const style = parseStyle(value.style)
   return {
     name,
-    style: parseStyle(value.style),
-    maxChars: finite(value.maxChars, 'subtitle template.maxChars', 1, 10_000),
-    maxLines: finite(value.maxLines, 'subtitle template.maxLines', 1, 16)
+    style,
+    captionGeneration: parseCaptionGeneration(value.captionGeneration, style)
   }
 }
 
 const parseTemplate = (value: unknown): UserSubtitleTemplate => {
   if (!isRecord(value)) throw new Error('subtitle template is invalid')
-  assertExactKeys(value, ['version', 'id', 'name', 'style', 'maxChars', 'maxLines', 'createdAt', 'updatedAt'], 'subtitle template')
-  if (value.version !== SUBTITLE_TEMPLATE_VERSION) throw new Error('unsupported subtitle template version')
+  const version = value.version
+  if (version === LEGACY_SUBTITLE_TEMPLATE_VERSION) {
+    assertExactKeys(value, ['version', 'id', 'name', 'style', 'maxChars', 'maxLines', 'createdAt', 'updatedAt'], 'legacy subtitle template')
+  } else if (version === SUBTITLE_TEMPLATE_VERSION) {
+    assertExactKeys(value, ['version', 'id', 'name', 'style', 'captionGeneration', 'createdAt', 'updatedAt'], 'subtitle template')
+  } else {
+    throw new Error('unsupported subtitle template version')
+  }
   const id = text(value.id, 'subtitle template.id', 128)
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id)) throw new Error('subtitle template.id is invalid')
   const createdAt = text(value.createdAt, 'subtitle template.createdAt', 64)
   const updatedAt = text(value.updatedAt, 'subtitle template.updatedAt', 64)
   if (!Number.isFinite(Date.parse(createdAt)) || !Number.isFinite(Date.parse(updatedAt))) throw new Error('subtitle template date is invalid')
-  const draft = parseDraft({ name: value.name, style: value.style, maxChars: value.maxChars, maxLines: value.maxLines })
+  const style = parseStyle(value.style)
+  const captionGeneration = version === LEGACY_SUBTITLE_TEMPLATE_VERSION
+    ? parseCaptionGeneration({ maxChars: value.maxChars, maxLines: value.maxLines, segmentationMode: 'auto', layoutConstraints: { maxWidthPercent: style.maxWidthPercent } }, style, 'legacy captionGeneration')
+    : parseCaptionGeneration(value.captionGeneration, style)
+  const draft = parseDraft({ name: value.name, style, captionGeneration })
   return { version: SUBTITLE_TEMPLATE_VERSION, id, ...draft, createdAt, updatedAt }
 }
 
@@ -111,8 +143,13 @@ const readStore = async (userDataPath: string): Promise<SubtitleTemplateLoadResu
     const parsed: unknown = JSON.parse(await readFile(storePath(userDataPath), 'utf8'))
     if (!isRecord(parsed) || parsed.version !== SUBTITLE_TEMPLATE_STORE_VERSION || !Array.isArray(parsed.templates) || parsed.templates.length > MAX_TEMPLATES) throw new Error('malformed store')
     const templates: UserSubtitleTemplate[] = []
+    let migratedCount = 0
     for (const item of parsed.templates) {
-      try { templates.push(parseTemplate(item)) } catch { /* ignore one malformed template */ }
+      try {
+        const parsedTemplate = parseTemplate(item)
+        if (isRecord(item) && item.version === LEGACY_SUBTITLE_TEMPLATE_VERSION) migratedCount += 1
+        templates.push(parsedTemplate)
+      } catch { /* ignore one malformed template */ }
     }
     const unique = templates.filter((template, index) => templates.findIndex((candidate) => candidate.id === template.id) === index)
     let defaultTemplateId = DEFAULT_TEMPLATE_ID
@@ -122,10 +159,10 @@ const readStore = async (userDataPath: string): Promise<SubtitleTemplateLoadResu
       else if (isBuiltInTemplateId(parsed.defaultTemplateId) || unique.some((template) => template.id === parsed.defaultTemplateId)) defaultTemplateId = parsed.defaultTemplateId
       else malformedCount += 1
     }
-    return { userTemplates: unique, malformedCount, defaultTemplateId }
+    return { userTemplates: unique, malformedCount, migratedCount, defaultTemplateId }
   } catch (error) {
-    if (isRecord(error) && error.code === 'ENOENT') return { userTemplates: [], malformedCount: 0, defaultTemplateId: DEFAULT_TEMPLATE_ID }
-    return { userTemplates: [], malformedCount: 1, defaultTemplateId: DEFAULT_TEMPLATE_ID }
+    if (isRecord(error) && error.code === 'ENOENT') return { userTemplates: [], malformedCount: 0, migratedCount: 0, defaultTemplateId: DEFAULT_TEMPLATE_ID }
+    return { userTemplates: [], malformedCount: 1, migratedCount: 0, defaultTemplateId: DEFAULT_TEMPLATE_ID }
   }
 }
 
@@ -151,7 +188,9 @@ export class SubtitleTemplateService {
   constructor(private readonly userDataPath: string) {}
 
   async load(): Promise<SubtitleTemplateLoadResult> {
-    return readStore(this.userDataPath)
+    const current = await readStore(this.userDataPath)
+    if (current.migratedCount > 0) await writeStore(this.userDataPath, current.userTemplates, current.defaultTemplateId)
+    return current
   }
 
   async create(input: unknown): Promise<UserSubtitleTemplate> {

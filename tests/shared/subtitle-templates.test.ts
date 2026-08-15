@@ -19,14 +19,14 @@ describe('subtitle template model', () => {
   })
 
   it('resolves a user template by id without changing built-ins', () => {
-    const user = { version: 'spectra.subtitle-template.v1' as const, id: 'user-template-1', name: 'User', style: { ...structuredClone(DEFAULT_SUBTITLE_STYLE), fontSize: 77 }, maxChars: 40, maxLines: 3, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+    const user = { version: 'spectra.subtitle-template.v2' as const, id: 'user-template-1', name: 'User', style: { ...structuredClone(DEFAULT_SUBTITLE_STYLE), fontSize: 77 }, captionGeneration: { maxChars: 40, maxLines: 3, segmentationMode: 'auto' as const, layoutConstraints: { maxWidthPercent: 80 } }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
     expect(getSubtitleTemplateStyleForId(user.id, [user]).fontSize).toBe(77)
     expect(getSubtitleTemplateStyleForId('default').fontSize).toBe(DEFAULT_SUBTITLE_STYLE.fontSize)
   })
 
   it('resolves style and display constraints together for initial caption settings', () => {
-    const user = { version: 'spectra.subtitle-template.v1' as const, id: 'user-template-settings', name: 'YouTube標準', style: { ...structuredClone(DEFAULT_SUBTITLE_STYLE), fontSize: 77 }, maxChars: 40, maxLines: 3, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
-    expect(getSubtitleTemplateSettings(user.id, [user])).toMatchObject({ maxChars: 40, maxLines: 3, style: { fontSize: 77 } })
-    expect(getSubtitleTemplateSettings('minimal')).toMatchObject({ maxChars: 32, maxLines: 2 })
+    const user = { version: 'spectra.subtitle-template.v2' as const, id: 'user-template-settings', name: 'YouTube標準', style: { ...structuredClone(DEFAULT_SUBTITLE_STYLE), fontSize: 77 }, captionGeneration: { maxChars: 40, maxLines: 3, segmentationMode: 'rule' as const, layoutConstraints: { maxWidthPercent: 80 } }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+    expect(getSubtitleTemplateSettings(user.id, [user])).toMatchObject({ maxChars: 40, maxLines: 3, segmentationMode: 'rule', style: { fontSize: 77 } })
+    expect(getSubtitleTemplateSettings('minimal')).toMatchObject({ maxChars: 32, maxLines: 2, segmentationMode: 'auto' })
   })
 })

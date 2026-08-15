@@ -116,7 +116,8 @@ export default function App(): React.JSX.Element {
         ...current,
         subtitleTemplate: catalog.defaultTemplateId,
         maxChars: settings.maxChars,
-        maxLines: settings.maxLines
+        maxLines: settings.maxLines,
+        segmentationMode: settings.segmentationMode
       }))
     }).catch(() => undefined)
   }, [setDefaultSubtitleTemplateId, setStoreUserSubtitleTemplates])
@@ -127,7 +128,8 @@ export default function App(): React.JSX.Element {
       ...current,
       subtitleTemplate: defaultSubtitleTemplateId,
       maxChars: settings.maxChars,
-      maxLines: settings.maxLines
+      maxLines: settings.maxLines,
+      segmentationMode: settings.segmentationMode
     }))
   }, [defaultSubtitleTemplateId, userSubtitleTemplates])
 
@@ -367,17 +369,23 @@ export default function App(): React.JSX.Element {
     return {
       name: selected ? ('name' in selected ? selected.name : selected.label) : '新しい字幕テンプレート',
       style: settings.style,
-      maxChars: captionSettings.maxChars ?? settings.maxChars,
-      maxLines: captionSettings.maxLines ?? settings.maxLines
+      captionGeneration: {
+        maxChars: captionSettings.maxChars ?? settings.maxChars,
+        maxLines: captionSettings.maxLines ?? settings.maxLines,
+        segmentationMode: captionSettings.segmentationMode ?? settings.segmentationMode,
+        layoutConstraints: { maxWidthPercent: settings.layoutConstraints.maxWidthPercent }
+      }
     }
   }
 
   const selectSubtitleTemplate = (id: string): void => {
+    const settings = getSubtitleTemplateSettings(id, userSubtitleTemplates)
     setCaptionSettings((current) => ({
       ...current,
       subtitleTemplate: id,
-      maxChars: getSubtitleTemplateSettings(id, userSubtitleTemplates).maxChars,
-      maxLines: getSubtitleTemplateSettings(id, userSubtitleTemplates).maxLines
+      maxChars: settings.maxChars,
+      maxLines: settings.maxLines,
+      segmentationMode: settings.segmentationMode
     }))
   }
 
@@ -395,7 +403,7 @@ export default function App(): React.JSX.Element {
       const next = [...userSubtitleTemplates.filter((template) => template.id !== created.id), created]
       setUserSubtitleTemplates(next)
       setStoreUserSubtitleTemplates(next)
-      setCaptionSettings((current) => ({ ...current, subtitleTemplate: created.id, maxChars: created.maxChars, maxLines: created.maxLines }))
+      setCaptionSettings((current) => ({ ...current, subtitleTemplate: created.id, maxChars: created.captionGeneration.maxChars, maxLines: created.captionGeneration.maxLines, segmentationMode: created.captionGeneration.segmentationMode }))
     } catch {
       showNotice('字幕テンプレートを保存できませんでした。', 'error')
     }
@@ -424,7 +432,8 @@ export default function App(): React.JSX.Element {
       const next = userSubtitleTemplates.filter((template) => template.id !== selected.id)
       setUserSubtitleTemplates(next)
       setStoreUserSubtitleTemplates(next)
-      setCaptionSettings((current) => ({ ...current, subtitleTemplate: 'default' }))
+      const settings = getSubtitleTemplateSettings('default', next)
+      setCaptionSettings((current) => ({ ...current, subtitleTemplate: 'default', maxChars: settings.maxChars, maxLines: settings.maxLines, segmentationMode: settings.segmentationMode }))
     } catch {
       showNotice('字幕テンプレートを削除できませんでした。', 'error')
     }

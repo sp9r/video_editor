@@ -6,8 +6,8 @@ import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
 import { SubtitleTemplateService } from '../../src/main/subtitle-template-service'
 
 const roots: string[] = []
-const draft = (name = '実況用'): { name: string; style: typeof DEFAULT_SUBTITLE_STYLE; maxChars: number; maxLines: number } => ({
-  name, style: structuredClone(DEFAULT_SUBTITLE_STYLE), maxChars: 32, maxLines: 2
+const draft = (name = '実況用'): { name: string; style: typeof DEFAULT_SUBTITLE_STYLE; captionGeneration: { maxChars: number; maxLines: number; segmentationMode: 'auto'; layoutConstraints: { maxWidthPercent: number } } } => ({
+  name, style: structuredClone(DEFAULT_SUBTITLE_STYLE), captionGeneration: { maxChars: 32, maxLines: 2, segmentationMode: 'auto', layoutConstraints: { maxWidthPercent: DEFAULT_SUBTITLE_STYLE.maxWidthPercent } }
 })
 
 describe('subtitle template service', () => {
@@ -19,15 +19,15 @@ describe('subtitle template service', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'spectra-template-'))
     roots.push(root)
     const service = new SubtitleTemplateService(root)
-    expect(await service.load()).toEqual({ userTemplates: [], malformedCount: 0, defaultTemplateId: 'default' })
+    expect(await service.load()).toEqual({ userTemplates: [], malformedCount: 0, migratedCount: 0, defaultTemplateId: 'default' })
     const created = await service.create(draft())
-    expect(created.version).toBe('spectra.subtitle-template.v1')
+    expect(created.version).toBe('spectra.subtitle-template.v2')
     expect(created.id).toMatch(/^user-template-/)
     expect((await service.load()).userTemplates).toHaveLength(1)
-    const updated = await service.update(created.id, { ...draft('更新済み'), maxLines: 3 })
+    const updated = await service.update(created.id, { ...draft('更新済み'), captionGeneration: { ...draft().captionGeneration, maxLines: 3 } })
     expect(updated.name).toBe('更新済み')
-    expect(updated.maxLines).toBe(3)
-    const copied = await service.duplicate({ ...draft('複製元'), maxChars: 40 })
+    expect(updated.captionGeneration.maxLines).toBe(3)
+    const copied = await service.duplicate({ ...draft('複製元'), captionGeneration: { ...draft().captionGeneration, maxChars: 40 } })
     expect(copied.id).not.toBe(created.id)
     expect(copied.name).toBe('複製元 copy')
     expect(await service.remove(created.id)).toBe(true)
@@ -55,7 +55,7 @@ describe('subtitle template service', () => {
     roots.push(root)
     await writeFile(path.join(root, 'subtitle-templates.v1.json'), JSON.stringify({
       version: 'spectra.subtitle-template-store.v1',
-      templates: [{ version: 'spectra.subtitle-template.v1', id: 'bad', name: 'bad', style: {}, maxChars: 32, maxLines: 2, createdAt: 'bad', updatedAt: 'bad' }]
+      templates: [{ version: 'spectra.subtitle-template.v2', id: 'bad', name: 'bad', style: {}, captionGeneration: {}, createdAt: 'bad', updatedAt: 'bad' }]
     }), 'utf8')
     const loaded = await new SubtitleTemplateService(root).load()
     expect(loaded.userTemplates).toEqual([])
@@ -76,5 +76,28 @@ describe('subtitle template service', () => {
     roots.push(root)
     const service = new SubtitleTemplateService(root)
     await expect(service.create({ ...draft(), name: 'C:\\secret\\template', style: { ...DEFAULT_SUBTITLE_STYLE, bold: 'yes' } })).rejects.toThrow()
+  })
+
+  it('migrates legacy v1 records and persists the v2 canonical shape', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'spectra-template-migration-'))
+    roots.push(root)
+    await writeFile(path.join(root, 'subtitle-templates.v1.json'), JSON.stringify({
+      version: 'spectra.subtitle-template-store.v1',
+      templates: [{ version: 'spectra.subtitle-template.v1', id: 'legacy-template', name: '旧template', style: structuredClone(DEFAULT_SUBTITLE_STYLE), maxChars: 40, maxLines: 3, createdAt: '2026-08-16T00:00:00.000Z', updatedAt: '2026-08-16T00:00:00.000Z' }],
+      defaultTemplateId: 'legacy-template'
+    }), 'utf8')
+    const service = new SubtitleTemplateService(root)
+    const loaded = await service.load()
+    expect(loaded.migratedCount).toBe(1)
+    expect(loaded.userTemplates[0]).toMatchObject({ version: 'spectra.subtitle-template.v2', captionGeneration: { maxChars: 40, maxLines: 3, segmentationMode: 'auto', layoutConstraints: { maxWidthPercent: 80 } } })
+    const stored = JSON.parse(await readFile(path.join(root, 'subtitle-templates.v1.json'), 'utf8'))
+    expect(stored.templates[0].version).toBe('spectra.subtitle-template.v2')
+  })
+
+  it('rejects unknown fields in the canonical generation block', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'spectra-template-unknown-'))
+    roots.push(root)
+    const service = new SubtitleTemplateService(root)
+    await expect(service.create({ ...draft(), captionGeneration: { ...draft().captionGeneration, gpu: true } })).rejects.toThrow()
   })
 })

@@ -38,8 +38,8 @@ describe('automatic caption insertion', () => {
     useEditorStore.getState().loadProject(project)
     useEditorStore.getState().selectClip('auto-caption-video')
     const template: UserSubtitleTemplate = {
-      version: 'spectra.subtitle-template.v1', id: 'user-template', name: '配信用',
-      style: { ...structuredClone(DEFAULT_SUBTITLE_STYLE), fontSize: 88, outlineWidth: 6 }, maxChars: 40, maxLines: 3,
+      version: 'spectra.subtitle-template.v2', id: 'user-template', name: '配信用',
+      style: { ...structuredClone(DEFAULT_SUBTITLE_STYLE), fontSize: 88, outlineWidth: 6 }, captionGeneration: { maxChars: 40, maxLines: 3, segmentationMode: 'rule', layoutConstraints: { maxWidthPercent: 80 } },
       createdAt: '2026-08-15T00:00:00.000Z', updatedAt: '2026-08-15T00:00:00.000Z'
     }
     useEditorStore.getState().setUserSubtitleTemplates([template])
