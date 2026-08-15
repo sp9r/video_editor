@@ -409,3 +409,9 @@ Phase Aが完了するまで、multicamや高度なAI機能へ先に進まない
 Phase 5、planning、highlight、publishing、mass Human Review、caption algorithm learningは開始しない。ユーザーが実動画を選び、同じvertical sliceでレビューを開始する。
 
 ---
+
+## 2026-08-16 Phase 8 Parallel Auto Processing
+
+- parallel-capable local worker discoveryを追加。bounded range audioを一度だけ準備し、WhisperとCPU signal silence analysisを並列実行。既存caption result、baseline、edit_project.v1、atomic subtitle applyは維持。
+- progress state `silence_analyzing`とTimeline適用表示を追加。silence artifactはsize/schema/path-free diagnosticsをmainで検証し、cancel/failure時はProjectFileとpartial resultを公開しない。parallel workerがない場合はlegacy caption workerへfallback。
+- 実生成QA media先頭10秒でserial 9,430.9ms / parallel 8,081.4ms、約14.3%短縮を確認。`npm.cmd run check` 246 tests、build PASS。詳細: `docs/PHASE_8_PARALLEL_AUTO_PROCESSING.md`。
