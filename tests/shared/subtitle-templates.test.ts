@@ -3,6 +3,13 @@ import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
 import { getSubtitleTemplateSettings, getSubtitleTemplateStyleForId, SUBTITLE_TEMPLATES } from '../../src/shared/subtitle-templates'
 
 describe('subtitle template model', () => {
+  it('ships only the three restrained built-in templates', () => {
+    expect(SUBTITLE_TEMPLATES.map((template) => template.label)).toEqual(['標準', '白文字・黒縁', '大きめ強調'])
+    expect(SUBTITLE_TEMPLATES).toHaveLength(3)
+    expect(SUBTITLE_TEMPLATES[1]?.style).toMatchObject({ color: '#ffffff', outlineColor: '#000000' })
+    expect(SUBTITLE_TEMPLATES[2]?.style.fontSize).toBeGreaterThan(SUBTITLE_TEMPLATES[0]?.style.fontSize ?? 0)
+  })
+
   it('keeps built-in templates immutable and returns cloned styles', () => {
     const original = SUBTITLE_TEMPLATES[0]!.style.fontSize
     const style = getSubtitleTemplateStyleForId('default')

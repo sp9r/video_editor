@@ -52,8 +52,8 @@ const template = (id: SubtitleTemplateId, label: string, style: Partial<Subtitle
 
 export const SUBTITLE_TEMPLATES: readonly SubtitleTemplateOption[] = Object.freeze([
   template('default', '標準', {}),
-  template('high-contrast', '高コントラスト', { outlineWidth: 5, shadowBlur: 6 }),
-  template('minimal', 'ミニマル', { outlineWidth: 1, shadowBlur: 0, bold: false })
+  template('high-contrast', '白文字・黒縁', { color: '#ffffff', outlineColor: '#000000', outlineWidth: 5, shadowColor: '#00000000', shadowBlur: 0, bold: true }),
+  template('minimal', '大きめ強調', { fontSize: 72, outlineColor: '#111318', outlineWidth: 4, shadowBlur: 4, bold: true })
 ].map((candidate) => Object.freeze({ ...candidate, style: Object.freeze(candidate.style) })))
 
 export const getSubtitleTemplateStyle = (id: SubtitleTemplateId = 'default'): SubtitleStyle => {

@@ -7,6 +7,7 @@ import { executeProcess } from '../../src/main/ffmpeg/process.js'
 import { FfmpegService } from '../../src/main/ffmpeg/service.js'
 import { generateAss } from '../../src/main/ffmpeg/subtitles.js'
 import { buildSubtitleRenderSpec } from '../../src/shared/subtitle-render.js'
+import { getSubtitleTemplateSettings, SUBTITLE_TEMPLATES } from '../../src/shared/subtitle-templates.js'
 import { makeExportSettings, makeProject } from './ffmpeg-fixtures.js'
 
 describe('bundled FFmpeg integration', () => {
@@ -596,4 +597,57 @@ describe('bundled FFmpeg integration', () => {
       await rm(root, { recursive: true, force: true })
     }
   }, 180_000)
+
+  it('renders all built-in subtitle templates through the 1920x1080 libass path', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-built-in-template-qa-'))
+    try {
+      const paths = await resolveFfmpegPaths()
+      const whiteBounds: number[] = []
+      for (const template of SUBTITLE_TEMPLATES) {
+        const project = makeProject()
+        project.sequence = { width: 1920, height: 1080, frameRate: { numerator: 30, denominator: 1 }, sampleRate: 48_000, backgroundColor: '#242a31' }
+        const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+        if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+        const settings = getSubtitleTemplateSettings(template.id)
+        subtitle.text = '皆さんこんばんは\nアルマジロウです'
+        subtitle.startUs = 0
+        subtitle.durationUs = 1_000_000
+        subtitle.style = settings.style
+        subtitle.maxLines = settings.maxLines
+        const service = new FfmpegService(paths, { workspaceRoot: join(root, template.id) })
+        const overlay = await service.renderSubtitleOverlay(project, 500_000)
+        const rawPath = join(root, `${template.id}.rgba`)
+        await executeProcess({
+          command: paths.ffmpegPath,
+          args: ['-hide_banner', '-loglevel', 'error', '-y', '-i', overlay.framePath, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', rawPath],
+          timeoutMs: 30_000
+        })
+        const raw = await readFile(rawPath)
+        let visible = 0
+        let white = 0
+        let minY = 1080
+        let maxY = -1
+        for (let offset = 0; offset < raw.length; offset += 4) {
+          const red = raw[offset] ?? 0
+          const green = raw[offset + 1] ?? 0
+          const blue = raw[offset + 2] ?? 0
+          const alpha = raw[offset + 3] ?? 0
+          if (alpha < 32) continue
+          visible += 1
+          if (red > 190 && green > 190 && blue > 190) {
+            white += 1
+            const y = Math.floor(offset / 4 / 1920)
+            minY = Math.min(minY, y)
+            maxY = Math.max(maxY, y)
+          }
+        }
+        expect(visible, `${template.id} libass visible pixels`).toBeGreaterThan(1_000)
+        expect(white, `${template.id} white glyph pixels`).toBeGreaterThan(100)
+        whiteBounds.push(maxY - minY + 1)
+      }
+      expect(whiteBounds[2]).toBeGreaterThan(whiteBounds[0] ?? 0)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 120_000)
 })

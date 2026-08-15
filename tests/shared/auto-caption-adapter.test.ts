@@ -130,6 +130,6 @@ describe('auto-caption timeline adapter', () => {
     const clip = { id: 'clip-1', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }
     const applied = applyAutoCaptionResultToProject(project, clip, result, { subtitleTemplate: 'minimal' })
     const generated = applied.project.tracks.at(-1)?.clips[0]
-    expect(generated?.kind === 'subtitle' ? generated.style : undefined).toMatchObject({ outlineWidth: 1, shadowBlur: 0, bold: false })
+    expect(generated?.kind === 'subtitle' ? generated.style : undefined).toMatchObject({ fontSize: 72, outlineWidth: 4, bold: true })
   })
 })
