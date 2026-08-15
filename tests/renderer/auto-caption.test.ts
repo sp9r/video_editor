@@ -103,6 +103,48 @@ describe('automatic caption insertion', () => {
     expect(useEditorStore.getState().project.tracks.filter((track) => track.name === '自動字幕 2')).toHaveLength(1)
   })
 
+  it('applies keep ranges with captions as one undoable linked timeline change', async () => {
+    let project = { ...createEmptyProject('auto caption silence'), media: [asset] }
+    const video = { ...createClipForAsset(asset, 0, 4_000_000), id: 'auto-caption-video-silence' }
+    project = addClipToTrack(project, project.tracks.find((track) => track.kind === 'media')!.id, video)
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip(video.id)
+    let progress: ((value: any) => void) | undefined
+    const startAutoCaption = vi.fn(async () => {
+      progress?.({
+        version: 'spectra.auto-caption.progress.v1', jobId: 'caption-job-silence', state: 'completed', ratio: 1, message: '完了',
+        silenceAnalysis: {
+          silences: [], keepRanges: [{ startUs: 0, endUs: 1_000_000, durationUs: 1_000_000 }, { startUs: 2_000_000, endUs: 4_000_000, durationUs: 2_000_000 }],
+          removedDurationUs: 1_000_000,
+          settings: { profile: 'natural', minSilenceUs: 600_000, retainPauseUs: 180_000, noiseDb: -35, speechProtectionUs: 120_000, fillerRemoval: false }, diagnostics: []
+        },
+        result: {
+          version: 'spectra.auto-caption.result.v1', jobId: 'caption-job-silence', sourceStartUs: 0, sourceEndUs: 4_000_000,
+          language: 'ja', provider: 'test', model: 'test', rawWords: [{ id: 'word-silence', text: '後半', startUs: 2_000_000, endUs: 2_500_000 }],
+          captions: [{ id: 'caption-silence', text: '後半', sourceWordIds: ['word-silence'], startUs: 2_000_000, endUs: 2_500_000, textStatus: 'as_transcribed', provenance: 'caption_algorithm' }], diagnostics: [], fallback: { used: false }
+        }
+      })
+      return { jobId: 'caption-job-silence', clipId: video.id }
+    })
+    window.spectra = {
+      autoCaptionHealth: vi.fn().mockResolvedValue({ available: true, checkedAt: new Date().toISOString(), provider: 'clip_automation' }),
+      startAutoCaption, onAutoCaptionProgress: vi.fn((callback) => { progress = callback; return () => { progress = undefined } })
+    } as unknown as DesktopApi
+
+    await useEditorStore.getState().autoCaptionSelected()
+    const state = useEditorStore.getState()
+    const mediaClips = state.project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'video')
+    expect(mediaClips.map((clip) => [clip.sourceInUs, clip.durationUs, clip.startUs])).toEqual([[0, 1_000_000, 0], [2_000_000, 2_000_000, 1_000_000]])
+    const caption = state.project.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === 'subtitle' && clip.sourceJobId)
+    expect(caption?.kind === 'subtitle' ? [caption.startUs, caption.durationUs] : undefined).toEqual([1_000_000, 500_000])
+    expect(state.past).toHaveLength(1)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'video')).toHaveLength(1)
+    expect(useEditorStore.getState().project.tracks.some((track) => track.clips.some((clip) => clip.kind === 'subtitle' && clip.sourceJobId))).toBe(false)
+    useEditorStore.getState().redo()
+    expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'video')).toHaveLength(2)
+  })
+
   it('keeps the project unchanged when the worker fails before apply', async () => {
     let project = { ...createEmptyProject('auto caption failure'), media: [asset] }
     const video = { ...createClipForAsset(asset, 0, 4_000_000), id: 'auto-caption-video-failure' }

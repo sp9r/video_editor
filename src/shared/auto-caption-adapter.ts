@@ -21,12 +21,14 @@ const normalizeCaptionOwnershipText = (text: string): string => text.replace(DIS
 /** Convert source-absolute worker timing to one project timeline. */
 export const autoCaptionResultToTranscript = (
   clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
-  result: AutoCaptionResult
+  result: AutoCaptionResult,
+  options: { sourceTimeMapper?: (sourceUs: number) => number } = {}
 ): TranscriptAiOutput => {
   if (result.sourceStartUs !== clip.sourceInUs || result.sourceEndUs !== clip.sourceInUs + clip.durationUs) {
     throw new Error('自動字幕結果のsource rangeが選択clipと一致しません。')
   }
   const wordsById = new Map(result.rawWords.map((word) => [word.id, word]))
+  const mapSourceTime = options.sourceTimeMapper ?? ((sourceUs: number) => mapAutoCaptionSourceTimeToTimelineUs(clip, sourceUs))
   const segments = result.captions.map((caption) => {
     const words = caption.sourceWordIds.map((wordId) => {
       const word = wordsById.get(wordId)
@@ -34,8 +36,8 @@ export const autoCaptionResultToTranscript = (
       return {
         id: word.id,
         text: word.text,
-        startUs: mapAutoCaptionSourceTimeToTimelineUs(clip, word.startUs),
-        endUs: mapAutoCaptionSourceTimeToTimelineUs(clip, word.endUs)
+        startUs: mapSourceTime(word.startUs),
+        endUs: mapSourceTime(word.endUs)
       }
     })
     const sourceWordText = words.map((word) => word.text).join('')
@@ -46,12 +48,12 @@ export const autoCaptionResultToTranscript = (
       && words.every((word) => word.endUs >= word.startUs)
       && (exactWordTextMatch || displayNormalizedWordTextMatch)
     return {
-      startUs: mapAutoCaptionSourceTimeToTimelineUs(clip, caption.startUs),
-      endUs: mapAutoCaptionSourceTimeToTimelineUs(clip, caption.endUs),
+      startUs: mapSourceTime(caption.startUs),
+      endUs: mapSourceTime(caption.endUs),
       text: caption.text,
       ...(wordTruth ? { words } : {})
     }
-  })
+  }).filter((segment) => segment.endUs > segment.startUs)
   if (segments.length === 0) throw new Error('自動字幕結果に字幕がありません。')
   return { kind: 'transcript', language: result.language, text: segments.map((segment) => segment.text).join(''), segments }
 }
@@ -103,9 +105,9 @@ export const applyAutoCaptionResultToProject = (
   project: ProjectFile,
   clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
   result: AutoCaptionResult,
-  options: { maxLines?: number } = {}
+  options: { maxLines?: number; sourceTimeMapper?: (sourceUs: number) => number } = {}
 ): AutoCaptionProjectApply => {
-  const transcript = autoCaptionResultToTranscript(clip, result)
+  const transcript = autoCaptionResultToTranscript(clip, result, { sourceTimeMapper: options.sourceTimeMapper })
   const maxLines = options.maxLines === undefined ? undefined : validateSubtitleMaxLines(options.maxLines)
   const track = createTrack('subtitle', project.tracks.filter((candidate) => candidate.kind === 'subtitle').length + 1)
   track.name = nextAutoCaptionTrackName(project)
