@@ -104,7 +104,7 @@ const nextStaticSubtitleTime = (project: Parameters<typeof activeSubtitleClips>[
 }
 
 export default function Preview(): React.JSX.Element {
-  const { project, playheadUs, setPlayhead, playing, setPlaying, selectClip } = useEditorStore()
+  const { project, playheadUs, setPlayhead, playing, setPlaying, selectClip, showNotice } = useEditorStore()
   const [renderPlan, setRenderPlan] = useState<PreviewPlan | null>(null)
   const [accurateFrame, setAccurateFrame] = useState<AccuratePreviewFrameResult | null>(null)
   const [accurateRendering, setAccurateRendering] = useState(false)
@@ -112,6 +112,7 @@ export default function Preview(): React.JSX.Element {
   const [subtitleOverlay, setSubtitleOverlay] = useState<SubtitleOverlayState | null>(null)
   const [subtitleOverlayRendering, setSubtitleOverlayRendering] = useState(false)
   const [subtitleOverlayError, setSubtitleOverlayError] = useState<string | null>(null)
+  const [fullscreen, setFullscreen] = useState(false)
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
   const requestRef = useRef<number | null>(null)
   const lastFrameRef = useRef<number>(0)
@@ -136,6 +137,26 @@ export default function Preview(): React.JSX.Element {
   }, [playheadUs, project])
 
   useEffect(() => () => subtitleOverlayScheduler.current.dispose(), [])
+
+  useEffect(() => {
+    const onFullscreenChange = (): void => setFullscreen(document.fullscreenElement !== null)
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [])
+
+  const toggleFullscreen = (): void => {
+    const panel = canvasRef.current?.closest('.viewer-panel') as HTMLElement | null
+    if (!panel) return
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => showNotice('全画面表示を終了できませんでした。', 'warning'))
+      return
+    }
+    if (typeof panel.requestFullscreen !== 'function') {
+      showNotice('全画面表示はこの環境で利用できません。', 'warning')
+      return
+    }
+    void panel.requestFullscreen().catch(() => showNotice('全画面表示を開始できませんでした。', 'warning'))
+  }
 
   useEffect(() => {
     if (!window.spectra) {
@@ -297,8 +318,7 @@ export default function Preview(): React.JSX.Element {
   return (
     <section className="viewer-panel panel" aria-label="プログラムモニター">
       <header className="viewer-tabs">
-        <button type="button">ソース</button>
-        <button type="button" className="is-active">完成映像</button>
+        <span className="viewer-tab is-active">完成映像</span>
         <span className="viewer-quality" aria-live="polite">
           <i />{playing ? subtitleOverlayRendering ? '高速プレビュー（字幕生成中…）' : '高速プレビュー' : accurateRendering ? '正確プレビュー更新中…' : accurateFrame ? '正確プレビュー' : '正確プレビュー生成中…'}
           {accurateError && <small className="preview-accurate-error" title={accurateError}>取得失敗</small>}
@@ -424,7 +444,7 @@ export default function Preview(): React.JSX.Element {
         <div className="transport-right">
           <Volume2 size={15} />
           <span className="audio-meter"><i /><i /></span>
-          <IconButton label="全画面表示"><Maximize2 size={16} /></IconButton>
+          <IconButton label={fullscreen ? '全画面表示を終了' : '全画面表示'} onClick={toggleFullscreen}><Maximize2 size={16} /></IconButton>
         </div>
       </div>
     </section>

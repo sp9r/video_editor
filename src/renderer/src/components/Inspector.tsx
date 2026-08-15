@@ -237,14 +237,14 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
         </div>
         <div className="template-actions">
           <Button className="primary-button" onClick={() => void saveCurrentAsTemplate()}>テンプレートとして保存</Button>
-          <Button className="subtle-button" disabled={!selected} onClick={applyTemplate}>適用</Button>
-          <Button className="subtle-button" disabled={!selected} onClick={() => void duplicateTemplate()}>複製</Button>
-          <Button className="subtle-button" disabled={!isUserTemplate} onClick={() => void renameTemplate()}>名前変更</Button>
-          <Button className="subtle-button" disabled={!isUserTemplate} onClick={() => void updateTemplate()}>更新</Button>
-          <Button className="subtle-button" disabled={!isUserTemplate} onClick={() => void deleteTemplate()}>削除</Button>
-          <Button className="subtle-button" disabled={!selected || defaultSubtitleTemplateId === templateId} onClick={() => void setAsDefault()}>デフォルトに設定</Button>
+          <Button className="subtle-button" disabled={!selected} title={selected ? '選択中templateを字幕へ適用' : 'templateを選択してください'} onClick={applyTemplate}>適用</Button>
+          <Button className="subtle-button" disabled={!selected} title={selected ? '選択中templateを複製' : 'templateを選択してください'} onClick={() => void duplicateTemplate()}>複製</Button>
+          <Button className="subtle-button" disabled={!isUserTemplate} title={isUserTemplate ? 'ユーザーtemplateの名前を変更' : '組み込みtemplateは変更できません'} onClick={() => void renameTemplate()}>名前変更</Button>
+          <Button className="subtle-button" disabled={!isUserTemplate} title={isUserTemplate ? 'ユーザーtemplateを更新' : 'ユーザーtemplateを選択してください'} onClick={() => void updateTemplate()}>更新</Button>
+          <Button className="subtle-button" disabled={!isUserTemplate} title={isUserTemplate ? 'ユーザーtemplateを削除' : '組み込みtemplateは削除できません'} onClick={() => void deleteTemplate()}>削除</Button>
+          <Button className="subtle-button" disabled={!selected || defaultSubtitleTemplateId === templateId} title={!selected ? 'templateを選択してください' : defaultSubtitleTemplateId === templateId ? 'すでにデフォルトです' : 'デフォルトtemplateに設定'} onClick={() => void setAsDefault()}>デフォルトに設定</Button>
         </div>
-        <Button className="subtle-button" disabled={!selected} onClick={() => {
+        <Button className="subtle-button" disabled={!selected} title={selected ? 'この字幕track全体へstyleを適用' : 'templateを選択してください'} onClick={() => {
           if (!selected) return
           applySubtitleStyleToTrack(clip.id, selected.style)
           showNotice(`この字幕track全体へ「${'name' in selected ? selected.name : selected.label}」を適用しました。`, 'success')
@@ -283,8 +283,8 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
           {next && <button type="button" onClick={() => selectContext(next)}><small>次</small><span>{next.text}</span></button>}
         </div>
         <div className="field-grid">
-          <Button className="subtle-button" disabled={!previous} onClick={() => mergeSubtitleWithPrevious(clip.id)}>← 前の字幕と結合</Button>
-          <Button className="subtle-button" disabled={!next} onClick={() => mergeSubtitleWithNext(clip.id)}>次の字幕と結合 →</Button>
+          <Button className="subtle-button" disabled={!previous} title={previous ? '前の字幕と結合' : '前の字幕がありません'} onClick={() => mergeSubtitleWithPrevious(clip.id)}>← 前の字幕と結合</Button>
+          <Button className="subtle-button" disabled={!next} title={next ? '次の字幕と結合' : '次の字幕がありません'} onClick={() => mergeSubtitleWithNext(clip.id)}>次の字幕と結合 →</Button>
         </div>
       </Section>
       <Section title="字幕テキスト">
@@ -310,7 +310,7 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
               {(editUnits ?? clip.words ?? []).map((unit, index, units) => (
                 <span className="subtitle-word-boundary" key={unit.id}>
                   <span className="subtitle-word-token" title={`${(unit.startUs / 1_000_000).toFixed(2)}–${(unit.endUs / 1_000_000).toFixed(2)}秒`}>{unit.text}</span>
-                  {index < units.length - 1 && <button type="button" disabled={!editUnits || !wordsMatchText} aria-label={`「${unit.text}」の後で分割`} onClick={() => splitSubtitleAtWordBoundary(clip.id, index)}>分割</button>}
+                  {index < units.length - 1 && <button type="button" disabled={!editUnits || !wordsMatchText} title={!editUnits ? '編集単位がありません' : !wordsMatchText ? '本文と単語情報が一致しないため分割できません' : 'この単語の後で分割'} aria-label={`「${unit.text}」の後で分割`} onClick={() => splitSubtitleAtWordBoundary(clip.id, index)}>分割</button>}
                 </span>
               ))}
             </div>

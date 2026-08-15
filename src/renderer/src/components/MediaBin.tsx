@@ -7,7 +7,6 @@ import {
   FolderOpen,
   Grid2X2,
   List,
-  MoreHorizontal,
   Plus,
   Search,
   Video
@@ -15,6 +14,7 @@ import {
 import { makeId } from '../../../shared/project'
 import { isMediaTrack, type MediaAsset, type ProbeResult } from '../../../shared/types'
 import { useEditorStore } from '../store'
+import { mediaAddControlState } from '../action-state'
 import { EmptyState, IconButton } from './Controls'
 
 const toAsset = (probe: ProbeResult): MediaAsset => ({
@@ -118,7 +118,6 @@ export default function MediaBin(): React.JSX.Element {
         </div>
         <div className="panel-actions">
           <IconButton label="素材を読み込む" onClick={() => void importMedia()}><Plus size={16} /></IconButton>
-          <IconButton label="その他"><MoreHorizontal size={16} /></IconButton>
         </div>
       </header>
       <div className="media-toolbar">
@@ -165,7 +164,8 @@ export default function MediaBin(): React.JSX.Element {
               <button
                 type="button"
                 className="media-add-to-timeline"
-                disabled={asset.offline || !project.tracks.some(isMediaTrack)}
+                disabled={mediaAddControlState({ offline: asset.offline, hasMediaTrack: project.tracks.some(isMediaTrack) }).disabled}
+                title={mediaAddControlState({ offline: asset.offline, hasMediaTrack: project.tracks.some(isMediaTrack) }).label}
                 onClick={() => {
                   const track = project.tracks.find((candidate) => isMediaTrack(candidate))
                   if (track) addAssetClip(asset.id, track.id, playheadUs)

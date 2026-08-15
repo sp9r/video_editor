@@ -535,9 +535,8 @@ select {
 /* Preview */
 .viewer-panel { grid-column: 2; grid-row: 1; display: grid; grid-template-rows: 35px minmax(0, 1fr) 46px; background: #101318; }
 .viewer-tabs { display: flex; align-items: stretch; padding: 0 8px; background: #171b21; border-bottom: 1px solid var(--line-soft); }
-.viewer-tabs button { position: relative; padding: 0 13px; color: var(--text-dim); font-size: 11px; background: transparent; border: 0; cursor: pointer; }
-.viewer-tabs button.is-active { color: var(--text); }
-.viewer-tabs button.is-active::after { position: absolute; right: 10px; bottom: 0; left: 10px; height: 2px; background: var(--mint); content: ""; }
+.viewer-tabs .viewer-tab { position: relative; display: flex; align-items: center; padding: 0 13px; color: var(--text); font-size: 11px; }
+.viewer-tabs .viewer-tab.is-active::after { position: absolute; right: 10px; bottom: 0; left: 10px; height: 2px; background: var(--mint); content: ""; }
 .viewer-quality { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--text-dim); font-size: 9px; }
 .viewer-quality i { width: 5px; height: 5px; background: var(--mint); border-radius: 50%; }
 .preview-accurate-error { color: var(--red); font-size: 8px; }

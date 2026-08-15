@@ -65,6 +65,7 @@ export default function App(): React.JSX.Element {
     setDefaultSubtitleTemplateId,
     defaultSubtitleTemplateId,
     cancelAutoCaption,
+    autoCaptionJobId,
     autoCaptionProgress,
     fullCorrectionSession,
     fullCorrectionResult,
@@ -416,9 +417,9 @@ export default function App(): React.JSX.Element {
         <div className="header-actions">
           <IconButton label="新規プロジェクト" onClick={createNewProject}><FilePlus2 size={16} /></IconButton>
           <IconButton label="プロジェクトを開く（Ctrl+O）" onClick={() => void open()}><FolderOpen size={16} /></IconButton>
-          <IconButton label="元に戻す（Ctrl+Z）" disabled={!past.length} onClick={undo}><Undo2 size={16} /></IconButton>
-          <IconButton label="やり直す（Ctrl+Shift+Z）" disabled={!future.length} onClick={redo}><Redo2 size={16} /></IconButton>
-          <Button className="save-button" disabled={saving} onClick={() => void save()}><Save size={15} />{saving ? '保存中…' : '保存'}</Button>
+          <IconButton label={past.length ? '元に戻す（Ctrl+Z）' : '元に戻す（変更履歴がありません）'} disabled={!past.length} onClick={undo}><Undo2 size={16} /></IconButton>
+          <IconButton label={future.length ? 'やり直す（Ctrl+Shift+Z）' : 'やり直す（やり直せる変更がありません）'} disabled={!future.length} onClick={redo}><Redo2 size={16} /></IconButton>
+          <Button className="save-button" disabled={saving} title={saving ? '保存中です' : 'プロジェクトを保存'} onClick={() => void save()}><Save size={15} />{saving ? '保存中…' : '保存'}</Button>
           <Button className={reviewEnabled ? 'review-toggle is-active' : 'review-toggle'} onClick={() => {
             if (reviewEnabled) useReviewStore.getState().stop()
             else if (!useReviewStore.getState().start(project, useEditorStore.getState().selectedClipIds[0])) showNotice('レビュー対象の字幕がありません。', 'warning')
@@ -472,7 +473,7 @@ export default function App(): React.JSX.Element {
             <header className="dialog-header">
               <div className="dialog-title-icon"><Captions size={17} /></div>
               <div><span className="panel-eyebrow">AUTO PROCESSING</span><h2 id="auto-caption-title">自動処理</h2></div>
-              <IconButton label="閉じる" disabled={captioning} onClick={() => setCaptionDialogOpen(false)}><X size={15} /></IconButton>
+              <IconButton label={captioning ? '生成中は閉じられません（キャンセルを使用）' : '閉じる'} disabled={captioning} onClick={() => setCaptionDialogOpen(false)}><X size={15} /></IconButton>
             </header>
             <div className="caption-dialog-body">
               {!selectedCaptionClip || (selectedCaptionClip.kind !== 'video' && selectedCaptionClip.kind !== 'audio') ? (
@@ -488,7 +489,7 @@ export default function App(): React.JSX.Element {
                   <label className="field"><span className="field-label">最大行数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={16} value={captionSettings.maxLines ?? 2} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxLines: Math.max(1, Math.min(16, Number(event.target.value) || 2)) }))} /><span>行</span></span></label>
                   <label className="field"><span className="field-label">字幕品質</span><select disabled={captioning} value={captionSettings.segmentationMode} onChange={(event) => setCaptionSettings((current) => ({ ...current, segmentationMode: event.target.value as AutoCaptionSettings['segmentationMode'] }))}><option value="auto">高品質</option><option value="rule">ルール</option></select></label>
                   <label className="field"><span className="field-label">字幕テンプレート</span><select disabled={captioning} value={captionSettings.subtitleTemplate ?? 'default'} onChange={(event) => selectSubtitleTemplate(event.target.value)}><optgroup label="組み込み（変更不可）">{SUBTITLE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</optgroup>{userSubtitleTemplates.length > 0 && <optgroup label="ユーザー">{userSubtitleTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</optgroup>}</select></label>
-                  <div className="template-actions"><Button disabled={captioning} onClick={() => void createUserSubtitleTemplate(false)}>新規保存</Button><Button disabled={captioning} onClick={() => void createUserSubtitleTemplate(true)}>複製</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} onClick={() => void updateUserSubtitleTemplate()}>更新</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} onClick={() => void deleteUserSubtitleTemplate()}>削除</Button></div>
+                  <div className="template-actions"><Button disabled={captioning} title={captioning ? '生成中は変更できません' : '現在の設定を新しいtemplateとして保存'} onClick={() => void createUserSubtitleTemplate(false)}>新規保存</Button><Button disabled={captioning} title={captioning ? '生成中は変更できません' : '現在の設定をtemplateとして複製'} onClick={() => void createUserSubtitleTemplate(true)}>複製</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} title={captioning ? '生成中は変更できません' : 'ユーザーtemplateを選択すると更新できます'} onClick={() => void updateUserSubtitleTemplate()}>更新</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} title={captioning ? '生成中は変更できません' : 'ユーザーtemplateを選択すると削除できます'} onClick={() => void deleteUserSubtitleTemplate()}>削除</Button></div>
                   {autoCaptionProgress && (
                     <div className={`caption-progress ${autoCaptionProgress.state === 'failed' ? 'stage-failed' : ''}`} aria-live="polite">
                       <div className="progress-heading"><strong>{autoCaptionProgress.state === 'preparing' ? '音声準備' : autoCaptionProgress.state === 'transcribing' ? '文字起こし' : autoCaptionProgress.state === 'silence_analyzing' ? '無音解析' : autoCaptionProgress.state === 'segmenting' ? '字幕区切り' : autoCaptionProgress.state === 'completed' ? '字幕配置' : '自動字幕'}</strong><span>{Math.round(autoCaptionProgress.ratio * 100)}%</span></div>
@@ -503,8 +504,8 @@ export default function App(): React.JSX.Element {
             <footer className="dialog-footer">
               <span>{captioning ? '生成中はプロジェクトを変更しません。' : autoCaptionEnabled ? '既存字幕は上書きされません。' : '自動字幕OFFでは実行できません。'}</span>
               <div>
-                <Button disabled={captioning && !useEditorStore.getState().autoCaptionJobId} onClick={() => { if (captioning) void cancelAutoCaption(); else setCaptionDialogOpen(false) }}>{captioning ? 'キャンセル' : 'キャンセル'}</Button>
-                {!captioning && captionSummary ? <Button className="primary-button" onClick={() => setCaptionDialogOpen(false)}>閉じる</Button> : <Button className="primary-button" disabled={captioning || !autoCaptionEnabled || !selectedCaptionClip || (selectedCaptionClip.kind !== 'video' && selectedCaptionClip.kind !== 'audio')} onClick={() => void runAutoCaption()}>{captioning ? '実行中…' : '実行'}</Button>}
+                <Button disabled={captioning && !autoCaptionJobId} title={captioning && !autoCaptionJobId ? 'ジョブの開始を待っています' : captioning ? '自動処理をキャンセル' : 'ダイアログを閉じる'} onClick={() => { if (captioning) void cancelAutoCaption(); else setCaptionDialogOpen(false) }}>{captioning ? 'キャンセル' : 'キャンセル'}</Button>
+                {!captioning && captionSummary ? <Button className="primary-button" onClick={() => setCaptionDialogOpen(false)}>閉じる</Button> : <Button className="primary-button" disabled={captioning || !autoCaptionEnabled || !selectedCaptionClip || (selectedCaptionClip.kind !== 'video' && selectedCaptionClip.kind !== 'audio')} title={captioning ? '実行中です' : !autoCaptionEnabled ? '自動字幕をONにしてください' : !selectedCaptionClip ? '対象clipを選択してください' : selectedCaptionClip.kind !== 'video' && selectedCaptionClip.kind !== 'audio' ? '動画または音声clipを選択してください' : '自動処理を実行'} onClick={() => void runAutoCaption()}>{captioning ? '実行中…' : '実行'}</Button>}
               </div>
             </footer>
           </section>

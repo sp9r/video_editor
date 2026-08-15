@@ -25,6 +25,7 @@ import { subtitleEditUnits } from '../../../shared/editing/edit-units'
 import { snapSubtitleTimelinePosition } from '../../../shared/editing/subtitle-snap'
 import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type SubtitleClip, type SubtitleEditUnit, type SubtitleWord, type TimelineClip, type TimelineTrack, type TimeUs } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
+import { TIMELINE_ZOOM_MAX, TIMELINE_ZOOM_MIN, timelineZoomControlState, trackControlState } from '../action-state'
 import { useReviewStore } from '../review-store'
 import { Button, IconButton } from './Controls'
 import { peakCountForPixelWidth, Waveform } from './Waveform'
@@ -162,15 +163,16 @@ function TrackControls({ track, tracks }: { track: TimelineTrack; tracks: Timeli
   const renameTrack = useEditorStore((state) => state.renameTrack)
   const deleteTrack = useEditorStore((state) => state.deleteTrack)
   const reorderTrack = useEditorStore((state) => state.reorderTrack)
+  const controls = trackControlState(track, tracks)
   return (
     <div className={`track-header kind-${track.kind}`}>
       <span className="track-index">{trackLabel(track, tracks)}</span>
       <strong title={track.name}>{track.name}</strong>
       <div className="track-controls">
         <IconButton label="トラック名を変更" onClick={() => { const next = window.prompt('トラック名', track.name); if (next !== null) renameTrack(track.id, next) }}><Pencil size={11} /></IconButton>
-        <IconButton label="上へ移動" onClick={() => reorderTrack(track.id, -1)}><ChevronUp size={11} /></IconButton>
-        <IconButton label="下へ移動" onClick={() => reorderTrack(track.id, 1)}><ChevronDown size={11} /></IconButton>
-        <IconButton label="空のトラックを削除" onClick={() => deleteTrack(track.id)}><Trash2 size={11} /></IconButton>
+        <IconButton label={controls.moveUpLabel} disabled={!controls.canMoveUp} onClick={() => reorderTrack(track.id, -1)}><ChevronUp size={11} /></IconButton>
+        <IconButton label={controls.moveDownLabel} disabled={!controls.canMoveDown} onClick={() => reorderTrack(track.id, 1)}><ChevronDown size={11} /></IconButton>
+        <IconButton label={controls.deleteLabel} disabled={!controls.canDelete} onClick={() => deleteTrack(track.id)}><Trash2 size={11} /></IconButton>
         <IconButton label={track.locked ? 'トラックのロックを解除' : 'トラックをロック'} active={track.locked} onClick={() => patchTrack({ ...track, locked: !track.locked })}>{track.locked ? <Lock size={13} /> : <LockOpen size={13} />}</IconButton>
         <IconButton label={track.muted ? 'ミュートを解除' : 'ミュート'} active={track.muted} onClick={() => patchTrack({ ...track, muted: !track.muted })}>{track.muted ? <VolumeX size={13} /> : <Volume2 size={13} />}</IconButton>
         <IconButton label={track.hidden ? 'トラックを表示' : 'トラックを非表示'} active={track.hidden} onClick={() => patchTrack({ ...track, hidden: !track.hidden })}>{track.hidden ? <EyeOff size={13} /> : <Eye size={13} />}</IconButton>
@@ -231,6 +233,7 @@ export default function Timeline(): React.JSX.Element {
   const contextSubtitle = contextClip?.kind === 'subtitle' ? findSubtitleContext(project, contextClip.id) : undefined
   const canMergePrevious = Boolean(contextSubtitle?.previous && !contextTrack?.locked)
   const canMergeNext = Boolean(contextSubtitle?.next && !contextTrack?.locked)
+  const zoomControls = timelineZoomControlState(zoomPxPerSecond)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -441,12 +444,12 @@ export default function Timeline(): React.JSX.Element {
           <Button className="subtle-button" onClick={addMediaTrack}><Plus size={14} />Vトラック</Button>
           <Button className="subtle-button" onClick={addSubtitleTrack}><Plus size={14} />Cトラック</Button>
           <Button className="subtle-button" onClick={addSubtitle}><Captions size={14} />字幕を追加</Button>
-          <IconButton label="再生位置で分割（Ctrl+K）" disabled={!selectedClipIds.length} onClick={splitSelected}><Scissors size={16} /></IconButton>
-          <IconButton label={rippleMode ? '選択クリップを自動詰め削除' : '選択クリップを削除'} disabled={!selectedClipIds.length} onClick={() => deleteSelected()}><Trash2 size={16} /></IconButton>
+          <IconButton label={selectedClipIds.length ? '再生位置で分割（Ctrl+K）' : '再生位置で分割（クリップを選択してください）'} disabled={!selectedClipIds.length} onClick={splitSelected}><Scissors size={16} /></IconButton>
+          <IconButton label={selectedClipIds.length ? (rippleMode ? '選択クリップを自動詰め削除' : '選択クリップを削除') : '選択クリップを削除（クリップを選択してください）'} disabled={!selectedClipIds.length} onClick={() => deleteSelected()}><Trash2 size={16} /></IconButton>
           <span className="toolbar-separator" />
-          <IconButton label="タイムラインを縮小" onClick={() => setZoom(zoomPxPerSecond - 12)}><ZoomOut size={15} /></IconButton>
-          <input className="zoom-slider" type="range" min={28} max={220} value={zoomPxPerSecond} onChange={(event) => setZoom(Number(event.target.value))} aria-label="タイムラインの拡大率" />
-          <IconButton label="タイムラインを拡大" onClick={() => setZoom(zoomPxPerSecond + 12)}><ZoomIn size={15} /></IconButton>
+          <IconButton label={zoomControls.canZoomOut ? 'タイムラインを縮小' : `タイムラインを縮小（最小${TIMELINE_ZOOM_MIN}px/秒）`} disabled={!zoomControls.canZoomOut} onClick={() => setZoom(zoomPxPerSecond - 12)}><ZoomOut size={15} /></IconButton>
+          <input className="zoom-slider" type="range" min={TIMELINE_ZOOM_MIN} max={TIMELINE_ZOOM_MAX} value={zoomPxPerSecond} onChange={(event) => setZoom(Number(event.target.value))} aria-label="タイムラインの拡大率" />
+          <IconButton label={zoomControls.canZoomIn ? 'タイムラインを拡大' : `タイムラインを拡大（最大${TIMELINE_ZOOM_MAX}px/秒）`} disabled={!zoomControls.canZoomIn} onClick={() => setZoom(zoomPxPerSecond + 12)}><ZoomIn size={15} /></IconButton>
         </div>
       </header>
       <div className="timeline-shell">
