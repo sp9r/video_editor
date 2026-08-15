@@ -10,6 +10,9 @@ const MAX_ITEMS = 100_000
 const MAX_TEXT_LENGTH = 100_000
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const SEGMENTATION_MODES = ['auto', 'rule', 'llm'] as const
+const SILENCE_CUT_MODES = ['off', 'natural', 'strong'] as const
+const ACCELERATION_MODES = ['auto', 'gpu', 'cpu'] as const
+const SUBTITLE_TEMPLATE_IDS = ['default', 'high-contrast', 'minimal'] as const
 const TEXT_STATUSES = ['as_transcribed', 'display_normalized', 'manually_corrected'] as const
 const PROVENANCES = ['caption_algorithm', 'rule_fallback', 'llm', 'unknown'] as const
 const FORBIDDEN_KEYS = new Set([
@@ -18,6 +21,9 @@ const FORBIDDEN_KEYS = new Set([
 ])
 
 export type SegmentationMode = typeof SEGMENTATION_MODES[number]
+export type SilenceCutMode = typeof SILENCE_CUT_MODES[number]
+export type AccelerationMode = typeof ACCELERATION_MODES[number]
+export type SubtitleTemplateId = typeof SUBTITLE_TEMPLATE_IDS[number]
 export type AutoCaptionTextStatus = typeof TEXT_STATUSES[number]
 export type AutoCaptionProvenance = typeof PROVENANCES[number]
 
@@ -26,6 +32,9 @@ export interface AutoCaptionSettings {
   maxChars: number
   maxLines?: number
   segmentationMode: SegmentationMode
+  silenceCut?: SilenceCutMode
+  accelerationMode?: AccelerationMode
+  subtitleTemplate?: SubtitleTemplateId
 }
 
 export type AutoCaptionProgressState = 'preparing' | 'transcribing' | 'silence_analyzing' | 'segmenting' | 'completed' | 'failed'
@@ -73,6 +82,9 @@ export interface AutoCaptionRequest {
   maxChars: number
   maxLines?: number
   segmentationMode: SegmentationMode
+  silenceCut?: SilenceCutMode
+  accelerationMode?: AccelerationMode
+  subtitleTemplate?: SubtitleTemplateId
 }
 
 export interface AutoCaptionRawWord {
@@ -321,15 +333,24 @@ const parseSourceClip = (value: unknown, label: string): AutoCaptionSourceClipId
 
 const parseSettings = (value: unknown): AutoCaptionBaseline['settings'] => {
   if (!isRecord(value)) throw new Error('settings must be an object')
-  assertKeys(value, ['language', 'maxChars', 'maxLines', 'segmentationMode'], 'settings')
+  assertKeys(value, ['language', 'maxChars', 'maxLines', 'segmentationMode', 'silenceCut', 'accelerationMode', 'subtitleTemplate'], 'settings')
   const maxLines = value.maxLines === undefined ? undefined : boundedCount(value.maxLines, 'settings.maxLines', 1, 16)
   const segmentationMode = requiredString(own(value, 'segmentationMode'), 'settings.segmentationMode', 16) as SegmentationMode
   if (!SEGMENTATION_MODES.includes(segmentationMode)) throw new Error('settings.segmentationMode is invalid')
+  const silenceCut = value.silenceCut === undefined ? undefined : requiredString(value.silenceCut, 'settings.silenceCut', 16) as SilenceCutMode
+  if (silenceCut !== undefined && !SILENCE_CUT_MODES.includes(silenceCut)) throw new Error('settings.silenceCut is invalid')
+  const accelerationMode = value.accelerationMode === undefined ? undefined : requiredString(value.accelerationMode, 'settings.accelerationMode', 16) as AccelerationMode
+  if (accelerationMode !== undefined && !ACCELERATION_MODES.includes(accelerationMode)) throw new Error('settings.accelerationMode is invalid')
+  const subtitleTemplate = value.subtitleTemplate === undefined ? undefined : requiredString(value.subtitleTemplate, 'settings.subtitleTemplate', 32) as SubtitleTemplateId
+  if (subtitleTemplate !== undefined && !SUBTITLE_TEMPLATE_IDS.includes(subtitleTemplate)) throw new Error('settings.subtitleTemplate is invalid')
   return {
     language: requiredString(own(value, 'language'), 'settings.language', 35),
     maxChars: boundedCount(own(value, 'maxChars'), 'settings.maxChars', 1, 10_000),
     ...(maxLines === undefined ? {} : { maxLines }),
-    segmentationMode
+    segmentationMode,
+    ...(silenceCut === undefined ? {} : { silenceCut }),
+    ...(accelerationMode === undefined ? {} : { accelerationMode }),
+    ...(subtitleTemplate === undefined ? {} : { subtitleTemplate })
   }
 }
 
@@ -337,7 +358,7 @@ export const parseAutoCaptionSettings = (value: unknown): AutoCaptionSettings =>
 
 export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
   if (!isRecord(input)) throw new Error('auto-caption request must be an object')
-  assertKeys(input, ['version', 'jobId', 'mediaPath', 'sourceStartUs', 'sourceEndUs', 'language', 'maxChars', 'maxLines', 'segmentationMode'], 'auto-caption request')
+  assertKeys(input, ['version', 'jobId', 'mediaPath', 'sourceStartUs', 'sourceEndUs', 'language', 'maxChars', 'maxLines', 'segmentationMode', 'silenceCut', 'accelerationMode', 'subtitleTemplate'], 'auto-caption request')
   if (own(input, 'version') !== AUTO_CAPTION_REQUEST_VERSION) throw new Error('unsupported auto-caption request version')
   const sourceStartUs = integerUs(own(input, 'sourceStartUs'), 'sourceStartUs')
   const sourceEndUs = integerUs(own(input, 'sourceEndUs'), 'sourceEndUs', false)
@@ -345,6 +366,12 @@ export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
   const segmentationMode = requiredString(own(input, 'segmentationMode'), 'segmentationMode', 16) as SegmentationMode
   if (!SEGMENTATION_MODES.includes(segmentationMode)) throw new Error('unsupported segmentationMode')
   const maxLines = input.maxLines === undefined ? undefined : boundedCount(input.maxLines, 'maxLines', 1, 16)
+  const silenceCut = input.silenceCut === undefined ? undefined : requiredString(input.silenceCut, 'silenceCut', 16) as SilenceCutMode
+  if (silenceCut !== undefined && !SILENCE_CUT_MODES.includes(silenceCut)) throw new Error('unsupported silenceCut')
+  const accelerationMode = input.accelerationMode === undefined ? undefined : requiredString(input.accelerationMode, 'accelerationMode', 16) as AccelerationMode
+  if (accelerationMode !== undefined && !ACCELERATION_MODES.includes(accelerationMode)) throw new Error('unsupported accelerationMode')
+  const subtitleTemplate = input.subtitleTemplate === undefined ? undefined : requiredString(input.subtitleTemplate, 'subtitleTemplate', 32) as SubtitleTemplateId
+  if (subtitleTemplate !== undefined && !SUBTITLE_TEMPLATE_IDS.includes(subtitleTemplate)) throw new Error('unsupported subtitleTemplate')
   return {
     version: AUTO_CAPTION_REQUEST_VERSION,
     jobId: identifier(own(input, 'jobId'), 'jobId'),
@@ -354,7 +381,10 @@ export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
     language: requiredString(own(input, 'language'), 'language', 35),
     maxChars: boundedCount(own(input, 'maxChars'), 'maxChars', 1, 10_000),
     ...(maxLines === undefined ? {} : { maxLines }),
-    segmentationMode
+    segmentationMode,
+    ...(silenceCut === undefined ? {} : { silenceCut }),
+    ...(accelerationMode === undefined ? {} : { accelerationMode }),
+    ...(subtitleTemplate === undefined ? {} : { subtitleTemplate })
   }
 }
 

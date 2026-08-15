@@ -161,8 +161,12 @@ describe('auto-caption worker discovery and service', () => {
     const run = await runUntilTerminal(service, fixture.project)
     const terminal = await run.terminal
     expect(run.started.clipId).toBe('clip-1')
-    expect(observed.request).toMatchObject({ sourceStartUs: 20_000_000, sourceEndUs: 30_000_000, mediaPath: media, maxChars: 32, maxLines: 2 })
+    expect(observed.request).toMatchObject({
+      sourceStartUs: 20_000_000, sourceEndUs: 30_000_000, mediaPath: media, maxChars: 32, maxLines: 2,
+      silenceCut: 'natural', accelerationMode: 'auto', subtitleTemplate: 'default'
+    })
     expect(observed.args).toContain('--request')
+    expect(observed.args).toEqual(expect.arrayContaining(['--acceleration-mode', 'auto']))
     expect(run.events.map((event) => event.state)).toEqual(['preparing', 'transcribing', 'segmenting', 'completed'])
     expect(terminal.result.sourceStartUs).toBe(20_000_000)
     expect(terminal.result.rawWords[0].startUs).toBe(25_000_000)

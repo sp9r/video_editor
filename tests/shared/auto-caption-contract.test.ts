@@ -20,7 +20,10 @@ const request = () => ({
   language: 'ja',
   maxChars: 32,
   maxLines: 2,
-  segmentationMode: 'rule'
+  segmentationMode: 'rule',
+  silenceCut: 'strong',
+  accelerationMode: 'gpu',
+  subtitleTemplate: 'high-contrast'
 })
 
 const result = () => ({
@@ -45,9 +48,15 @@ const result = () => ({
 
 describe('auto-caption worker contract draft', () => {
   it('validates a range-scoped request with integer microseconds', () => {
-    expect(parseAutoCaptionRequest(request())).toMatchObject({ sourceStartUs: 10_000_000, sourceEndUs: 15_000_000 })
+    expect(parseAutoCaptionRequest(request())).toMatchObject({ sourceStartUs: 10_000_000, sourceEndUs: 15_000_000, silenceCut: 'strong', accelerationMode: 'gpu', subtitleTemplate: 'high-contrast' })
     expect(() => parseAutoCaptionRequest({ ...request(), sourceStartUs: 1.5 })).toThrow()
     expect(() => parseAutoCaptionRequest({ ...request(), sourceEndUs: 10_000_000 })).toThrow()
+  })
+
+  it('rejects unsupported unified processing settings', () => {
+    expect(() => parseAutoCaptionRequest({ ...request(), silenceCut: 'aggressive' })).toThrow()
+    expect(() => parseAutoCaptionRequest({ ...request(), accelerationMode: 'fallback' })).toThrow()
+    expect(() => parseAutoCaptionRequest({ ...request(), subtitleTemplate: 'unknown' })).toThrow()
   })
 
   it('validates word ownership, provenance, diagnostics, and fallback', () => {

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { createEmptyProject } from '../../shared/project'
 import type { AutoCaptionSettings } from '../../shared/auto-caption-contract'
+import { SUBTITLE_TEMPLATES } from '../../shared/subtitle-templates'
 import type { EncoderReport, ProjectFile } from '../../shared/types'
 import { BrandMark } from './components/Brand'
 import { Button, IconButton } from './components/Controls'
@@ -77,7 +78,11 @@ export default function App(): React.JSX.Element {
   const [appError, setAppError] = useState<string | null>(null)
   const [captioning, setCaptioning] = useState(false)
   const [captionDialogOpen, setCaptionDialogOpen] = useState(false)
-  const [captionSettings, setCaptionSettings] = useState<AutoCaptionSettings>({ language: 'ja', maxChars: 32, maxLines: 2, segmentationMode: 'auto' })
+  const [autoCaptionEnabled, setAutoCaptionEnabled] = useState(true)
+  const [captionSettings, setCaptionSettings] = useState<AutoCaptionSettings>({
+    language: 'ja', maxChars: 32, maxLines: 2, segmentationMode: 'auto',
+    silenceCut: 'natural', accelerationMode: 'auto', subtitleTemplate: 'default'
+  })
   const [captionSummary, setCaptionSummary] = useState<{ captionCount: number; rawWordCount: number; fallbackUsed: boolean } | null>(null)
   const reviewEnabled = useReviewStore((state) => state.enabled)
 
@@ -319,7 +324,7 @@ export default function App(): React.JSX.Element {
             else if (!useReviewStore.getState().start(project, useEditorStore.getState().selectedClipIds[0])) showNotice('レビュー対象の字幕がありません。', 'warning')
           }}>レビュー {reviewEnabled ? 'ON' : 'OFF'}</Button>
           {(fullCorrectionSession || selectedAutoCaptionTrack) && <Button className={fullCorrectionSession ? 'review-toggle is-active' : 'review-toggle'} onClick={() => { void (fullCorrectionSession ? finishFullCorrection() : startFullCorrection()) }}>{fullCorrectionSession ? '修正完了' : '全文修正'}</Button>}
-          <Button disabled={captioning} onClick={() => { setCaptionSummary(null); setCaptionDialogOpen(true) }}><Captions size={15} />自動字幕</Button>
+          <Button disabled={captioning} onClick={() => { setCaptionSummary(null); setCaptionDialogOpen(true) }}><Captions size={15} />自動処理</Button>
           <Button className="primary-button export-button" onClick={() => setExportOpen(true)}><MonitorUp size={16} />書き出す</Button>
         </div>
       </header>
@@ -366,7 +371,7 @@ export default function App(): React.JSX.Element {
           <section className="caption-dialog" role="dialog" aria-modal="true" aria-labelledby="auto-caption-title">
             <header className="dialog-header">
               <div className="dialog-title-icon"><Captions size={17} /></div>
-              <div><span className="panel-eyebrow">AUTO CAPTION</span><h2 id="auto-caption-title">自動字幕</h2></div>
+              <div><span className="panel-eyebrow">AUTO PROCESSING</span><h2 id="auto-caption-title">自動処理</h2></div>
               <IconButton label="閉じる" disabled={captioning} onClick={() => setCaptionDialogOpen(false)}><X size={15} /></IconButton>
             </header>
             <div className="caption-dialog-body">
@@ -375,10 +380,14 @@ export default function App(): React.JSX.Element {
               ) : (
                 <>
                   <div className="caption-target"><span>対象clip</span><strong>{selectedCaptionClip.name}</strong></div>
+                  <label className="field"><span className="field-label">自動字幕</span><select disabled={captioning} value={autoCaptionEnabled ? 'on' : 'off'} onChange={(event) => setAutoCaptionEnabled(event.target.value === 'on')}><option value="on">ON</option><option value="off">OFF</option></select></label>
+                  <label className="field"><span className="field-label">無音カット</span><select disabled={captioning} value={captionSettings.silenceCut ?? 'natural'} onChange={(event) => setCaptionSettings((current) => ({ ...current, silenceCut: event.target.value as AutoCaptionSettings['silenceCut'] }))}><option value="off">OFF</option><option value="natural">自然</option><option value="strong">強め</option></select></label>
+                  <label className="field"><span className="field-label">処理デバイス</span><select disabled={captioning} value={captionSettings.accelerationMode ?? 'auto'} onChange={(event) => setCaptionSettings((current) => ({ ...current, accelerationMode: event.target.value as AutoCaptionSettings['accelerationMode'] }))}><option value="auto">自動（推奨）</option><option value="gpu">GPU優先</option><option value="cpu">CPU</option></select></label>
                   <label className="field"><span className="field-label">言語</span><select disabled={captioning} value={captionSettings.language} onChange={(event) => setCaptionSettings((current) => ({ ...current, language: event.target.value }))}><option value="ja">日本語</option><option value="auto">自動判定</option></select></label>
                   <label className="field"><span className="field-label">最大文字数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={10000} value={captionSettings.maxChars} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxChars: Math.max(1, Math.min(10000, Number(event.target.value) || 32)) }))} /><span>文字</span></span></label>
                   <label className="field"><span className="field-label">最大行数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={16} value={captionSettings.maxLines ?? 2} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxLines: Math.max(1, Math.min(16, Number(event.target.value) || 2)) }))} /><span>行</span></span></label>
-                  <label className="field"><span className="field-label">区切り</span><select disabled={captioning} value={captionSettings.segmentationMode} onChange={(event) => setCaptionSettings((current) => ({ ...current, segmentationMode: event.target.value as AutoCaptionSettings['segmentationMode'] }))}><option value="auto">高品質</option><option value="rule">ルール</option></select></label>
+                  <label className="field"><span className="field-label">字幕品質</span><select disabled={captioning} value={captionSettings.segmentationMode} onChange={(event) => setCaptionSettings((current) => ({ ...current, segmentationMode: event.target.value as AutoCaptionSettings['segmentationMode'] }))}><option value="auto">高品質</option><option value="rule">ルール</option></select></label>
+                  <label className="field"><span className="field-label">字幕テンプレート</span><select disabled={captioning} value={captionSettings.subtitleTemplate ?? 'default'} onChange={(event) => setCaptionSettings((current) => ({ ...current, subtitleTemplate: event.target.value as AutoCaptionSettings['subtitleTemplate'] }))}>{SUBTITLE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</select></label>
                   {autoCaptionProgress && (
                     <div className={`caption-progress ${autoCaptionProgress.state === 'failed' ? 'stage-failed' : ''}`} aria-live="polite">
                       <div className="progress-heading"><strong>{autoCaptionProgress.state === 'preparing' ? '音声準備' : autoCaptionProgress.state === 'transcribing' ? '文字起こし' : autoCaptionProgress.state === 'silence_analyzing' ? '無音解析' : autoCaptionProgress.state === 'segmenting' ? '字幕区切り' : autoCaptionProgress.state === 'completed' ? '字幕配置' : '自動字幕'}</strong><span>{Math.round(autoCaptionProgress.ratio * 100)}%</span></div>
@@ -391,10 +400,10 @@ export default function App(): React.JSX.Element {
               )}
             </div>
             <footer className="dialog-footer">
-              <span>{captioning ? '生成中はプロジェクトを変更しません。' : '既存字幕は上書きされません。'}</span>
+              <span>{captioning ? '生成中はプロジェクトを変更しません。' : autoCaptionEnabled ? '既存字幕は上書きされません。' : '自動字幕OFFでは実行できません。'}</span>
               <div>
                 <Button disabled={captioning && !useEditorStore.getState().autoCaptionJobId} onClick={() => { if (captioning) void cancelAutoCaption(); else setCaptionDialogOpen(false) }}>{captioning ? 'キャンセル' : 'キャンセル'}</Button>
-                {!captioning && captionSummary ? <Button className="primary-button" onClick={() => setCaptionDialogOpen(false)}>閉じる</Button> : <Button className="primary-button" disabled={captioning || !selectedCaptionClip || (selectedCaptionClip.kind !== 'video' && selectedCaptionClip.kind !== 'audio')} onClick={() => void runAutoCaption()}>{captioning ? '生成中…' : '生成'}</Button>}
+                {!captioning && captionSummary ? <Button className="primary-button" onClick={() => setCaptionDialogOpen(false)}>閉じる</Button> : <Button className="primary-button" disabled={captioning || !autoCaptionEnabled || !selectedCaptionClip || (selectedCaptionClip.kind !== 'video' && selectedCaptionClip.kind !== 'audio')} onClick={() => void runAutoCaption()}>{captioning ? '実行中…' : '実行'}</Button>}
               </div>
             </footer>
           </section>

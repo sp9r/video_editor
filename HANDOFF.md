@@ -428,3 +428,9 @@ Phase 5、planning、highlight、publishing、mass Human Review、caption algori
 - `createSilenceCutTimeMapper`をsource absolute integerµsの共有pure mapperとして追加。keep/removed ranges、point/interval mappingを同一objectで扱う。
 - Auto Captionのraw Whisper words、caption start/end、SubtitleWord、SubtitleEditUnitは同一mapperを使用する。raw wordがremoved rangeへ重なる場合は`CUT PLAN INVALID`で全体rejectし、発話wordを削除して続行しない。
 - `tests/shared/silence-cut.test.ts`、`tests/shared/auto-caption-adapter.test.ts`へsource 0–5 / remove 5–8 / keep 8–15、raw speech rejection、word/edit unit parityを追加した。
+
+## 2026-08-16 Stage 11 Unified Auto Processing
+
+- 既存の自動字幕dialogを、自動字幕ON/OFF、無音カット（OFF/自然/強め）、処理デバイス（自動/GPU優先/CPU）、言語、字幕品質、字幕テンプレート、最大文字数/行数を一画面で選択するUnified Auto Processing dialogへ拡張した。
+- request/baselineへoptionalな`silenceCut`、`accelerationMode`、`subtitleTemplate`を追加。`silenceCut=off`はsilence artifactを生成せず、templateは生成SubtitleClipのstyleへ適用する。`edit_project.v1`は変更していない。
+- `npm.cmd run check` 46 files / 255 tests、build、Electron/accurate-preview/subtitle parity/geometry smoke、clip_automation full unittest 291 tests、compileall PASS。詳細は[`docs/STAGE_11_UNIFIED_AUTO_PROCESSING.md`](docs/STAGE_11_UNIFIED_AUTO_PROCESSING.md)。

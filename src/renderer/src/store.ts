@@ -313,7 +313,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         captionClip = silenceApplied.sourceClip
         silenceSummary = silenceApplied.summary
       }
-      const applied = applyAutoCaptionResultToProject(applyProject, captionClip, result, { maxLines: settings?.maxLines ?? 2, sourceTimeMapper })
+      const applied = applyAutoCaptionResultToProject(applyProject, captionClip, result, {
+        maxLines: settings?.maxLines ?? 2,
+        sourceTimeMapper,
+        subtitleTemplate: settings?.subtitleTemplate ?? 'default'
+      })
       set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 0.96, message: '字幕をTimelineへ適用中…', result } })
       const firstCaption = applied.project.tracks.find((track) => track.id === applied.trackId)?.clips[0]
       get().applyProject(applied.project, firstCaption ? { selectClipId: firstCaption.id } : undefined)

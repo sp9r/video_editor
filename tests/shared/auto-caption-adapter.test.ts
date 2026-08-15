@@ -124,4 +124,12 @@ describe('auto-caption timeline adapter', () => {
     const legacy = createSubtitleClip(0)
     expect(buildSubtitleRenderSpec(legacy, project.sequence).maxLines).toBe(2)
   })
+
+  it('applies the selected subtitle template to the generated track', () => {
+    const project = createEmptyProject('template')
+    const clip = { id: 'clip-1', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }
+    const applied = applyAutoCaptionResultToProject(project, clip, result, { subtitleTemplate: 'minimal' })
+    const generated = applied.project.tracks.at(-1)?.clips[0]
+    expect(generated?.kind === 'subtitle' ? generated.style : undefined).toMatchObject({ outlineWidth: 1, shadowBlur: 0, bold: false })
+  })
 })

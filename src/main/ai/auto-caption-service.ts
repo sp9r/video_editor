@@ -17,7 +17,10 @@ import { defaultProcessExecutor, type ProcessExecutor } from '../ffmpeg/process.
 import { discoverAutoCaptionWorker, type AutoCaptionWorkerDiscovery } from './worker-discovery.js'
 import { saveAutoCaptionBaseline } from './auto-caption-baseline.js'
 
-const DEFAULT_SETTINGS: AutoCaptionSettings = { language: 'ja', maxChars: 32, maxLines: 2, segmentationMode: 'auto' }
+const DEFAULT_SETTINGS: AutoCaptionSettings = {
+  language: 'ja', maxChars: 32, maxLines: 2, segmentationMode: 'auto',
+  silenceCut: 'natural', accelerationMode: 'auto', subtitleTemplate: 'default'
+}
 const DEFAULT_TIMEOUT_MS = 6 * 60 * 60 * 1000
 const MAX_PROGRESS_BYTES = 8 * 1024 * 1024
 const MAX_RESULT_BYTES = 64 * 1024 * 1024
@@ -103,6 +106,7 @@ export class AutoCaptionService {
     settings?: AutoCaptionSettings
     onProgress: (progress: AutoCaptionProgressEvent) => void
   }): Promise<AutoCaptionStartResult> {
+    const effectiveSettings: AutoCaptionSettings = { ...DEFAULT_SETTINGS, ...settings }
     const clip = selectedClip(project, selectedClipIds)
     const asset = project.media.find((candidate) => candidate.id === clip.assetId)
     if (!asset) throw new Error('自動字幕の音声素材が利用できません。')
@@ -116,7 +120,7 @@ export class AutoCaptionService {
     const jobId = `caption-job-${randomUUID()}`
     const controller = new AbortController()
     this.active.set(jobId, { controller, clipId: clip.id })
-    void this.runJob({ jobId, project, clip, mediaPath, settings, discovery, controller, onProgress })
+    void this.runJob({ jobId, project, clip, mediaPath, settings: effectiveSettings, discovery, controller, onProgress })
     return { jobId, clipId: clip.id }
   }
 
@@ -192,8 +196,8 @@ export class AutoCaptionService {
       resultPath = path.join(workspace, 'result.json')
       silencePath = path.join(workspace, 'silence_analysis.json')
       await writeFile(requestPath, `${JSON.stringify(request)}\n`, 'utf8')
-      const args = [discovery.scriptPath, '--request', requestPath, '--output', resultPath]
-      if (discovery.parallel) args.push('--silence-output', silencePath)
+      const args = [discovery.scriptPath, '--request', requestPath, '--output', resultPath, '--acceleration-mode', settings.accelerationMode ?? 'auto']
+      if (discovery.parallel && settings.silenceCut !== 'off') args.push('--silence-output', silencePath)
       await this.executor.run({
         command: discovery.command,
         args,
@@ -213,7 +217,7 @@ export class AutoCaptionService {
       assertSafeDiagnostics(result)
       await saveAutoCaptionBaseline({ userDataPath: this.options.userDataPath, project, mediaPath, clip, result, settings })
       let silenceAnalysis: AutoCaptionSilenceAnalysis | undefined
-      if (discovery.parallel) {
+      if (discovery.parallel && settings.silenceCut !== 'off') {
         const silenceStat = await stat(silencePath)
         if (!silenceStat.isFile() || silenceStat.size <= 0 || silenceStat.size > MAX_RESULT_BYTES) throw new Error('invalid silence result size')
         silenceAnalysis = parseAutoCaptionSilenceAnalysis(JSON.parse(await readFile(silencePath, 'utf8')))

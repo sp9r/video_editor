@@ -2,9 +2,11 @@ import { mapAutoCaptionSourceTimeToTimelineUs, type AutoCaptionResult } from './
 import { AUTOMATION_SCHEMA_VERSION, validateAutomationProposal, type AutomationProposal, type TranscriptAiOutput } from './automation.js'
 import { createTrack, makeId, validateProject } from './project.js'
 import { deriveSubtitleEditUnits } from './editing/edit-units.js'
-import { DEFAULT_SUBTITLE_STYLE, type ProjectFile, type SubtitleClip, type TimelineClip } from './types.js'
+import { type ProjectFile, type SubtitleClip, type TimelineClip } from './types.js'
 import { validateSubtitleMaxLines } from './subtitle-layout.js'
 import type { SourceTimeMapper } from './silence-cut.js'
+import { getSubtitleTemplateStyle } from './subtitle-templates.js'
+import type { SubtitleTemplateId } from './auto-caption-contract.js'
 
 const findSubtitleTrack = (project: ProjectFile, requestedTrackId?: string) => {
   const track = requestedTrackId
@@ -106,7 +108,7 @@ export const applyAutoCaptionResultToProject = (
   project: ProjectFile,
   clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
   result: AutoCaptionResult,
-  options: { maxLines?: number; sourceTimeMapper?: SourceTimeMapper } = {}
+  options: { maxLines?: number; sourceTimeMapper?: SourceTimeMapper; subtitleTemplate?: SubtitleTemplateId } = {}
 ): AutoCaptionProjectApply => {
   const transcript = autoCaptionResultToTranscript(clip, result, { sourceTimeMapper: options.sourceTimeMapper })
   const maxLines = options.maxLines === undefined ? undefined : validateSubtitleMaxLines(options.maxLines)
@@ -121,7 +123,7 @@ export const applyAutoCaptionResultToProject = (
     sourceInUs: 0,
     enabled: true,
     text: segment.text,
-    style: structuredClone(DEFAULT_SUBTITLE_STYLE),
+    style: getSubtitleTemplateStyle(options.subtitleTemplate ?? 'default'),
     ...(maxLines === undefined ? {} : { maxLines }),
     sourceCaptionId: result.captions[index]?.id,
     sourceJobId: result.jobId,
