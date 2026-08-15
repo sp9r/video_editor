@@ -8,6 +8,12 @@
 - `docs/AUTO_CAPTION_BRIDGE.md`に設定、信頼境界、失敗時挙動、非対象Phaseを記録した。
 - readiness: **AUTO CAPTION READY / FULL CORRECTION READY / HUMAN REVIEW READY**。長尺のGPU memory・処理進捗、AI baselineの長期保存形式、mass Human Reviewは未着手。
 
+## 2026-08-15 Stage 1 Auto Caption Worker Contract Draft
+
+- `docs/AUTO_CAPTION_WORKER_CONTRACT_DRAFT.md`と`src/shared/auto-caption-contract.ts`を追加。現在の`caption_bridge.v1`は全sourceを処理する互換bridgeであり、正式worker contractのrequest range・jobId・baselineをまだ実行経路へ接続していないことを明記した。
+- `spectra.auto-caption.request.v1`／`spectra.auto-caption.result.v1`、整数microseconds、captionの`sourceWordIds` ownership、path/credential禁止、selected clip range検証をvideo_editor側validatorへ固定した。
+- source→timeline mappingは`clip.startUs + (sourceUs - clip.sourceInUs)`。`experimental.auto-caption-baseline.v1`はpath-free型とreader validatorまでで、Project Model、history、UI、IPC、worker実装のcutoverは未着手。
+
 最終更新: 2026-08-13 17:00 JST
 状態: **Phase 3 standalone `edit_project.v1`基盤を実装。実画面E2E、別PC受入、GitHub公開は未完了の実用アルファ0.1.0**
 branch: `main`
