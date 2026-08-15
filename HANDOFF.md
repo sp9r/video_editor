@@ -422,3 +422,9 @@ Phase 5、planning、highlight、publishing、mass Human Review、caption algori
 - linked video/audioは同一cut planとsegmentごとのlink groupで分割し、target終了後の全track clipだけを削除時間分rippleする。target intervalと重なる非対象clip、locked target、範囲不整合は安全側でrejectし、ProjectFile/historyを変更しない。
 - Auto Captionではsilence cutと生成subtitle trackを1回のhistory transactionへ合成し、Ctrl+Z/Redo一回で両方を復元できる。caption/word source timeは圧縮後timelineへ写像する。silence artifactがないlegacy workerでは従来の字幕のみ適用する。
 - `tests/shared/silence-cut.test.ts`と`tests/renderer/auto-caption.test.ts`でA/V、ripple、source mapping、failure safety、one-step Undo/Redoを追加した。
+
+## 2026-08-16 Stage 10 Silence Cut + Caption Time Mapping
+
+- `createSilenceCutTimeMapper`をsource absolute integerµsの共有pure mapperとして追加。keep/removed ranges、point/interval mappingを同一objectで扱う。
+- Auto Captionのraw Whisper words、caption start/end、SubtitleWord、SubtitleEditUnitは同一mapperを使用する。raw wordがremoved rangeへ重なる場合は`CUT PLAN INVALID`で全体rejectし、発話wordを削除して続行しない。
+- `tests/shared/silence-cut.test.ts`、`tests/shared/auto-caption-adapter.test.ts`へsource 0–5 / remove 5–8 / keep 8–15、raw speech rejection、word/edit unit parityを追加した。
