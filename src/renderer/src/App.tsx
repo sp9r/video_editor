@@ -61,7 +61,13 @@ export default function App(): React.JSX.Element {
     addSubtitle,
     autoCaptionSelected,
     cancelAutoCaption,
-    autoCaptionProgress
+    autoCaptionProgress,
+    fullCorrectionSession,
+    fullCorrectionResult,
+    hydrateFullCorrectionSessions,
+    startFullCorrection,
+    finishFullCorrection,
+    clearFullCorrectionResult
   } = useEditorStore()
   const [workspace, setWorkspace] = useState<'edit' | 'audio' | 'captions'>('edit')
   const [exportOpen, setExportOpen] = useState(false)
@@ -78,9 +84,14 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     useReviewStore.getState().stop()
     if (window.spectra) {
-      void window.spectra.loadExperimentalReviewRecords().then((records) => useReviewStore.getState().hydrate(project, records)).catch(() => undefined)
+      void Promise.all([window.spectra.loadExperimentalReviewRecords(), window.spectra.loadFullCorrectionSessions()])
+        .then(([records, sessions]) => {
+          useReviewStore.getState().hydrate(project, records)
+          hydrateFullCorrectionSessions(sessions)
+        })
+        .catch(() => undefined)
     }
-  }, [project.id])
+  }, [hydrateFullCorrectionSessions, project.id])
 
   const save = useCallback(async (saveAs = false): Promise<void> => {
     if (!window.spectra) {
@@ -266,6 +277,10 @@ export default function App(): React.JSX.Element {
     ? project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === selectedClipIds[0])
     : undefined
 
+  const selectedAutoCaptionTrack = selectedCaptionClip?.kind === 'subtitle' && selectedCaptionClip.sourceJobId
+    ? project.tracks.find((track) => track.kind === 'subtitle' && track.clips.some((clip) => clip.id === selectedCaptionClip.id))
+    : undefined
+
   const runAutoCaption = async (): Promise<void> => {
     setCaptionSummary(null)
     setCaptioning(true)
@@ -303,6 +318,7 @@ export default function App(): React.JSX.Element {
             if (reviewEnabled) useReviewStore.getState().stop()
             else if (!useReviewStore.getState().start(project, useEditorStore.getState().selectedClipIds[0])) showNotice('レビュー対象の字幕がありません。', 'warning')
           }}>レビュー {reviewEnabled ? 'ON' : 'OFF'}</Button>
+          {(fullCorrectionSession || selectedAutoCaptionTrack) && <Button className={fullCorrectionSession ? 'review-toggle is-active' : 'review-toggle'} onClick={() => { void (fullCorrectionSession ? finishFullCorrection() : startFullCorrection()) }}>{fullCorrectionSession ? '修正完了' : '全文修正'}</Button>}
           <Button disabled={captioning} onClick={() => { setCaptionSummary(null); setCaptionDialogOpen(true) }}><Captions size={15} />自動字幕</Button>
           <Button className="primary-button export-button" onClick={() => setExportOpen(true)}><MonitorUp size={16} />書き出す</Button>
         </div>
@@ -322,6 +338,19 @@ export default function App(): React.JSX.Element {
         <Timeline />
       </div>
       <ReviewPanel />
+      {fullCorrectionResult && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) clearFullCorrectionResult() }}>
+          <section className="caption-dialog" role="dialog" aria-modal="true" aria-labelledby="full-correction-title">
+            <header className="dialog-header"><div className="dialog-title-icon"><Check size={17} /></div><div><span className="panel-eyebrow">FULL CORRECTION</span><h2 id="full-correction-title">修正差分</h2></div><IconButton label="閉じる" onClick={clearFullCorrectionResult}><X size={15} /></IconButton></header>
+            <div className="caption-dialog-body">
+              <div className="caption-success" role="status">全文修正を保存しました。AI字幕baselineと現在のtrackを比較しています。</div>
+              <div className="review-complete"><strong>{fullCorrectionResult.track.name}</strong><span>字幕数: {fullCorrectionResult.statistics.beforeCaptionCount}件 → {fullCorrectionResult.statistics.afterCaptionCount}件</span><span>変更なし {fullCorrectionResult.statistics.unchanged} · 分割 {fullCorrectionResult.statistics.split} · 結合 {fullCorrectionResult.statistics.merge} · 境界移動 {fullCorrectionResult.statistics.move}</span><span>本文 {fullCorrectionResult.statistics.text} · 時間 {fullCorrectionResult.statistics.timing} · 削除 {fullCorrectionResult.statistics.delete} · 複合 {fullCorrectionResult.statistics.mixed}</span></div>
+              {!fullCorrectionResult.eligibility.eligible && <div className="caption-dialog-warning">差分は保存されましたが、学習用eligibilityは対象外です。{fullCorrectionResult.eligibility.reason ?? ''}</div>}
+            </div>
+            <footer className="dialog-footer"><span>既存Review Modeの評価記録とは別artifactです。</span><Button className="primary-button" onClick={clearFullCorrectionResult}>閉じる</Button></footer>
+          </section>
+        </div>
+      )}
       {notice && (
         <div className={`toast toast-${notice.tone}`} role="status">
           {notice.tone === 'error' || notice.tone === 'warning' ? <CircleAlert size={17} /> : <Check size={17} />}

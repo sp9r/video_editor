@@ -3,6 +3,7 @@ import { IPC } from '../shared/ipc'
 import type { DesktopApi, ExportProgress, ExportSettings, ProjectFile, TimeUs, WaveformRequest } from '../shared/types'
 import type { AutoCaptionProgress } from '../shared/auto-caption-contract'
 import type { ExperimentalReviewRecord } from '../shared/review/types'
+import type { FullCorrectionSession } from '../shared/full-correction'
 
 const api: DesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
@@ -37,6 +38,9 @@ const api: DesktopApi = {
   exportSrt: (project: ProjectFile, suggestedName: string) => ipcRenderer.invoke(IPC.exportSrt, project, suggestedName),
   loadExperimentalReviewRecords: () => ipcRenderer.invoke(IPC.reviewLoad),
   upsertExperimentalReviewRecord: (record: ExperimentalReviewRecord) => ipcRenderer.invoke(IPC.reviewUpsert, record),
+  loadFullCorrectionSessions: () => ipcRenderer.invoke(IPC.fullCorrectionLoad),
+  startFullCorrectionSession: (project: ProjectFile, trackId: string): Promise<FullCorrectionSession> => ipcRenderer.invoke(IPC.fullCorrectionStart, project, trackId),
+  finishFullCorrectionSession: (project: ProjectFile, sessionId: string): Promise<FullCorrectionSession> => ipcRenderer.invoke(IPC.fullCorrectionFinish, project, sessionId),
   onExportProgress: (callback: (progress: ExportProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: ExportProgress): void => callback(progress)
     ipcRenderer.on(IPC.exportProgress, listener)

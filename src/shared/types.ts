@@ -385,6 +385,9 @@ export interface DesktopApi {
   exportSrt(project: ProjectFile, suggestedName: string): Promise<string | null>
   loadExperimentalReviewRecords(): Promise<import('./review/types').ExperimentalReviewRecord[]>
   upsertExperimentalReviewRecord(record: import('./review/types').ExperimentalReviewRecord): Promise<{ path: string; records: import('./review/types').ExperimentalReviewRecord[] }>
+  loadFullCorrectionSessions(): Promise<import('./full-correction').FullCorrectionSession[]>
+  startFullCorrectionSession(project: ProjectFile, trackId: string): Promise<import('./full-correction').FullCorrectionSession>
+  finishFullCorrectionSession(project: ProjectFile, sessionId: string): Promise<import('./full-correction').FullCorrectionSession>
   onExportProgress(callback: (progress: ExportProgress) => void): () => void
 }
 

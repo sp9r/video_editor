@@ -21,6 +21,7 @@ import { isMediaTrack } from '../../shared/types'
 import type { AutoCaptionProgress, AutoCaptionResult, AutoCaptionSettings } from '../../shared/auto-caption-contract'
 import { applyAutoCaptionResultToProject } from '../../shared/auto-caption-adapter'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
+import type { FullCorrectionSession } from '../../shared/full-correction'
 import { createDemoProject } from './demo'
 
 type EditTool = 'select' | 'razor'
@@ -46,6 +47,8 @@ interface EditorState {
   savedFingerprint: string
   transactionBase: ProjectFile | null
   clipboard: ClipboardItem[]
+  fullCorrectionSession: FullCorrectionSession | null
+  fullCorrectionResult: FullCorrectionSession | null
   applyProject(project: ProjectFile, options?: { selectClipId?: string; preserveHistory?: boolean }): void
   loadProject(project: ProjectFile): void
   markSaved(project?: ProjectFile): void
@@ -65,6 +68,10 @@ interface EditorState {
   addAssetClip(assetId: string, trackId: string, atUs: TimeUs): void
   autoCaptionSelected(settings?: AutoCaptionSettings): Promise<AutoCaptionApplySummary | null>
   cancelAutoCaption(): Promise<void>
+  hydrateFullCorrectionSessions(sessions: FullCorrectionSession[]): void
+  startFullCorrection(): Promise<boolean>
+  finishFullCorrection(): Promise<FullCorrectionSession | null>
+  clearFullCorrectionResult(): void
   addSubtitle(): void
   patchClip(clipId: string, patcher: (clip: TimelineClip) => TimelineClip): void
   splitSubtitleAtWordBoundary(clipId: string, boundaryIndex: number): void
@@ -135,6 +142,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   savedFingerprint: projectFingerprint(initialProject),
   transactionBase: null,
   clipboard: [],
+  fullCorrectionSession: null,
+  fullCorrectionResult: null,
   notice: null,
   autoCaptionProgress: null,
   autoCaptionJobId: null,
@@ -164,7 +173,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       savedFingerprint: projectFingerprint(normalized),
       transactionBase: null,
       autoCaptionProgress: null,
-      autoCaptionJobId: null
+      autoCaptionJobId: null,
+      fullCorrectionSession: null,
+      fullCorrectionResult: null
     })
   },
   markSaved: (project) => {
@@ -305,6 +316,54 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     await window.spectra.cancelAutoCaption(jobId)
     set((state) => ({ autoCaptionProgress: state.autoCaptionProgress ? { ...state.autoCaptionProgress, message: 'キャンセル中…' } : null }))
   },
+  hydrateFullCorrectionSessions: (sessions) => {
+    const current = get().project
+    const active = sessions
+      .filter((session) => session.status === 'active' && session.projectId === current.id && current.tracks.some((track) => track.id === session.track.id && track.kind === 'subtitle'))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null
+    set({ fullCorrectionSession: active, fullCorrectionResult: null })
+  },
+  startFullCorrection: async () => {
+    const current = get()
+    if (current.fullCorrectionSession) return true
+    if (!window.spectra) {
+      current.showNotice('全文修正セッションはElectron環境で利用できます。', 'warning')
+      return false
+    }
+    if (current.selectedClipIds.length !== 1) {
+      current.showNotice('自動字幕trackの字幕を1つ選択してください。', 'warning')
+      return false
+    }
+    const selected = current.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === current.selectedClipIds[0])
+    const track = current.project.tracks.find((candidate) => candidate.kind === 'subtitle' && candidate.clips.some((clip) => clip.id === selected?.id))
+    if (!selected || selected.kind !== 'subtitle' || !selected.sourceJobId || !track) {
+      current.showNotice('全文修正の対象は自動字幕trackです。', 'warning')
+      return false
+    }
+    try {
+      const session = await window.spectra.startFullCorrectionSession(current.project, track.id)
+      set({ fullCorrectionSession: session, fullCorrectionResult: null })
+      current.showNotice('全文修正を開始しました。通常の編集操作で字幕を修正できます。', 'success')
+      return true
+    } catch (error) {
+      current.showNotice(`全文修正を開始できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      return false
+    }
+  },
+  finishFullCorrection: async () => {
+    const current = get()
+    if (!current.fullCorrectionSession || !window.spectra) return null
+    try {
+      const result = await window.spectra.finishFullCorrectionSession(current.project, current.fullCorrectionSession.sessionId)
+      set({ fullCorrectionSession: null, fullCorrectionResult: result })
+      current.showNotice(`修正差分を保存しました（${result.statistics.mixed}件の複合変更）。`, 'success')
+      return result
+    } catch (error) {
+      current.showNotice(`修正差分を保存できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      return null
+    }
+  },
+  clearFullCorrectionResult: () => set({ fullCorrectionResult: null }),
   addSubtitle: () => {
     const { project, playheadUs } = get()
     const clip = createSubtitleClip(playheadUs)

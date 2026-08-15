@@ -27,6 +27,9 @@ export const IPC = {
   exportSrt: 'export:srt',
   reviewLoad: 'review:load',
   reviewUpsert: 'review:upsert',
+  fullCorrectionLoad: 'full-correction:load',
+  fullCorrectionStart: 'full-correction:start',
+  fullCorrectionFinish: 'full-correction:finish',
   exportProgress: 'export:progress'
 } as const
 

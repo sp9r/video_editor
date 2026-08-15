@@ -13,6 +13,7 @@ import { buildSubtitleRenderSpec } from '../shared/subtitle-render'
 import { createSubtitleParityFixture } from '../shared/subtitle-parity-fixture'
 import { loadExperimentalReviewRecords, saveExperimentalReviewRecord } from './review-service'
 import type { ExperimentalReviewRecord } from '../shared/review/types'
+import { finishFullCorrectionSession, loadFullCorrectionSessions, startFullCorrectionSession } from './full-correction-service'
 import { parseAutoCaptionSettings } from '../shared/auto-caption-contract'
 import { AutoCaptionService } from './ai/auto-caption-service'
 import { loadAutoCaptionBaselines } from './ai/auto-caption-baseline'
@@ -274,6 +275,23 @@ const registerIpcHandlers = (): void => {
       throw new Error('レビュー記録の形式が不正です。')
     }
     return saveExperimentalReviewRecord(structuredClone(record))
+  })
+
+  ipcMain.handle(IPC.fullCorrectionLoad, (event) => {
+    assertTrustedSender(event)
+    return loadFullCorrectionSessions()
+  })
+
+  ipcMain.handle(IPC.fullCorrectionStart, (event, projectInput: ProjectFile, trackId: unknown) => {
+    assertTrustedSender(event)
+    if (typeof trackId !== 'string' || trackId.length > 200) throw new Error('全文修正のtrack指定が不正です。')
+    return startFullCorrectionSession(validateProject(projectInput), trackId)
+  })
+
+  ipcMain.handle(IPC.fullCorrectionFinish, (event, projectInput: ProjectFile, sessionId: unknown) => {
+    assertTrustedSender(event)
+    if (typeof sessionId !== 'string' || sessionId.length > 200) throw new Error('全文修正のsession指定が不正です。')
+    return finishFullCorrectionSession(validateProject(projectInput), sessionId)
   })
 }
 
