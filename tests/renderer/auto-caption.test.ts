@@ -53,7 +53,7 @@ describe('automatic caption insertion', () => {
       onAutoCaptionProgress: vi.fn((callback) => { progress = callback; return () => { progress = undefined } })
     } as unknown as DesktopApi
 
-    await useEditorStore.getState().autoCaptionSelected()
+    await useEditorStore.getState().autoCaptionSelected({ language: 'ja', maxChars: 32, maxLines: 1, segmentationMode: 'rule' })
 
     const subtitleTracks = useEditorStore.getState().project.tracks.filter((track) => track.kind === 'subtitle')
     const generatedTrack = subtitleTracks.find((track) => track.name === '自動字幕')!
@@ -62,10 +62,11 @@ describe('automatic caption insertion', () => {
     expect(captions[0]?.kind === 'subtitle' ? captions[0].text : undefined).toBe('字幕テスト')
     expect(captions[0]?.kind === 'subtitle' ? captions[0].words?.[0]?.id : undefined).toBe('source-word:0')
     expect(captions[0]?.kind === 'subtitle' ? captions[0].editUnits?.map((unit) => unit.parentSourceWordId) : []).toEqual(['source-word:0', 'source-word:1'])
+    expect(captions[0]?.kind === 'subtitle' ? captions[0].maxLines : undefined).toBe(1)
     expect(useEditorStore.getState().past).toHaveLength(1)
     useEditorStore.getState().undo()
     expect(useEditorStore.getState().project.tracks.filter((track) => track.kind === 'subtitle')).toHaveLength(1)
-    expect(startAutoCaption).toHaveBeenCalledWith(expect.anything(), ['auto-caption-video'])
+    expect(startAutoCaption).toHaveBeenCalledWith(expect.anything(), ['auto-caption-video'], { language: 'ja', maxChars: 32, maxLines: 1, segmentationMode: 'rule' })
   })
 
   it('protects existing captions and names reruns independently', async () => {

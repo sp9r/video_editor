@@ -141,6 +141,8 @@ export interface SubtitleClip extends BaseClip {
   kind: 'subtitle'
   text: string
   style: SubtitleStyle
+  /** Internal .spectra display constraint; missing legacy values default to two lines. */
+  maxLines?: number
   /** Optional lineage from the auto-caption worker; source IDs remain stable across reruns/review. */
   sourceCaptionId?: string
   sourceJobId?: string

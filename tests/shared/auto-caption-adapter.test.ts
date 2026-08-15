@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { applyAutoCaptionResultToProject, autoCaptionResultToTranscript, createAutoCaptionAutomationPlan } from '../../src/shared/auto-caption-adapter'
-import { createEmptyProject, validateProject } from '../../src/shared/project'
+import { createEmptyProject, createSubtitleClip, validateProject } from '../../src/shared/project'
+import { buildSubtitleRenderSpec } from '../../src/shared/subtitle-render'
 import type { AutoCaptionResult } from '../../src/shared/auto-caption-contract'
 
 const result: AutoCaptionResult = {
@@ -60,5 +61,17 @@ describe('auto-caption timeline adapter', () => {
     const reopenedCaption = reopened.tracks.at(-1)!.clips[0]
     expect(reopenedCaption?.kind === 'subtitle' ? reopenedCaption.editUnits?.length : 0).toBe(1)
     expect(reopenedCaption?.kind === 'subtitle' ? reopenedCaption.sourceCaptionId : undefined).toBe('caption:0')
+  })
+
+  it('persists the requested maxLines on generated captions and defaults legacy captions to two lines', () => {
+    const project = createEmptyProject('max lines')
+    const clip = { id: 'clip-1', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }
+    const applied = applyAutoCaptionResultToProject(project, clip, result, { maxLines: 1 })
+    const generated = applied.project.tracks.at(-1)!.clips[0]
+    expect(generated?.kind === 'subtitle' ? generated.maxLines : undefined).toBe(1)
+    const reopened = validateProject(JSON.parse(JSON.stringify(applied.project)))
+    expect(reopened.tracks.at(-1)?.clips[0]).toMatchObject({ maxLines: 1 })
+    const legacy = createSubtitleClip(0)
+    expect(buildSubtitleRenderSpec(legacy, project.sequence).maxLines).toBe(2)
   })
 })

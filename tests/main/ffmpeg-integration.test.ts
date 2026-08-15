@@ -6,6 +6,7 @@ import { resolveFfmpegPaths } from '../../src/main/ffmpeg/binaries.js'
 import { executeProcess } from '../../src/main/ffmpeg/process.js'
 import { FfmpegService } from '../../src/main/ffmpeg/service.js'
 import { generateAss } from '../../src/main/ffmpeg/subtitles.js'
+import { buildSubtitleRenderSpec } from '../../src/shared/subtitle-render.js'
 import { makeExportSettings, makeProject } from './ffmpeg-fixtures.js'
 
 describe('bundled FFmpeg integration', () => {
@@ -490,4 +491,109 @@ describe('bundled FFmpeg integration', () => {
       await rm(root, { recursive: true, force: true })
     }
   }, 90_000)
+
+  it('keeps requested maxLines aligned between Accurate Preview overlay and final libass output', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-max-lines-integration-'))
+    try {
+      const paths = await resolveFfmpegPaths()
+      const cases = [
+        { name: 'one-line', text: '短い字幕', maxLines: 1, maxWidthPercent: 80, fontSize: 54 },
+        { name: 'two-lines', text: '一行目\n二行目', maxLines: 2, maxWidthPercent: 80, fontSize: 54 },
+        { name: 'japanese', text: '日本語の字幕です\n二行目も日本語', maxLines: 2, maxWidthPercent: 80, fontSize: 64 },
+        { name: 'font-small', text: 'small font\nsecond line', maxLines: 2, maxWidthPercent: 80, fontSize: 32 },
+        { name: 'font-large', text: 'large font\nsecond line', maxLines: 2, maxWidthPercent: 80, fontSize: 96 },
+        { name: 'overflow', text: 'あ'.repeat(80), maxLines: 2, maxWidthPercent: 10, fontSize: 64 },
+        { name: 'long-unbreakable', text: 'supercalifragilistic'.repeat(8), maxLines: 2, maxWidthPercent: 10, fontSize: 64 }
+      ]
+      const countLineBands = (raw: Buffer, width: number, height: number, bytesPerPixel: number): number => {
+        const activeRows: number[] = []
+        for (let y = 0; y < height; y += 1) {
+          let active = 0
+          for (let x = 0; x < width; x += 1) {
+            const offset = (y * width + x) * bytesPerPixel
+            const red = raw[offset] ?? 0
+            const green = raw[offset + 1] ?? 0
+            const blue = raw[offset + 2] ?? 0
+            const alpha = bytesPerPixel === 4 ? raw[offset + 3] ?? 0 : 255
+            if (alpha > 180 && red > 180 && green > 180 && blue > 180) active += 1
+          }
+          if (active >= 2) activeRows.push(y)
+        }
+        let bands = 0
+        let previous = -100
+        for (const row of activeRows) {
+          if (row - previous > 6) bands += 1
+          previous = row
+        }
+        return bands
+      }
+
+      for (const fixture of cases) {
+        const project = makeProject()
+        project.sequence = {
+          width: 1280,
+          height: 720,
+          frameRate: { numerator: 30, denominator: 1 },
+          sampleRate: 48_000,
+          backgroundColor: '#000000'
+        }
+        const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+        if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+        subtitle.text = fixture.text
+        subtitle.startUs = 0
+        subtitle.durationUs = 1_000_000
+        subtitle.maxLines = fixture.maxLines
+        subtitle.style = {
+          ...subtitle.style,
+          fontFamily: fixture.name.includes('font') ? 'Arial' : 'Noto Sans JP',
+          fontSize: fixture.fontSize,
+          outlineWidth: 0,
+          shadowColor: '#00000000',
+          shadowBlur: 0,
+          backgroundOpacity: 0,
+          alignment: 'middle',
+          positionX: 50,
+          positionY: 50,
+          maxWidthPercent: fixture.maxWidthPercent,
+          animation: 'none',
+          animationDurationUs: 0
+        }
+        const spec = buildSubtitleRenderSpec(subtitle, project.sequence)
+        const service = new FfmpegService(paths, { workspaceRoot: join(root, fixture.name) })
+        const accurateOverlay = await service.renderSubtitleOverlay(project, 500_000)
+        const overlayRawPath = join(root, `${fixture.name}-overlay.rgba`)
+        await executeProcess({
+          command: paths.ffmpegPath,
+          args: ['-hide_banner', '-loglevel', 'error', '-y', '-i', accurateOverlay.framePath, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', overlayRawPath],
+          timeoutMs: 30_000
+        })
+        const overlayRaw = await readFile(overlayRawPath)
+        const assPath = join(root, `${fixture.name}.ass`)
+        const finalRawPath = join(root, `${fixture.name}-final.rgb`)
+        await writeFile(assPath, generateAss(project), 'utf8')
+        await executeProcess({
+          command: paths.ffmpegPath,
+          args: ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=black:s=1280x720:r=30:d=1', '-vf', `ass=filename='${fixture.name}.ass'`, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', finalRawPath],
+          cwd: root,
+          timeoutMs: 30_000
+        })
+        const finalRaw = await readFile(finalRawPath)
+        const overlayLines = countLineBands(overlayRaw, 1280, 720, 4)
+        const finalLines = countLineBands(finalRaw, 1280, 720, 3)
+        if (fixture.name === 'overflow' || fixture.name === 'long-unbreakable') {
+          expect(spec.layoutDiagnostics[0]?.code).toBe('MAX_LINES_EXCEEDED')
+          expect(spec.lineCount).toBeGreaterThan(fixture.maxLines)
+          expect(overlayLines, `${fixture.name} Accurate Preview visible line count`).toBe(finalLines)
+          expect(overlayLines).toBeGreaterThan(fixture.maxLines)
+        } else {
+          expect(overlayLines, `${fixture.name} Accurate Preview line count`).toBe(spec.lineCount)
+          expect(finalLines, `${fixture.name} final libass line count`).toBe(spec.lineCount)
+          expect(spec.lineCount).toBeLessThanOrEqual(fixture.maxLines)
+          expect(spec.layoutDiagnostics).toEqual([])
+        }
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 180_000)
 })

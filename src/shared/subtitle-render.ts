@@ -1,4 +1,4 @@
-import { subtitleMaxWidthPercent, wrapSubtitleText } from './subtitle-layout.js'
+import { layoutSubtitleText, normalizeSubtitleMaxLines, subtitleMaxWidthPercent, type SubtitleLayoutDiagnostic } from './subtitle-layout.js'
 import type { ProjectFile, SequenceSettings, SubtitleClip, SubtitleStyle } from './types.js'
 
 export type SubtitleAnchor = SubtitleStyle['alignment']
@@ -8,6 +8,9 @@ export interface SubtitleRenderSpec {
   yPx: number
   anchor: SubtitleAnchor
   wrappedText: string
+  lineCount: number
+  maxLines: number
+  layoutDiagnostics: SubtitleLayoutDiagnostic[]
   maxWidthPx: number
   fontFamily: string
   fontSizePx: number
@@ -38,11 +41,15 @@ export const buildSubtitleRenderSpec = (clip: SubtitleClip, sequence: Pick<Seque
   const fontSizePx = Math.max(1, finiteOr(style.fontSize, 54))
   const xPercent = finiteOr(style.positionX, 50)
   const yPercent = finiteOr(style.positionY, 86)
+  const layout = layoutSubtitleText(clip.text, { ...style, maxWidthPercent }, width, clip.maxLines)
   return {
     xPx: width * xPercent / 100,
     yPx: height * yPercent / 100,
     anchor: style.alignment,
-    wrappedText: wrapSubtitleText(clip.text, { ...style, maxWidthPercent }, width),
+    wrappedText: layout.wrappedText,
+    lineCount: layout.lineCount,
+    maxLines: normalizeSubtitleMaxLines(clip.maxLines),
+    layoutDiagnostics: layout.diagnostics,
     maxWidthPx: width * maxWidthPercent / 100,
     fontFamily: style.fontFamily.trim() || 'Arial',
     fontSizePx,
@@ -93,6 +100,7 @@ export const subtitleVisualStateKey = (project: ProjectFile, timeUs: number): st
     clipId: clip.id,
     trackIndex,
     text: clip.text,
-    style: clip.style
+    style: clip.style,
+    maxLines: clip.maxLines ?? 2
   }))
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { wrapSubtitleText } from '../../src/shared/subtitle-layout'
+import { layoutSubtitleText, wrapSubtitleText } from '../../src/shared/subtitle-layout'
 
 const style = { fontSize: 20, letterSpacing: 0, maxWidthPercent: 80 }
 
@@ -17,5 +17,37 @@ describe('shared subtitle wrapping', () => {
     const wrapped = wrapSubtitleText('日本語ABC😀DEF', style, 160)
     expect(wrapped.replace(/\n/gu, '')).toBe('日本語ABC😀DEF')
     expect(wrapped).not.toContain('\uD83D\n\uDE00')
+  })
+
+  it('reports one-line and two-line layouts without changing caption text', () => {
+    const one = layoutSubtitleText('短い字幕', style, 1920, 2)
+    const two = layoutSubtitleText('alpha beta gamma', style, 160, 2)
+    expect(one).toMatchObject({ lineCount: 1, maxLines: 2, diagnostics: [] })
+    expect(two.lineCount).toBe(2)
+    expect(two.diagnostics).toEqual([])
+    expect(two.wrappedText.replace(/\n/gu, ' ')).toBe('alpha beta gamma')
+  })
+
+  it('does not silently discard overflow and emits a max-lines diagnostic', () => {
+    const overflow = layoutSubtitleText('alpha beta gamma', style, 160, 1)
+    const longWord = layoutSubtitleText('超長い日本語字幕'.repeat(8), style, 160, 2)
+    expect(overflow.lineCount).toBeGreaterThan(1)
+    expect(overflow.diagnostics[0]).toMatchObject({ code: 'MAX_LINES_EXCEEDED', maxLines: 1, actualLines: overflow.lineCount })
+    expect(longWord.lineCount).toBeGreaterThan(2)
+    expect(longWord.diagnostics[0]?.code).toBe('MAX_LINES_EXCEEDED')
+    expect(longWord.wrappedText.replace(/\n/gu, '')).toBe('超長い日本語字幕'.repeat(8))
+  })
+
+  it('keeps Japanese, font-size variation, and landscape width in the same model', () => {
+    const small = layoutSubtitleText('日本語の字幕です', { ...style, fontSize: 20 }, 1920, 2)
+    const large = layoutSubtitleText('日本語の字幕です', { ...style, fontSize: 80 }, 1920, 2)
+    const landscape = layoutSubtitleText('English subtitle for landscape', style, 1280, 2)
+    expect(small.wrappedText.replace(/\n/gu, '')).toBe('日本語の字幕です')
+    expect(large.wrappedText.replace(/\n/gu, '')).toBe('日本語の字幕です')
+    expect(landscape.lineCount).toBeLessThanOrEqual(2)
+  })
+
+  it('keeps the legacy wrapper API while accepting a line limit', () => {
+    expect(wrapSubtitleText('one two three', style, 160, 2).split('\n').length).toBe(2)
   })
 })

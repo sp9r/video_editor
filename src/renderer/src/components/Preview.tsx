@@ -340,6 +340,7 @@ export default function Preview(): React.JSX.Element {
                   key={subtitle.id}
                   className={`preview-subtitle subtitle-${spec.animation} anchor-${spec.anchor}`}
                   data-subtitle-renderer="css-fallback"
+                  title={spec.layoutDiagnostics.map((diagnostic) => diagnostic.message).join(' ')}
                   onClick={() => selectClip(subtitle.id)}
                   style={{
                     left: `${spec.xPx}px`,

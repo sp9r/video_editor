@@ -410,6 +410,9 @@ export const validateProject = (input: unknown): ProjectFile => {
           previousEnd = word.endUs
         }
       }
+      if (clip.kind === 'subtitle' && clip.maxLines !== undefined && (!Number.isSafeInteger(clip.maxLines) || clip.maxLines < 1 || clip.maxLines > 16)) {
+        throw new Error(`字幕の最大行数が不正です: ${clip.id}`)
+      }
       if (clip.kind === 'subtitle' && clip.editUnits) {
         const unitIds = new Set<string>()
         let previousEnd = clip.startUs

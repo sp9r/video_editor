@@ -71,7 +71,7 @@ export default function App(): React.JSX.Element {
   const [appError, setAppError] = useState<string | null>(null)
   const [captioning, setCaptioning] = useState(false)
   const [captionDialogOpen, setCaptionDialogOpen] = useState(false)
-  const [captionSettings, setCaptionSettings] = useState<AutoCaptionSettings>({ language: 'ja', maxChars: 32, segmentationMode: 'auto' })
+  const [captionSettings, setCaptionSettings] = useState<AutoCaptionSettings>({ language: 'ja', maxChars: 32, maxLines: 2, segmentationMode: 'auto' })
   const [captionSummary, setCaptionSummary] = useState<{ captionCount: number; rawWordCount: number; fallbackUsed: boolean } | null>(null)
   const reviewEnabled = useReviewStore((state) => state.enabled)
 
@@ -348,6 +348,7 @@ export default function App(): React.JSX.Element {
                   <div className="caption-target"><span>対象clip</span><strong>{selectedCaptionClip.name}</strong></div>
                   <label className="field"><span className="field-label">言語</span><select disabled={captioning} value={captionSettings.language} onChange={(event) => setCaptionSettings((current) => ({ ...current, language: event.target.value }))}><option value="ja">日本語</option><option value="auto">自動判定</option></select></label>
                   <label className="field"><span className="field-label">最大文字数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={10000} value={captionSettings.maxChars} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxChars: Math.max(1, Math.min(10000, Number(event.target.value) || 32)) }))} /><span>文字</span></span></label>
+                  <label className="field"><span className="field-label">最大行数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={16} value={captionSettings.maxLines ?? 2} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxLines: Math.max(1, Math.min(16, Number(event.target.value) || 2)) }))} /><span>行</span></span></label>
                   <label className="field"><span className="field-label">区切り</span><select disabled={captioning} value={captionSettings.segmentationMode} onChange={(event) => setCaptionSettings((current) => ({ ...current, segmentationMode: event.target.value as AutoCaptionSettings['segmentationMode'] }))}><option value="auto">高品質</option><option value="rule">ルール</option></select></label>
                   {autoCaptionProgress && (
                     <div className={`caption-progress ${autoCaptionProgress.state === 'failed' ? 'stage-failed' : ''}`} aria-live="polite">

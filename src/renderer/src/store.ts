@@ -285,7 +285,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           }
         )
       })
-      const applied = applyAutoCaptionResultToProject(project, selectedClip, result)
+      const applied = applyAutoCaptionResultToProject(project, selectedClip, result, { maxLines: settings?.maxLines ?? 2 })
       if (projectFingerprint(get().project) !== projectFingerprint(project)) throw new Error('自動字幕の生成中にプロジェクトが変更されました。結果は適用されていません。')
       const firstCaption = applied.project.tracks.find((track) => track.id === applied.trackId)?.clips[0]
       get().applyProject(applied.project, firstCaption ? { selectClipId: firstCaption.id } : undefined)

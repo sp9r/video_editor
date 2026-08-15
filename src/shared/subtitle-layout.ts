@@ -1,8 +1,38 @@
 import type { SubtitleStyle } from './types'
 
+export const DEFAULT_SUBTITLE_MAX_LINES = 2
+export const MIN_SUBTITLE_MAX_LINES = 1
+export const MAX_SUBTITLE_MAX_LINES = 16
+
+export interface SubtitleLayoutDiagnostic {
+  code: 'MAX_LINES_EXCEEDED'
+  message: string
+  actualLines: number
+  maxLines: number
+}
+
+export interface SubtitleLayoutResult {
+  wrappedText: string
+  lineCount: number
+  maxLines: number
+  diagnostics: SubtitleLayoutDiagnostic[]
+}
+
 /** Renderer-independent width normalization used by Preview and ASS. */
 export const subtitleMaxWidthPercent = (style: Pick<SubtitleStyle, 'maxWidthPercent'>): number =>
   Number.isFinite(style.maxWidthPercent) && style.maxWidthPercent > 0 ? style.maxWidthPercent : 80
+
+export const normalizeSubtitleMaxLines = (value: unknown): number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= MIN_SUBTITLE_MAX_LINES && value <= MAX_SUBTITLE_MAX_LINES
+    ? value
+    : DEFAULT_SUBTITLE_MAX_LINES
+
+export const validateSubtitleMaxLines = (value: unknown): number => {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < MIN_SUBTITLE_MAX_LINES || value > MAX_SUBTITLE_MAX_LINES) {
+    throw new Error(`字幕の最大行数は${MIN_SUBTITLE_MAX_LINES}〜${MAX_SUBTITLE_MAX_LINES}の整数で指定してください。`)
+  }
+  return value
+}
 
 const graphemes = (text: string): string[] => {
   if (typeof Intl.Segmenter === 'function') {
@@ -20,7 +50,8 @@ const wordTokens = (text: string): string[] => {
   return graphemes(text)
 }
 
-export const wrapSubtitleText = (text: string, style: Pick<SubtitleStyle, 'fontSize' | 'letterSpacing' | 'maxWidthPercent'>, sequenceWidth: number): string => {
+export const layoutSubtitleText = (text: string, style: Pick<SubtitleStyle, 'fontSize' | 'letterSpacing' | 'maxWidthPercent'>, sequenceWidth: number, requestedMaxLines?: number): SubtitleLayoutResult => {
+  const maxLines = normalizeSubtitleMaxLines(requestedMaxLines)
   const width = Math.max(16, sequenceWidth) * subtitleMaxWidthPercent(style) / 100
   const glyphWidth = Math.max(1, style.fontSize)
   const letterSpacing = Math.max(0, style.letterSpacing)
@@ -59,5 +90,18 @@ export const wrapSubtitleText = (text: string, style: Pick<SubtitleStyle, 'fontS
     flush()
     return lines.join('\n')
   }
-  return text.replace(/\r\n|\r/gu, '\n').split('\n').map(wrapLine).join('\n')
+  const wrappedText = text.replace(/\r\n|\r/gu, '\n').split('\n').map(wrapLine).join('\n')
+  const lineCount = wrappedText.length === 0 ? 0 : wrappedText.split('\n').length
+  const diagnostics = lineCount > maxLines
+    ? [{
+        code: 'MAX_LINES_EXCEEDED' as const,
+        message: `字幕を${maxLines}行以内に収められませんでした。本文を保持したまま${lineCount}行で描画します。`,
+        actualLines: lineCount,
+        maxLines
+      }]
+    : []
+  return { wrappedText, lineCount, maxLines, diagnostics }
 }
+
+export const wrapSubtitleText = (text: string, style: Pick<SubtitleStyle, 'fontSize' | 'letterSpacing' | 'maxWidthPercent'>, sequenceWidth: number, maxLines?: number): string =>
+  layoutSubtitleText(text, style, sequenceWidth, maxLines).wrappedText

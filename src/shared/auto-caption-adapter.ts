@@ -3,6 +3,7 @@ import { AUTOMATION_SCHEMA_VERSION, validateAutomationProposal, type AutomationP
 import { createTrack, makeId, validateProject } from './project.js'
 import { deriveSubtitleEditUnits } from './editing/edit-units.js'
 import { DEFAULT_SUBTITLE_STYLE, type ProjectFile, type SubtitleClip, type TimelineClip } from './types.js'
+import { validateSubtitleMaxLines } from './subtitle-layout.js'
 
 const findSubtitleTrack = (project: ProjectFile, requestedTrackId?: string) => {
   const track = requestedTrackId
@@ -90,9 +91,11 @@ const nextAutoCaptionTrackName = (project: ProjectFile): string => {
 export const applyAutoCaptionResultToProject = (
   project: ProjectFile,
   clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
-  result: AutoCaptionResult
+  result: AutoCaptionResult,
+  options: { maxLines?: number } = {}
 ): AutoCaptionProjectApply => {
   const transcript = autoCaptionResultToTranscript(clip, result)
+  const maxLines = options.maxLines === undefined ? undefined : validateSubtitleMaxLines(options.maxLines)
   const track = createTrack('subtitle', project.tracks.filter((candidate) => candidate.kind === 'subtitle').length + 1)
   track.name = nextAutoCaptionTrackName(project)
   const captions: SubtitleClip[] = transcript.segments.map((segment, index) => ({
@@ -105,6 +108,7 @@ export const applyAutoCaptionResultToProject = (
     enabled: true,
     text: segment.text,
     style: structuredClone(DEFAULT_SUBTITLE_STYLE),
+    ...(maxLines === undefined ? {} : { maxLines }),
     sourceCaptionId: result.captions[index]?.id,
     sourceJobId: result.jobId,
     ...(segment.words?.length
