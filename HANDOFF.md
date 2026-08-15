@@ -1,5 +1,14 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-15 Stage 4 Auto Caption UI / Atomic Subtitle Apply
+
+- 自動字幕dialogを追加。対象clip、言語（日本語／自動判定）、最大文字数（既定32）、区切り（高品質／ルール）を指定でき、worker progressを音声準備・文字起こし・字幕区切り・字幕配置として表示する。生成中はcancel可能で、UI threadをblockしない。
+- worker成功後にresultを全件検証してから、`自動字幕`、`自動字幕 2`…の新規subtitle trackへ全captionを一括適用する。既存字幕trackは変更せず、適用は一つのProject history changeなのでCtrl+Z一回／Redo一回でtrack全体を戻す／復元する。
+- caption textとowned raw word textが完全一致し、正のtimingを持つ場合のみSubtitleWordとSubtitleEditUnitを生成。不一致やunsafe timingではword truthを付けず、caption textだけを保持する。worker caption ID/job IDとraw word IDでlineageを保持する。
+- generated captionは既存のRazor、word boundary split、merge、boundary drag、playhead snap、Alt scrub、Inspector edit、Review Mode、Save/reloadへ既存Project Model経由で接続する。
+- `clip_automation/spectra_caption_worker.py`は`language: "auto"`をfaster-whisperの`None`へ変換し、実際の言語自動判定を利用する。
+- Stage 4 tests: atomic apply、one undo/redo、existing subtitle protection、rerun naming、word mismatch safety、lineage、edit units、worker auto languageを追加。video_editor check 41 files / 224 tests PASS、build/smokeは次のGateで再確認する。
+
 ## 2026-08-15 Stage 3 Auto Caption Worker Integration
 
 - `src/main/ai/worker-discovery.ts`を追加。userDataの`auto-caption-worker.json`、環境変数、兄弟`clip_automation`の順でworker/Pythonを解決し、source codeやProjectFileへabsolute worker pathを埋め込まない。未発見時healthはpath-free unavailableを返す。

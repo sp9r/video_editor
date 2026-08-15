@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { autoCaptionResultToTranscript, createAutoCaptionAutomationPlan } from '../../src/shared/auto-caption-adapter'
-import { createEmptyProject } from '../../src/shared/project'
+import { applyAutoCaptionResultToProject, autoCaptionResultToTranscript, createAutoCaptionAutomationPlan } from '../../src/shared/auto-caption-adapter'
+import { createEmptyProject, validateProject } from '../../src/shared/project'
 import type { AutoCaptionResult } from '../../src/shared/auto-caption-contract'
 
 const result: AutoCaptionResult = {
@@ -30,7 +30,7 @@ describe('auto-caption timeline adapter', () => {
     expect(command.words?.[0]).toMatchObject({ startUs: 15_000_000, endUs: 16_000_000 })
   })
 
-  it('retains raw word timing when display text is normalized', () => {
+  it('does not attach word truth when display text differs from owned word text', () => {
     const normalized = {
       ...result,
       rawWords: [{ ...result.rawWords[0]!, text: '字幕。' }],
@@ -42,6 +42,23 @@ describe('auto-caption timeline adapter', () => {
     const command = plan.commands[0]
     if (!command || command.type !== 'insert-subtitle') throw new Error('expected subtitle command')
     expect(command.text).toBe('字幕')
-    expect(command.words?.[0]?.text).toBe('字幕。')
+    expect(command.words).toBeUndefined()
+  })
+
+  it('creates a fresh named track with edit units and keeps previous tracks untouched', () => {
+    const project = createEmptyProject('fresh track')
+    const clip = { id: 'clip-1', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }
+    const first = applyAutoCaptionResultToProject(project, clip, result)
+    const second = applyAutoCaptionResultToProject(first.project, clip, result)
+    expect(first.project.tracks.filter((track) => track.kind === 'subtitle').map((track) => track.name)).toEqual(['C1', '自動字幕'])
+    expect(second.project.tracks.filter((track) => track.kind === 'subtitle').map((track) => track.name)).toEqual(['C1', '自動字幕', '自動字幕 2'])
+    const generated = second.project.tracks.at(-1)!.clips[0]
+    expect(generated?.kind === 'subtitle' ? generated.editUnits?.map((unit) => unit.parentSourceWordId) : []).toEqual(['source-word:0'])
+    expect(generated?.kind === 'subtitle' ? generated.sourceCaptionId : undefined).toBe('caption:0')
+    expect(generated?.kind === 'subtitle' ? generated.sourceJobId : undefined).toBe('caption-job-map')
+    const reopened = validateProject(JSON.parse(JSON.stringify(second.project)))
+    const reopenedCaption = reopened.tracks.at(-1)!.clips[0]
+    expect(reopenedCaption?.kind === 'subtitle' ? reopenedCaption.editUnits?.length : 0).toBe(1)
+    expect(reopenedCaption?.kind === 'subtitle' ? reopenedCaption.sourceCaptionId : undefined).toBe('caption:0')
   })
 })

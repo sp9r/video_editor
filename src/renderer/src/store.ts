@@ -18,10 +18,9 @@ import {
 import { deleteLinkedClips, EditingOperationError, isSubtitleWordBoundarySplitAvailable, mergeSubtitleWithNext, mergeSubtitleWithPrevious, moveLinkedClip, moveSubtitleBoundary, nearestSubtitleWordBoundaryIndex, splitLinkedClip, splitSelectedRoots, splitSubtitleAtWordBoundary, trimLinkedClip } from '../../shared/editing/operations'
 import { linkedClipIds } from '../../shared/editing/links'
 import { isMediaTrack } from '../../shared/types'
-import type { AutoCaptionProgress, AutoCaptionResult } from '../../shared/auto-caption-contract'
-import { createAutoCaptionAutomationPlan } from '../../shared/auto-caption-adapter'
+import type { AutoCaptionProgress, AutoCaptionResult, AutoCaptionSettings } from '../../shared/auto-caption-contract'
+import { applyAutoCaptionResultToProject } from '../../shared/auto-caption-adapter'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
-import { previewAutomationProposal } from '../../shared/automation'
 import { createDemoProject } from './demo'
 
 type EditTool = 'select' | 'razor'
@@ -42,6 +41,8 @@ interface EditorState {
   dirty: boolean
   lastSavedAt: Date | null
   notice: Notice | null
+  autoCaptionProgress: AutoCaptionProgress | null
+  autoCaptionJobId: string | null
   savedFingerprint: string
   transactionBase: ProjectFile | null
   clipboard: ClipboardItem[]
@@ -62,7 +63,8 @@ interface EditorState {
   addAssets(assets: MediaAsset[]): void
   relinkAsset(assetId: string, asset: MediaAsset): void
   addAssetClip(assetId: string, trackId: string, atUs: TimeUs): void
-  autoCaptionSelected(): Promise<void>
+  autoCaptionSelected(settings?: AutoCaptionSettings): Promise<AutoCaptionApplySummary | null>
+  cancelAutoCaption(): Promise<void>
   addSubtitle(): void
   patchClip(clipId: string, patcher: (clip: TimelineClip) => TimelineClip): void
   splitSubtitleAtWordBoundary(clipId: string, boundaryIndex: number): void
@@ -93,6 +95,13 @@ interface EditorState {
 interface ClipboardItem {
   trackId: string
   clip: TimelineClip
+}
+
+export interface AutoCaptionApplySummary {
+  captionCount: number
+  rawWordCount: number
+  wordBearingCaptionCount: number
+  fallbackUsed: boolean
 }
 
 const HISTORY_LIMIT = 80
@@ -127,6 +136,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   transactionBase: null,
   clipboard: [],
   notice: null,
+  autoCaptionProgress: null,
+  autoCaptionJobId: null,
   applyProject: (project, options = {}) => {
     const current = get().project
     if (project === current) return
@@ -151,7 +162,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       dirty: false,
       lastSavedAt: new Date(),
       savedFingerprint: projectFingerprint(normalized),
-      transactionBase: null
+      transactionBase: null,
+      autoCaptionProgress: null,
+      autoCaptionJobId: null
     })
   },
   markSaved: (project) => {
@@ -206,18 +219,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const clip = createClipForAsset(asset, Math.max(0, atUs))
     get().applyProject(addClipToTrack(project, trackId, clip), { selectClipId: clip.id })
   },
-  autoCaptionSelected: async () => {
+  autoCaptionSelected: async (settings) => {
     if (!window.spectra) {
       get().showNotice('自動字幕はElectronデスクトップ版で利用できます。', 'warning')
-      return
+      return null
     }
     const selectedIds = [...get().selectedClipIds]
     const project = get().project
     const selectedClip = project.tracks.flatMap((track) => track.clips).find((clip) => selectedIds.includes(clip.id))
     if (selectedIds.length !== 1 || !selectedClip || (selectedClip.kind !== 'video' && selectedClip.kind !== 'audio')) {
       get().showNotice('動画または音声クリップを1つだけ選択してから自動字幕を実行してください。', 'warning')
-      return
+      return null
     }
+    set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: '', state: 'preparing', ratio: 0, message: '音声準備中…' }, autoCaptionJobId: null })
     try {
       const health = await window.spectra.autoCaptionHealth()
       if (!health.available) throw new Error(health.reason ?? '自動字幕エンジンを利用できません。')
@@ -231,6 +245,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             if (progress.state === 'completed' || progress.state === 'failed') terminalBeforeStart = progress
             return
           }
+          set({ autoCaptionProgress: progress })
           if (settled) return
           if (progress.state === 'failed') {
             settled = true
@@ -242,9 +257,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             resolve(progress.result)
           }
         })
-        void window.spectra!.startAutoCaption(project, selectedIds).then(
+        const start = settings
+          ? window.spectra!.startAutoCaption(project, selectedIds, settings)
+          : window.spectra!.startAutoCaption(project, selectedIds)
+        void start.then(
           (started) => {
             startedJobId = started.jobId
+            set({ autoCaptionJobId: started.jobId })
             if (terminalBeforeStart && !settled) {
               const terminal = terminalBeforeStart
               if (terminal.state === 'failed') {
@@ -266,14 +285,25 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           }
         )
       })
-      const plan = createAutoCaptionAutomationPlan(project, selectedClip, result, { title: 'Whisper自動字幕' })
-      const preview = previewAutomationProposal(get().project, plan)
-      const firstCaption = plan.commands.find((command) => command.type === 'insert-subtitle')
-      get().applyProject(preview.project, firstCaption?.type === 'insert-subtitle' ? { selectClipId: firstCaption.clipId } : undefined)
-      get().showNotice(`自動字幕を${plan.commands.length}件生成しました。すぐに分割・結合・境界編集できます。`, 'success')
+      const applied = applyAutoCaptionResultToProject(project, selectedClip, result)
+      if (projectFingerprint(get().project) !== projectFingerprint(project)) throw new Error('自動字幕の生成中にプロジェクトが変更されました。結果は適用されていません。')
+      const firstCaption = applied.project.tracks.find((track) => track.id === applied.trackId)?.clips[0]
+      get().applyProject(applied.project, firstCaption ? { selectClipId: firstCaption.id } : undefined)
+      const summary = { ...applied, fallbackUsed: result.fallback.used }
+      set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 1, message: '字幕を配置しました。', result }, autoCaptionJobId: null })
+      get().showNotice(`自動字幕を${summary.captionCount}件配置しました（raw word ${summary.rawWordCount}件${summary.fallbackUsed ? '・ルールfallback' : ''}）。`, 'success')
+      return summary
     } catch (error) {
+      set((state) => ({ autoCaptionProgress: state.autoCaptionProgress ? { ...state.autoCaptionProgress, state: 'failed', ratio: 0, message: '自動字幕を配置できませんでした。' } : null, autoCaptionJobId: null }))
       get().showNotice(`自動字幕を生成できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      return null
     }
+  },
+  cancelAutoCaption: async () => {
+    const jobId = get().autoCaptionJobId
+    if (!jobId || !window.spectra) return
+    await window.spectra.cancelAutoCaption(jobId)
+    set((state) => ({ autoCaptionProgress: state.autoCaptionProgress ? { ...state.autoCaptionProgress, message: 'キャンセル中…' } : null }))
   },
   addSubtitle: () => {
     const { project, playheadUs } = get()

@@ -15,8 +15,8 @@ video_editorの「自動字幕」は、`spectra_caption_worker.py`とのversione
   → 既存clip_automation caption algorithm
   → versioned result（source absolute microseconds / word ownership）
   → main processのruntime validation
-  → source→timeline mapping付きautomation plan
-  → subtitle clips + SubtitleEditUnit
+  → source→timeline mapping付き一括subtitle apply
+  → 新規subtitle track + SubtitleEditUnit
   → userData baseline（atomic）
 ```
 
@@ -41,7 +41,11 @@ $env:SPECTRA_AUTO_CAPTION_PYTHON = 'C:\path\to\clip_automation\.venv\Scripts\pyt
 
 ## Output boundary
 
-正式worker outputは`spectra.auto-caption.result.v1`を持つ一時JSONで、pathやcredentialを含まない。video_editorはschema、source range、text、word ownership、integer microseconds、sizeを検証してから適用する。display normalizationでraw word textとcaption textが一致しない場合も、source word metadataと表示textを別フィールドとして保持する。
+正式worker outputは`spectra.auto-caption.result.v1`を持つ一時JSONで、pathやcredentialを含まない。video_editorはschema、source range、text、word ownership、integer microseconds、sizeを検証してから適用する。caption textとowned raw word textの連結が完全一致し、正のword timingを持つ場合だけ`SubtitleWord`/`SubtitleEditUnit`へattachし、不一致時は偽のword truthを作らず字幕本文だけを適用する。worker caption IDとjob IDは生成clipのlineage metadataとして保持する。
+
+## Stage 4 UI / atomic apply
+
+「自動字幕」は選択clip名、言語（日本語／自動判定）、最大文字数、区切り（高品質／ルール）をdialogで受け取り、音声準備・文字起こし・字幕区切り・字幕配置をtyped progressで表示する。成功結果を全件検証した後、既存字幕を再利用せず`自動字幕`、`自動字幕 2`…の新規trackへ一度に適用する。適用はProject Modelの一つのhistory transactionなので、Ctrl+Z一回で生成track全体を戻し、Redo一回で復元できる。失敗・cancel・生成中のproject変更ではProjectFileを変更しない。
 
 字幕生成は自動的に承認済み扱いにはしない。生成後のsubtitle clipは、既存のRazor、word-boundary split、merge、ownership drag、Undo/Redo、Inspector text edit、Review Modeで直ちに修正できる。
 

@@ -141,6 +141,9 @@ export interface SubtitleClip extends BaseClip {
   kind: 'subtitle'
   text: string
   style: SubtitleStyle
+  /** Optional lineage from the auto-caption worker; source IDs remain stable across reruns/review. */
+  sourceCaptionId?: string
+  sourceJobId?: string
   words?: SubtitleWord[]
   /** Internal .spectra edit units; never serialized into edit_project.v1. */
   editUnits?: SubtitleEditUnit[]
