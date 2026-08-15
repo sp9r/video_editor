@@ -119,13 +119,16 @@ export const captureFullCorrectionTrack = (project: ProjectFile, trackId: string
   return { trackId: track.id, trackName: track.name, captions: clipSnapshots(track) }
 }
 
-const sourceWordsForCaption = (baseline: AutoCaptionBaseline, sourceWordIds: string[]): FullCorrectionWordSnapshot[] | undefined => {
+const sourceWordsForCaption = (baseline: AutoCaptionBaseline, sourceWordIds: string[], generated?: SubtitleClip): FullCorrectionWordSnapshot[] | undefined => {
   const words = new Map(baseline.rawWords.map((word) => [word.id, word]))
+  const generatedWords = new Map((generated?.words ?? []).map((word) => [word.id, word]))
   const result = sourceWordIds.map((id) => words.get(id)).filter((word): word is NonNullable<typeof word> => Boolean(word)).map((word) => ({
     id: word.id,
     text: word.text,
-    startUs: mapAutoCaptionSourceTimeToTimelineUs(baseline.sourceClip, word.startUs),
-    endUs: mapAutoCaptionSourceTimeToTimelineUs(baseline.sourceClip, word.endUs)
+    // Keep raw-word text/identity immutable, but preserve the timeline mapping
+    // produced by the completed auto-edit (including silence-cut compaction).
+    startUs: generatedWords.get(word.id)?.startUs ?? mapAutoCaptionSourceTimeToTimelineUs(baseline.sourceClip, word.startUs),
+    endUs: generatedWords.get(word.id)?.endUs ?? mapAutoCaptionSourceTimeToTimelineUs(baseline.sourceClip, word.endUs)
   }))
   return result.length === sourceWordIds.length ? result : undefined
 }
@@ -140,9 +143,13 @@ export const captureFullCorrectionBaseline = (baseline: AutoCaptionBaseline, tra
   trackName: track.name,
   captions: baseline.captions.map((caption) => {
     const generated = matchingGeneratedClip(track, caption.id)
-    const startUs = mapAutoCaptionSourceTimeToTimelineUs(baseline.sourceClip, caption.startUs)
-    const endUs = mapAutoCaptionSourceTimeToTimelineUs(baseline.sourceClip, caption.endUs)
-    const words = sourceWordsForCaption(baseline, caption.sourceWordIds)
+    // The worker baseline remains the immutable content/identity truth. The
+    // generated clip is the authoritative post-apply timeline, which matters
+    // when the integrated transaction compacted silence ranges before adding
+    // captions.
+    const startUs = generated?.startUs ?? mapAutoCaptionSourceTimeToTimelineUs(baseline.sourceClip, caption.startUs)
+    const endUs = generated ? generated.startUs + generated.durationUs : mapAutoCaptionSourceTimeToTimelineUs(baseline.sourceClip, caption.endUs)
+    const words = sourceWordsForCaption(baseline, caption.sourceWordIds, generated)
     return {
       id: generated?.id ?? `${baseline.jobId}:baseline:${caption.id}`,
       name: generated?.name ?? caption.text.slice(0, 40),

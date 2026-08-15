@@ -94,6 +94,27 @@ describe('full correction baseline truth', () => {
     expect(before.captions[0]?.id).toBe('generated-clip')
   })
 
+  it('keeps the completed auto-edit timeline when silence compaction moved generated captions', () => {
+    const project = createEmptyProject('silence baseline')
+    const track = project.tracks.find((item) => item.kind === 'subtitle') as TimelineTrack
+    track.clips = [{
+      id: 'generated-after-cut', name: '字幕', kind: 'subtitle', startUs: 500_000, durationUs: 600_000, sourceInUs: 0, enabled: true,
+      text: '編集前の表示', style: structuredClone(DEFAULT_SUBTITLE_STYLE), sourceCaptionId: 'caption-cut', sourceJobId: 'job-cut',
+      words: [word('word-cut', '元', 500_000, 700_000)]
+    }]
+    const baseline: AutoCaptionBaseline = {
+      version: 'experimental.auto-caption-baseline.v1', jobId: 'job-cut', createdAt: 'now', projectFingerprint: 'fingerprint', mediaFingerprint: 'media',
+      sourceClip: { clipId: 'video-cut', assetId: 'asset-cut', startUs: 0, sourceInUs: 0, durationUs: 3_000_000 },
+      timelineMapping: { formula: 'timelineUs = clip.startUs + (sourceUs - clip.sourceInUs)', clipStartUs: 0, sourceInUs: 0 },
+      rawWords: [word('word-cut', '元', 2_000_000, 2_200_000)],
+      captions: [{ id: 'caption-cut', text: '元字幕', sourceWordIds: ['word-cut'], startUs: 2_000_000, endUs: 2_600_000, textStatus: 'as_transcribed', provenance: 'caption_algorithm' }],
+      settings: { language: 'ja', maxChars: 32, maxLines: 2, segmentationMode: 'auto' }, provider: 'fake', model: 'fake', diagnostics: [], fallback: { used: false }
+    }
+    const before = captureFullCorrectionBaseline(baseline, track)
+    expect(before.captions[0]).toMatchObject({ id: 'generated-after-cut', text: '元字幕', startUs: 500_000, durationUs: 600_000 })
+    expect(before.captions[0]?.words?.[0]).toMatchObject({ id: 'word-cut', text: '元', startUs: 500_000, endUs: 700_000 })
+  })
+
   it('fingerprint contains no project or media paths', () => {
     const project = createEmptyProject('fingerprint')
     project.projectPath = 'C:\\secret\\project.spectra'
