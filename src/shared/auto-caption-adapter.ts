@@ -4,6 +4,7 @@ import { createTrack, makeId, validateProject } from './project.js'
 import { deriveSubtitleEditUnits } from './editing/edit-units.js'
 import { DEFAULT_SUBTITLE_STYLE, type ProjectFile, type SubtitleClip, type TimelineClip } from './types.js'
 import { validateSubtitleMaxLines } from './subtitle-layout.js'
+import type { SourceTimeMapper } from './silence-cut.js'
 
 const findSubtitleTrack = (project: ProjectFile, requestedTrackId?: string) => {
   const track = requestedTrackId
@@ -22,13 +23,13 @@ const normalizeCaptionOwnershipText = (text: string): string => text.replace(DIS
 export const autoCaptionResultToTranscript = (
   clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
   result: AutoCaptionResult,
-  options: { sourceTimeMapper?: (sourceUs: number) => number } = {}
+  options: { sourceTimeMapper?: SourceTimeMapper } = {}
 ): TranscriptAiOutput => {
   if (result.sourceStartUs !== clip.sourceInUs || result.sourceEndUs !== clip.sourceInUs + clip.durationUs) {
     throw new Error('自動字幕結果のsource rangeが選択clipと一致しません。')
   }
   const wordsById = new Map(result.rawWords.map((word) => [word.id, word]))
-  const mapSourceTime = options.sourceTimeMapper ?? ((sourceUs: number) => mapAutoCaptionSourceTimeToTimelineUs(clip, sourceUs))
+  const mapSourceTime = options.sourceTimeMapper?.mapPoint ?? ((sourceUs: number) => mapAutoCaptionSourceTimeToTimelineUs(clip, sourceUs))
   const segments = result.captions.map((caption) => {
     const words = caption.sourceWordIds.map((wordId) => {
       const word = wordsById.get(wordId)
@@ -105,7 +106,7 @@ export const applyAutoCaptionResultToProject = (
   project: ProjectFile,
   clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
   result: AutoCaptionResult,
-  options: { maxLines?: number; sourceTimeMapper?: (sourceUs: number) => number } = {}
+  options: { maxLines?: number; sourceTimeMapper?: SourceTimeMapper } = {}
 ): AutoCaptionProjectApply => {
   const transcript = autoCaptionResultToTranscript(clip, result, { sourceTimeMapper: options.sourceTimeMapper })
   const maxLines = options.maxLines === undefined ? undefined : validateSubtitleMaxLines(options.maxLines)

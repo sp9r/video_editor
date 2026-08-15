@@ -20,7 +20,7 @@ import { linkedClipIds } from '../../shared/editing/links'
 import { isMediaTrack } from '../../shared/types'
 import type { AutoCaptionProgress, AutoCaptionResult, AutoCaptionSettings, AutoCaptionSilenceAnalysis } from '../../shared/auto-caption-contract'
 import { applyAutoCaptionResultToProject } from '../../shared/auto-caption-adapter'
-import { applySilenceCutToProject, mapSourceTimeThroughSilenceCut } from '../../shared/silence-cut'
+import { applySilenceCutToProject, createSilenceCutTimeMapper } from '../../shared/silence-cut'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
 import type { FullCorrectionSession } from '../../shared/full-correction'
 import { createDemoProject } from './demo'
@@ -301,14 +301,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (projectFingerprint(get().project) !== projectFingerprint(project)) throw new Error('自動字幕の生成中にプロジェクトが変更されました。結果は適用されていません。')
       let applyProject = project
       let captionClip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'> = selectedClip
-      let sourceTimeMapper: ((sourceUs: number) => number) | undefined
+      let sourceTimeMapper: ReturnType<typeof createSilenceCutTimeMapper> | undefined
       let silenceSummary: ReturnType<typeof applySilenceCutToProject>['summary'] | undefined
       if (silenceAnalysis) {
-        const silenceApplied = applySilenceCutToProject(project, selectedClip.id, silenceAnalysis)
+        sourceTimeMapper = createSilenceCutTimeMapper(selectedClip, silenceAnalysis.keepRanges)
+        const silenceApplied = applySilenceCutToProject(project, selectedClip.id, silenceAnalysis, {
+          timeMapper: sourceTimeMapper,
+          protectedIntervals: result.rawWords.map((word) => ({ id: word.id, startUs: word.startUs, endUs: word.endUs }))
+        })
         applyProject = silenceApplied.project
         captionClip = silenceApplied.sourceClip
         silenceSummary = silenceApplied.summary
-        sourceTimeMapper = (sourceUs) => mapSourceTimeThroughSilenceCut(selectedClip, silenceAnalysis.keepRanges, sourceUs)
       }
       const applied = applyAutoCaptionResultToProject(applyProject, captionClip, result, { maxLines: settings?.maxLines ?? 2, sourceTimeMapper })
       set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 0.96, message: '字幕をTimelineへ適用中…', result } })

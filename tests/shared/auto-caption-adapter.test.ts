@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyAutoCaptionResultToProject, autoCaptionResultToTranscript, createAutoCaptionAutomationPlan } from '../../src/shared/auto-caption-adapter'
 import { createEmptyProject, createSubtitleClip, validateProject } from '../../src/shared/project'
 import { buildSubtitleRenderSpec } from '../../src/shared/subtitle-render'
+import { createSilenceCutTimeMapper } from '../../src/shared/silence-cut'
 import type { AutoCaptionResult } from '../../src/shared/auto-caption-contract'
 
 const result: AutoCaptionResult = {
@@ -18,6 +19,21 @@ describe('auto-caption timeline adapter', () => {
     const transcript = autoCaptionResultToTranscript(clip, result)
     expect(transcript.segments[0]).toMatchObject({ startUs: 15_000_000, endUs: 16_000_000 })
     expect(transcript.segments[0]?.words?.[0]).toMatchObject({ id: 'source-word:0', startUs: 15_000_000, endUs: 16_000_000 })
+  })
+
+  it('uses the same source mapper for caption, SubtitleWord, and SubtitleEditUnit timing', () => {
+    const clip = { id: 'clip-1', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }
+    const mappedResult = {
+      ...result,
+      rawWords: [{ id: 'source-word:0', text: '字幕', startUs: 29_000_000, endUs: 30_000_000 }],
+      captions: [{ ...result.captions[0]!, startUs: 29_000_000, endUs: 30_000_000 }]
+    }
+    const mapper = createSilenceCutTimeMapper(clip, [{ startUs: 20_000_000, endUs: 25_000_000 }, { startUs: 28_000_000, endUs: 30_000_000 }])
+    const applied = applyAutoCaptionResultToProject(createEmptyProject('mapped silence'), clip, mappedResult, { sourceTimeMapper: mapper })
+    const generated = applied.project.tracks.at(-1)?.clips[0]
+    expect(generated?.kind === 'subtitle' ? [generated.startUs, generated.durationUs] : undefined).toEqual([16_000_000, 1_000_000])
+    expect(generated?.kind === 'subtitle' ? generated.words?.[0] : undefined).toMatchObject({ startUs: 16_000_000, endUs: 17_000_000 })
+    expect(generated?.kind === 'subtitle' ? generated.editUnits?.[0] : undefined).toMatchObject({ startUs: 16_000_000, endUs: 17_000_000 })
   })
 
   it('creates an undoable automation plan for the mapped timeline', () => {

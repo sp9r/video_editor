@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createClipForAsset, createEmptyProject, createTrack, validateProject } from '../../src/shared/project'
-import { applySilenceCutToProject, SilenceCutError, mapSourceTimeThroughSilenceCut } from '../../src/shared/silence-cut'
+import { applySilenceCutToProject, createSilenceCutTimeMapper, SilenceCutError, mapSourceTimeThroughSilenceCut } from '../../src/shared/silence-cut'
 import { DEFAULT_AUDIO, DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile } from '../../src/shared/types'
 
 const asset: MediaAsset = {
@@ -55,5 +55,24 @@ describe('non-destructive silence cut', () => {
     const clip = { startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 4_000_000 }
     expect(mapSourceTimeThroughSilenceCut(clip, [{ startUs: 20_000_000, endUs: 21_000_000 }, { startUs: 22_000_000, endUs: 24_000_000 }], 22_500_000)).toBe(11_500_000)
     expect(mapSourceTimeThroughSilenceCut(clip, [{ startUs: 20_000_000, endUs: 21_000_000 }, { startUs: 22_000_000, endUs: 24_000_000 }], 21_500_000)).toBe(11_000_000)
+  })
+
+  it('rejects a raw speech word that falls inside a removed source range before mutation', () => {
+    const before = fixture()
+    const snapshot = structuredClone(before)
+    expect(() => applySilenceCutToProject(before, 'video', { keepRanges: ranges }, {
+      protectedIntervals: [{ id: 'raw-word-in-silence', startUs: 1_500_000, endUs: 1_600_000 }]
+    })).toThrow(/CUT PLAN INVALID/)
+    expect(before).toEqual(snapshot)
+  })
+
+  it('maps source points and intervals with one canonical mapper', () => {
+    const mapper = createSilenceCutTimeMapper(
+      { startUs: 0, sourceInUs: 0, durationUs: 15_000_000 },
+      [{ startUs: 0, endUs: 5_000_000 }, { startUs: 8_000_000, endUs: 15_000_000 }]
+    )
+    expect(mapper.mapPoint(10_000_000)).toBe(7_000_000)
+    expect(mapper.mapInterval({ id: 'word', startUs: 10_000_000, endUs: 11_000_000 })).toEqual({ id: 'word', startUs: 7_000_000, endUs: 8_000_000 })
+    expect(mapper.removedRanges).toEqual([{ startUs: 5_000_000, endUs: 8_000_000 }])
   })
 })

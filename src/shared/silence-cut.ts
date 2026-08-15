@@ -19,8 +19,24 @@ export interface SilenceCutApplyResult {
   sourceClip: { startUs: TimeUs; sourceInUs: TimeUs; durationUs: TimeUs }
 }
 
+export interface SourceTimeInterval {
+  id?: string
+  startUs: TimeUs
+  endUs: TimeUs
+}
+
+export interface SourceTimeMapper {
+  readonly sourceInUs: TimeUs
+  readonly sourceEndUs: TimeUs
+  readonly keepRanges: readonly SilenceCutRange[]
+  readonly removedRanges: readonly SilenceCutRange[]
+  mapPoint(sourceUs: TimeUs): TimeUs
+  mapInterval(interval: SourceTimeInterval): SourceTimeInterval
+  assertNoRemovedOverlap(intervals: readonly SourceTimeInterval[], label?: string): void
+}
+
 export class SilenceCutError extends Error {
-  readonly code: 'invalid_selection' | 'invalid_ranges' | 'unsafe_ripple'
+  readonly code: 'invalid_selection' | 'invalid_ranges' | 'unsafe_ripple' | 'cut_plan_invalid'
 
   constructor(code: SilenceCutError['code'], message: string) {
     super(message)
@@ -70,6 +86,61 @@ const validateKeepRanges = (
     if (previous && current && current.startUs < previous.endUs) throw new SilenceCutError('invalid_ranges', '無音カットのkeep rangeが重複または未ソートです。')
   }
   return normalized
+}
+
+const isPositiveOverlap = (left: SourceTimeInterval, right: SilenceCutRange): boolean =>
+  left.startUs < right.endUs && left.endUs > right.startUs
+
+export const createSilenceCutTimeMapper = (
+  originalClip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
+  ranges: readonly SilenceCutRange[]
+): SourceTimeMapper => {
+  const keepRanges = validateKeepRanges(ranges, originalClip.sourceInUs, originalClip.durationUs)
+  const sourceEndUs = originalClip.sourceInUs + originalClip.durationUs
+  const removedRanges: SilenceCutRange[] = []
+  let cursor = originalClip.sourceInUs
+  for (const range of keepRanges) {
+    if (cursor < range.startUs) removedRanges.push({ startUs: cursor, endUs: range.startUs })
+    cursor = range.endUs
+  }
+  if (cursor < sourceEndUs) removedRanges.push({ startUs: cursor, endUs: sourceEndUs })
+  const mapPoint = (sourceUs: TimeUs): TimeUs => {
+    if (!Number.isSafeInteger(sourceUs) || sourceUs < originalClip.sourceInUs || sourceUs > sourceEndUs) {
+      throw new SilenceCutError('cut_plan_invalid', 'CUT PLAN INVALID: source timestamp is outside the selected clip.')
+    }
+    let compactedOffset = 0
+    for (const range of keepRanges) {
+      if (sourceUs <= range.startUs) return originalClip.startUs + compactedOffset
+      if (sourceUs <= range.endUs) return originalClip.startUs + compactedOffset + (sourceUs - range.startUs)
+      compactedOffset += range.endUs - range.startUs
+    }
+    return originalClip.startUs + compactedOffset
+  }
+  return {
+    sourceInUs: originalClip.sourceInUs,
+    sourceEndUs,
+    keepRanges,
+    removedRanges,
+    mapPoint,
+    mapInterval: (interval) => {
+      if (!Number.isSafeInteger(interval.startUs) || !Number.isSafeInteger(interval.endUs) || interval.endUs < interval.startUs) {
+        throw new SilenceCutError('cut_plan_invalid', 'CUT PLAN INVALID: source interval is invalid.')
+      }
+      return { id: interval.id, startUs: mapPoint(interval.startUs), endUs: mapPoint(interval.endUs) }
+    },
+    assertNoRemovedOverlap: (intervals, label = 'raw Whisper word') => {
+      for (const interval of intervals) {
+        if (!Number.isSafeInteger(interval.startUs) || !Number.isSafeInteger(interval.endUs) || interval.endUs < interval.startUs) {
+          throw new SilenceCutError('cut_plan_invalid', `CUT PLAN INVALID: ${label} interval is invalid.`)
+        }
+        const pointInRemoved = interval.startUs === interval.endUs && removedRanges.some((range) => interval.startUs >= range.startUs && interval.startUs < range.endUs)
+        if (pointInRemoved || removedRanges.some((range) => isPositiveOverlap(interval, range))) {
+          const id = interval.id ? ` (${interval.id})` : ''
+          throw new SilenceCutError('cut_plan_invalid', `CUT PLAN INVALID: ${label}${id} overlaps a removed source range.`)
+        }
+      }
+    }
+  }
 }
 
 const segmentId = (clipId: string, index: number, usedIds: Set<string>): string => {
@@ -122,7 +193,8 @@ const replaceTargetClips = (
 export const applySilenceCutToProject = (
   project: ProjectFile,
   selectedClipId: string,
-  analysis: Pick<AutoCaptionSilenceAnalysis, 'keepRanges'>
+  analysis: Pick<AutoCaptionSilenceAnalysis, 'keepRanges'>,
+  options: { protectedIntervals?: readonly SourceTimeInterval[]; timeMapper?: SourceTimeMapper } = {}
 ): SilenceCutApplyResult => {
   const selected = project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === selectedClipId)
   const targets = linkedMembers(project, selectedClipId)
@@ -143,6 +215,11 @@ export const applySilenceCutToProject = (
     throw new SilenceCutError('unsafe_ripple', 'linked A/Vのtimeline/source範囲が一致しないため、同一cut planを適用できません。')
   }
   const keepRanges = validateKeepRanges(analysis.keepRanges, selected.sourceInUs, selected.durationUs)
+  const timeMapper = options.timeMapper ?? createSilenceCutTimeMapper(selected, keepRanges)
+  if (timeMapper.sourceInUs !== selected.sourceInUs || timeMapper.sourceEndUs !== selected.sourceInUs + selected.durationUs || timeMapper.keepRanges.length !== keepRanges.length || timeMapper.keepRanges.some((range, index) => range.startUs !== keepRanges[index]?.startUs || range.endUs !== keepRanges[index]?.endUs)) {
+    throw new SilenceCutError('cut_plan_invalid', 'CUT PLAN INVALID: source mapper does not match the selected clip.')
+  }
+  timeMapper.assertNoRemovedOverlap(options.protectedIntervals ?? [], 'raw Whisper word')
   const keptDurationUs = keepRanges.reduce((sum, range) => sum + range.endUs - range.startUs, 0)
   const removedDurationUs = selected.durationUs - keptDurationUs
   const targetIds = new Set(targets.map((clip) => clip.id))
@@ -180,11 +257,5 @@ export const mapSourceTimeThroughSilenceCut = (
   keepRanges: readonly SilenceCutRange[],
   sourceUs: TimeUs
 ): TimeUs => {
-  let compactedOffset = 0
-  for (const range of keepRanges) {
-    if (sourceUs <= range.startUs) return originalClip.startUs + compactedOffset
-    if (sourceUs <= range.endUs) return originalClip.startUs + compactedOffset + (sourceUs - range.startUs)
-    compactedOffset += range.endUs - range.startUs
-  }
-  return originalClip.startUs + compactedOffset
+  return createSilenceCutTimeMapper(originalClip, keepRanges).mapPoint(sourceUs)
 }
