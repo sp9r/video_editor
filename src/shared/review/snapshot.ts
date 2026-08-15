@@ -89,9 +89,19 @@ export const captureFinalReviewNeighborhood = (project: ProjectFile, baseline: R
   }
 }
 
+const LOCAL_PATH_KEYS = new Set(['path', 'relativePath', 'projectPath'])
+
+export const stripLocalPaths = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(stripLocalPaths)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !LOCAL_PATH_KEYS.has(key))
+    .map(([key, item]) => [key, stripLocalPaths(item)]))
+}
+
 export const reviewProjectFingerprint = (project: ProjectFile): string => {
   const normalized = clone(project)
   normalized.updatedAt = ''
   normalized.projectPath = undefined
-  return JSON.stringify(normalized)
+  return JSON.stringify(stripLocalPaths(normalized))
 }

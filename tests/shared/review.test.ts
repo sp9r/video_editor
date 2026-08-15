@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createEmptyProject, createSubtitleClip } from '../../src/shared/project'
 import { deriveCorrectionSummary, deriveReviewEligibility } from '../../src/shared/review/diff'
 import { parseExperimentalReviewLog, serializeExperimentalReviewLog, upsertExperimentalReviewRecord } from '../../src/shared/review/log'
-import { captureReviewNeighborhood } from '../../src/shared/review/snapshot'
+import { captureReviewNeighborhood, reviewProjectFingerprint } from '../../src/shared/review/snapshot'
 import type { ExperimentalReviewRecord, ReviewNeighborhoodSnapshot } from '../../src/shared/review/types'
 import { reviewRatingForShortcut } from '../../src/shared/review/shortcuts'
 
@@ -55,12 +55,21 @@ describe('subtitle human review diff', () => {
 
 describe('review persistence and shortcut policy', () => {
   it('round-trips records, replaces the same session target, and tolerates malformed data', () => {
-    const record = { version: 'experimental.phase3.5b1', recordId: 'r1', sessionId: 's1', decidedAt: 'now', rating: 'good', target: { captionId: 'a', trackId: 't' } } as unknown as ExperimentalReviewRecord
+    const record = { version: 'experimental.phase3.5b1', recordId: 'r1', sessionId: 's1', decidedAt: 'now', rating: 'good', target: { captionId: 'a', trackId: 't' }, provenance: { projectId: 'p', projectName: 'p', projectFingerprint: JSON.stringify({ projectPath: 'C:\\\\secret\\\\project.spectra', media: [{ path: 'C:\\\\secret\\\\source.mp4' }] }), media: [{ id: 'm', name: 'source.mp4', fileSize: 1, modifiedAt: 'now' }] } } as unknown as ExperimentalReviewRecord
     const replaced: ExperimentalReviewRecord = { ...record, recordId: 'r2', rating: 'corrected' }
     const records = upsertExperimentalReviewRecord(upsertExperimentalReviewRecord([], record), replaced)
     expect(records).toHaveLength(1)
     expect(parseExperimentalReviewLog(serializeExperimentalReviewLog(records)).records[0]?.recordId).toBe('r2')
+    expect(serializeExperimentalReviewLog(records)).not.toContain('secret')
     expect(parseExperimentalReviewLog('{broken').records).toEqual([])
+  })
+
+  it('fingerprints project identity without local path fields', () => {
+    const project = createEmptyProject('review')
+    project.projectPath = 'C:\\\\secret\\\\project.spectra'
+    project.media = [{ id: 'm', name: 'source.mp4', path: 'C:\\\\secret\\\\source.mp4', relativePath: '..\\\\source.mp4', kind: 'video', durationUs: 1, hasAudio: true, fileSize: 1, modifiedAt: 'now', offline: false }]
+    expect(reviewProjectFingerprint(project)).not.toContain('secret')
+    expect(reviewProjectFingerprint(project)).not.toContain('relativePath')
   })
 
   it('uses A/B/C/D only in review mode and never while typing', () => {
