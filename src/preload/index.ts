@@ -8,6 +8,8 @@ import type { FullCorrectionSession } from '../shared/full-correction'
 
 const api: DesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
+  loadAppSettings: () => ipcRenderer.invoke(IPC.appSettingsLoad),
+  setLastUsedSubtitleTemplateId: (id: string) => ipcRenderer.invoke(IPC.appSettingsLastUsedSubtitleTemplate, id),
   pickMedia: () => ipcRenderer.invoke(IPC.mediaPick),
   probeMedia: (paths: string[]) => ipcRenderer.invoke(IPC.mediaProbe, paths),
   getPathForFile: (file: unknown) => webUtils.getPathForFile(file as File),

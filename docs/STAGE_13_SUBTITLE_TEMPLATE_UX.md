@@ -42,6 +42,8 @@ maxLinesはclipに保持された値を最優先し、未指定の場合だけba
 
 保存後のtemplateを別の字幕へ適用すると、SubtitleStyle全体とmaxLinesが同時に反映される。maxCharsとsegmentationModeは次回Auto Processingの生成設定として利用され、既存字幕clipへ推測値を書き戻さない。
 
+Auto Processingで最後に成功適用したtemplate IDはStage 14のapp-level設定へ保存される。dialogでの選択や個別field変更だけではtemplate本体もlast-usedも変更せず、個別値はcustom overrideとして扱う。
+
 ## 検証
 
 - userData serviceのbuilt-in/user default、unknown default、delete fallbackを回帰テスト

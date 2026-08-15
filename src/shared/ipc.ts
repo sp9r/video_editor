@@ -2,6 +2,8 @@ import type { DesktopApi } from './types'
 
 export const IPC = {
   appInfo: 'app:info',
+  appSettingsLoad: 'app-settings:load',
+  appSettingsLastUsedSubtitleTemplate: 'app-settings:last-used-subtitle-template',
   mediaPick: 'media:pick',
   mediaProbe: 'media:probe',
   projectSave: 'project:save',

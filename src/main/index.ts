@@ -19,6 +19,7 @@ import { AutoCaptionService } from './ai/auto-caption-service'
 import { loadAutoCaptionBaselines } from './ai/auto-caption-baseline'
 import type { AutoCaptionSettings } from '../shared/auto-caption-contract'
 import { SubtitleTemplateService } from './subtitle-template-service'
+import { loadAppSettings, setLastUsedSubtitleTemplateId } from './app-settings-service'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
@@ -83,6 +84,16 @@ const registerIpcHandlers = (): void => {
       packaged: app.isPackaged,
       smokeMode: process.env.SPECTRA_ACCURATE_PREVIEW_SMOKE === '1' || process.env.SPECTRA_STARTUP_SMOKE === '1' || process.env.SPECTRA_INTERACTION_SMOKE === '1'
     }
+  })
+
+  ipcMain.handle(IPC.appSettingsLoad, async (event) => {
+    assertTrustedSender(event)
+    return loadAppSettings(app.getPath('userData'))
+  })
+
+  ipcMain.handle(IPC.appSettingsLastUsedSubtitleTemplate, async (event, id: unknown) => {
+    assertTrustedSender(event)
+    return setLastUsedSubtitleTemplateId(app.getPath('userData'), id)
   })
 
   ipcMain.handle(IPC.mediaPick, async (event) => {

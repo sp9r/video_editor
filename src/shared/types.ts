@@ -1,5 +1,6 @@
 import type { AutoCaptionBaseline, AutoCaptionProgress, AutoCaptionSettings } from './auto-caption-contract'
 import type { SubtitleTemplateDraft, SubtitleTemplateLoadResult, UserSubtitleTemplate } from './subtitle-templates'
+import type { AppSettings } from './app-settings'
 
 export const PROJECT_SCHEMA_VERSION = 1 as const
 export const APP_VERSION = '0.1.0'
@@ -365,6 +366,8 @@ export interface AutoCaptionBaselineLoadResult {
 
 export interface DesktopApi {
   getAppInfo(): Promise<AppInfo>
+  loadAppSettings(): Promise<AppSettings>
+  setLastUsedSubtitleTemplateId(id: string): Promise<AppSettings>
   pickMedia(): Promise<ProbeResult[]>
   probeMedia(paths: string[]): Promise<ProbeResult[]>
   getPathForFile(file: unknown): string

@@ -1,5 +1,12 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-16 NIGHT 11 Last-Used Subtitle Template Persistence
+
+- `spectra-app-settings.v1.json`をuserDataへ追加し、`lastUsedSubtitleTemplateId`だけを保存するtyped IPC/main service/preload経路を実装した。ProjectFile、media path、machine設定は保存しない。
+- Auto Processing起動時はlast-used templateを選択し、templateのstyle preview、maxChars、maxLines、qualityを同期する。選択だけではlast-usedを更新せず、成功して字幕をTimelineへ適用したjobのtemplateをauthorityにする。
+- 削除済み／malformed／未知template IDは標準templateへfallbackし、個別field変更はcustom overrideとして表示してtemplate本体を変更しない。
+- app settings persistence/fallback testを追加。`npm.cmd run check`: **51 files / 284 tests PASS**、`npm.cmd run build`: **PASS**、build後の`npm.cmd run smoke:electron`: **PASS**。Phase 5、planning、highlight、publishing、mass Human Review、learningは開始していない。
+
 ## 2026-08-16 NIGHT 10 Subtitle Template Manager Complete UX
 
 - ヘッダーから開けるProjectFile非依存の字幕Template Manager modalを追加。built-in/userの一覧・badge識別と、SubtitleStyle全field、maxWidth、animation、maxChars、maxLines、segmentationModeのdetail表示を実装した。

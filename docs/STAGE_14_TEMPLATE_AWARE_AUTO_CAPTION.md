@@ -14,7 +14,7 @@ Auto Processing dialogの字幕template選択は、単なる書き出し後の�
 
 ## default
 
-Stage 13の`defaultTemplateId`を起動時に読み込み、Auto Processing dialogの初期template・文字数・行数へ反映する。templateを選択したときも3値を一緒に切り替える。user templateをdefaultに設定した後の次回自動字幕ではその値を使う。
+Auto Processing dialogはapp-level userData設定`lastUsedSubtitleTemplateId`を起動時に読み込み、最後に成功適用したtemplateを初期template・文字数・行数・品質へ反映する。templateを選択したときもstyle previewと3つの生成値を一緒に切り替える。単なる選択ではlast-usedを更新せず、実際にAuto Processingが成功して字幕をTimelineへ適用した時点をauthorityとする。
 
 ## 既存字幕trackへの一括適用
 
@@ -25,10 +25,12 @@ Stage 13の`defaultTemplateId`を起動時に読み込み、Auto Processing dial
 ## 検証
 
 - template settings helperでstyle/maxChars/maxLinesの同時解決を回帰テスト
+- `spectra-app-settings.v1.json`へtemplate IDだけを保存し、path、machine、ProjectFile情報は保存しない
+- last-used templateが削除済み／不正IDの場合は`default`へfallbackし、その値を再保存する
+- Auto Processing dialog内の個別maxChars/maxLines/quality変更はcustom overrideとして表示し、template本体をsilent updateしない
 - user templateの初期caption適用を既存adapter testで維持
 - selected subtitle trackだけの一括style適用とUndo単位を回帰テスト
 - `npm.cmd run check`: 48 files / 264 tests
 - `npm.cmd run build`
 - `npm.cmd run smoke:electron`
 - `npm.cmd run smoke:accurate-preview`
-
