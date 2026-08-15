@@ -448,3 +448,10 @@ Phase 5、planning、highlight、publishing、mass Human Review、caption algori
 - built-inは変更・削除不可。default IDは`subtitle-templates.v1.json`へ追加保存し、旧store・削除済みuser template・malformed defaultは`default`へ安全にmigrationする。
 - sample previewは共有`SubtitleStyle`のfont、outline、shadow、background等を使い、別のFinal解釈を作らない。ProjectFile/edit_project.v1は変更していない。
 - `npm.cmd run check` 48 files / 262 tests、build、Electron startup、Accurate Preview PASS。詳細は[`docs/STAGE_13_SUBTITLE_TEMPLATE_UX.md`](docs/STAGE_13_SUBTITLE_TEMPLATE_UX.md)。
+
+## 2026-08-16 Stage 14 Template-Aware Auto Caption
+
+- Auto Processing dialogのtemplate selectionを`getSubtitleTemplateSettings()`へ統一し、style・maxChars・maxLinesを同時に解決してworker requestと初期SubtitleClip生成へ渡す。生成後の全字幕への後付け変更ではない。
+- 字幕Inspectorに「字幕track全体へ適用」を追加。同じsubtitle trackだけを1回のProject更新でstyle変更し、Undo 1回で戻せる。既存字幕の本文・timing・word ownership、max制約は変更しない。
+- defaultTemplateIdの起動時反映を維持。`edit_project.v1`は変更していない。
+- `npm.cmd run check` 48 files / 264 tests、build、Electron startup、Accurate Preview PASS。詳細は[`docs/STAGE_14_TEMPLATE_AWARE_AUTO_CAPTION.md`](docs/STAGE_14_TEMPLATE_AWARE_AUTO_CAPTION.md)。
