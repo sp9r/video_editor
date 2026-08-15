@@ -125,6 +125,26 @@ describe('auto-caption timeline adapter', () => {
     expect(buildSubtitleRenderSpec(legacy, project.sequence).maxLines).toBe(2)
   })
 
+  it.each([
+    { maxChars: 24, maxLines: 1 },
+    { maxChars: 32, maxLines: 2 }
+  ])('keeps template caption constraints consistent with generated Project layout: $maxChars/$maxLines', ({ maxChars, maxLines }) => {
+    const project = createEmptyProject(`template constraints ${maxChars}/${maxLines}`)
+    const clip = { id: 'clip-1', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }
+    const applied = applyAutoCaptionResultToProject(project, clip, result, { maxChars, maxLines })
+    const generated = applied.project.tracks.at(-1)?.clips[0]
+    expect(generated?.kind === 'subtitle' ? generated.maxLines : undefined).toBe(maxLines)
+    expect(generated?.kind === 'subtitle' ? buildSubtitleRenderSpec(generated, project.sequence).maxLines : undefined).toBe(maxLines)
+  })
+
+  it('rejects a worker caption that violates the selected maxChars before Project apply', () => {
+    const oversized = {
+      ...result,
+      captions: [{ ...result.captions[0]!, text: '1234567890123456789012345' }]
+    }
+    expect(() => applyAutoCaptionResultToProject(createEmptyProject('constraint mismatch'), { startUs: 0, sourceInUs: 20_000_000, durationUs: 10_000_000 }, oversized, { maxChars: 24, maxLines: 1 })).toThrow(/最大24文字/)
+  })
+
   it('applies the selected subtitle template to the generated track', () => {
     const project = createEmptyProject('template')
     const clip = { id: 'clip-1', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }

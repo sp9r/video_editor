@@ -109,9 +109,16 @@ export const applyAutoCaptionResultToProject = (
   project: ProjectFile,
   clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
   result: AutoCaptionResult,
-  options: { maxLines?: number; sourceTimeMapper?: SourceTimeMapper; subtitleTemplate?: SubtitleTemplateId; userSubtitleTemplates?: readonly UserSubtitleTemplate[]; subtitleTemplateStyle?: SubtitleStyle } = {}
+  options: { maxChars?: number; maxLines?: number; sourceTimeMapper?: SourceTimeMapper; subtitleTemplate?: SubtitleTemplateId; userSubtitleTemplates?: readonly UserSubtitleTemplate[]; subtitleTemplateStyle?: SubtitleStyle } = {}
 ): AutoCaptionProjectApply => {
   const transcript = autoCaptionResultToTranscript(clip, result, { sourceTimeMapper: options.sourceTimeMapper })
+  if (options.maxChars !== undefined && (!Number.isSafeInteger(options.maxChars) || options.maxChars < 1 || options.maxChars > 10_000)) {
+    throw new Error('自動字幕の最大文字数設定が不正です。')
+  }
+  if (options.maxChars !== undefined) {
+    const oversized = transcript.segments.find((segment) => Array.from(segment.text).length > options.maxChars!)
+    if (oversized) throw new Error(`字幕区切りが最大${options.maxChars}文字を超えています。Projectへ適用していません。`)
+  }
   const maxLines = options.maxLines === undefined ? undefined : validateSubtitleMaxLines(options.maxLines)
   const track = createTrack('subtitle', project.tracks.filter((candidate) => candidate.kind === 'subtitle').length + 1)
   track.name = nextAutoCaptionTrackName(project)

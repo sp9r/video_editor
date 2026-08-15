@@ -1,5 +1,12 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-16 NIGHT 12 Template-Aware Caption Generation Authority
+
+- Auto Caption requestへ選択templateのmaxChars、maxLines、segmentationMode、path-freeなtemplate IDを同じsettingsとして渡す経路を回帰固定した。baselineにも同じsettingsを保存する。
+- Project adapterへmaxChars validationを追加し、worker captionが選択制約を超えた場合はProject適用前にrejectする。maxLinesはgenerated SubtitleClipへ保存し、Preview／Final Render Specへ同じ値を渡す。
+- 24/1、32/2のconstraints、template ID、baseline、render layoutをtargeted testで確認。既存字幕trackを上書きせず、rerunは新規trackへ適用する既存挙動を維持。
+- `npm.cmd run check`: **51 files / 288 tests PASS**、`npm.cmd run build`: **PASS**、build後の`npm.cmd run smoke:electron`: **PASS**。Phase 5、planning、highlight、publishing、mass Human Review、learningは開始していない。
+
 ## 2026-08-16 NIGHT 11 Last-Used Subtitle Template Persistence
 
 - `spectra-app-settings.v1.json`をuserDataへ追加し、`lastUsedSubtitleTemplateId`だけを保存するtyped IPC/main service/preload経路を実装した。ProjectFile、media path、machine設定は保存しない。

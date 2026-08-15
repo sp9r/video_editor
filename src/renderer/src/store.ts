@@ -346,6 +346,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
       const userSubtitleTemplates = get().userSubtitleTemplates
       const applied = applyAutoCaptionResultToProject(applyProject, captionClip, result, {
+        maxChars: settings?.maxChars ?? 32,
         maxLines: settings?.maxLines ?? 2,
         sourceTimeMapper,
         subtitleTemplate: settings?.subtitleTemplate ?? 'default',

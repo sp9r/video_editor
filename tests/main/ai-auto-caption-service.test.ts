@@ -7,7 +7,7 @@ import { loadAutoCaptionBaselines } from '../../src/main/ai/auto-caption-baselin
 import { AutoCaptionService } from '../../src/main/ai/auto-caption-service'
 import { discoverAutoCaptionWorker } from '../../src/main/ai/worker-discovery'
 import type { CommandRequest, CommandResult } from '../../src/main/ffmpeg/process'
-import type { AutoCaptionResult } from '../../src/shared/auto-caption-contract'
+import type { AutoCaptionResult, AutoCaptionSettings } from '../../src/shared/auto-caption-contract'
 import type { MediaAsset } from '../../src/shared/types'
 
 const temporaryDirectories: string[] = []
@@ -76,11 +76,11 @@ const fakeExecutor = (mode: 'success' | 'malformed' | 'oversized' | 'timeout' | 
   return { command: request.command, args: request.args, exitCode: 0, stdout: '', stderr: '' }
 }
 
-const runUntilTerminal = async (service: AutoCaptionService, project: ReturnType<typeof makeProject>['project']) => {
+const runUntilTerminal = async (service: AutoCaptionService, project: ReturnType<typeof makeProject>['project'], settings?: AutoCaptionSettings) => {
   const events: any[] = []
   let resolveTerminal: ((event: any) => void) | undefined
   const terminal = new Promise<any>((resolve) => { resolveTerminal = resolve })
-  const started = await service.start({ project, selectedClipIds: ['clip-1'], onProgress: (event) => {
+  const started = await service.start({ project, selectedClipIds: ['clip-1'], settings, onProgress: (event) => {
     events.push(event)
     if (event.state === 'completed' || event.state === 'failed') resolveTerminal?.(event)
   } })
@@ -176,6 +176,21 @@ describe('auto-caption worker discovery and service', () => {
     expect(JSON.stringify(loaded.records[0])).not.toContain('mediaPath')
     await writeFile(path.join(root, 'experimental.auto-caption-baseline.v1', 'malformed.json'), '{bad json', 'utf8')
     expect((await loadAutoCaptionBaselines(root)).malformedCount).toBe(1)
+  })
+
+  it('passes template constraints and identity to the worker and baseline unchanged', async () => {
+    const root = await makeTemp('template-authority')
+    const media = path.join(root, 'source.mp4')
+    await writeFile(media, 'generated fixture', 'utf8')
+    const fixture = makeProject(media)
+    const observed: { request?: Record<string, unknown> } = {}
+    const service = new AutoCaptionService({ appPath: root, userDataPath: root, executor: { run: fakeExecutor('success', observed) }, discover: async () => discovery(root) })
+    const settings: AutoCaptionSettings = { language: 'ja', maxChars: 24, maxLines: 1, segmentationMode: 'rule', silenceCut: 'off', accelerationMode: 'cpu', subtitleTemplate: 'user-template-24x1' }
+    const run = await runUntilTerminal(service, fixture.project, settings)
+    await run.terminal
+    expect(observed.request).toMatchObject({ maxChars: 24, maxLines: 1, segmentationMode: 'rule', subtitleTemplate: 'user-template-24x1' })
+    const loaded = await loadAutoCaptionBaselines(root)
+    expect(loaded.records[0]?.settings).toMatchObject({ maxChars: 24, maxLines: 1, segmentationMode: 'rule', subtitleTemplate: 'user-template-24x1' })
   })
 
   it('consumes parallel silence analysis without changing the caption result contract', async () => {
