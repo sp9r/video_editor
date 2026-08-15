@@ -43,6 +43,13 @@ branch: `main`
 - `VISIBLE_PHASE_35A_QA: NOT_RUN_TOOL_LIMIT`. Automated/formal acceptance passed; direct GUI drag/context-menu visual acceptance was not claimed.
 - Phase 3.5A is **CLOSED for automated/formal gates** with visible QA limitation. Implementation commit: `a8086666797537e37bf351107aa37e967224a39f` pushed to `origin/main`. Permanent Review artifact/schema work, max_lines, and caption algorithm changes remain out of scope.
 
+## Step 3.5A-5 / Phase 3.5B design checkpoint (2026-08-15)
+
+- Current-source Electron GUIで15字幕を含むQA copyを実操作し、word visualization、words-none、text mismatch、Razor、Ctrl+K、context split、boundary drag right/left、jitter no-op、collision rejection、merge、delete、Undo/Redo、playback、Accurate Preview、Save As/reloadを確認した。
+- QA copyのみを変更し、結果は別`.spectra`へ保存した。元のformal project、run、media、schema、render architecture、caption algorithm、clip_automation production codeは変更していない。
+- Step 3.5A-5 visible/manual acceptance: **PASS**。再現性のあるP0/P1 UX不具合は確認できず、コード修正は行わなかった。受入詳細は`docs/PHASE_3_5A_5_VISIBLE_GUI_ACCEPTANCE.md`を参照。
+- Phase 3.5Bは設計草案のみ作成し、実装・contract/schema変更は開始していない。推奨review unit、baseline/current差分、rating semantics、operation-derived correction、words-none/text mismatch policy、Undo/Redo、`caption_review.v1`再利用境界、separate artifact案、privacy、MVP、未決定事項を`docs/PHASE_3_5B_HUMAN_REVIEW_CORRECTION_CAPTURE_DESIGN_DRAFT.md`へ記載した。
+
 ## 0. 最初に行うこと
 
 ```powershell
