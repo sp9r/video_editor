@@ -434,3 +434,10 @@ Phase 5、planning、highlight、publishing、mass Human Review、caption algori
 - 既存の自動字幕dialogを、自動字幕ON/OFF、無音カット（OFF/自然/強め）、処理デバイス（自動/GPU優先/CPU）、言語、字幕品質、字幕テンプレート、最大文字数/行数を一画面で選択するUnified Auto Processing dialogへ拡張した。
 - request/baselineへoptionalな`silenceCut`、`accelerationMode`、`subtitleTemplate`を追加。`silenceCut=off`はsilence artifactを生成せず、templateは生成SubtitleClipのstyleへ適用する。`edit_project.v1`は変更していない。
 - `npm.cmd run check` 46 files / 255 tests、build、Electron/accurate-preview/subtitle parity/geometry smoke、clip_automation full unittest 291 tests、compileall PASS。詳細は[`docs/STAGE_11_UNIFIED_AUTO_PROCESSING.md`](docs/STAGE_11_UNIFIED_AUTO_PROCESSING.md)。
+
+## 2026-08-16 Stage 12 Subtitle Template Model
+
+- `spectra.subtitle-template.v1`のuser template modelと、`userData/subtitle-templates.v1.json`へのatomic CRUDを追加した。built-in catalogはruntimeでimmutableに保持する。
+- `SubtitleStyle`、`maxChars`、`maxLines`をtemplateへ保存し、Unified Auto Processing dialogから新規保存・複製・更新・削除できる。壊れたrecordは無視し、Editor全体を停止させない。
+- ProjectFileへtemplate絶対pathは保存しない。自動字幕適用時はtemplateのstyleと表示制約を字幕へmaterializeする。`edit_project.v1`のschemaは変更していない。
+- 詳細は[`docs/STAGE_12_SUBTITLE_TEMPLATE_MODEL.md`](docs/STAGE_12_SUBTITLE_TEMPLATE_MODEL.md)。
