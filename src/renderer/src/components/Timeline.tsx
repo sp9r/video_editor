@@ -20,9 +20,12 @@ import {
   ZoomOut
 } from 'lucide-react'
 import { findSubtitleContext, formatTimecode, layoutSubtitleTracks, makeId } from '../../../shared/project'
-import { isSubtitleOwnershipBoundaryAvailable, isSubtitleWordBoundarySplitAvailable, nearestSubtitleOwnershipBoundaryIndex } from '../../../shared/editing/operations'
-import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type SubtitleClip, type SubtitleWord, type TimelineClip, type TimelineTrack } from '../../../shared/types'
+import { isSubtitleOwnershipBoundaryAvailable, isSubtitleWordBoundarySplitAvailable, nearestSubtitleOwnershipBoundaryIndex, nearestSubtitleWordBoundaryIndex } from '../../../shared/editing/operations'
+import { subtitleEditUnits } from '../../../shared/editing/edit-units'
+import { snapSubtitleTimelinePosition } from '../../../shared/editing/subtitle-snap'
+import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type SubtitleClip, type SubtitleEditUnit, type SubtitleWord, type TimelineClip, type TimelineTrack, type TimeUs } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
+import { useReviewStore } from '../review-store'
 import { Button, IconButton } from './Controls'
 import { peakCountForPixelWidth, Waveform } from './Waveform'
 
@@ -42,8 +45,8 @@ export const subtitleWordGeometry = (
   widthPercent: ((word.endUs - word.startUs) / clip.durationUs) * 100
 })
 
-export const subtitleWordGeometries = (clip: SubtitleClip): Array<SubtitleWordGeometry & { word: SubtitleWord }> =>
-  (clip.words ?? []).map((word) => ({ word, ...subtitleWordGeometry(clip, word) }))
+export const subtitleWordGeometries = (clip: SubtitleClip): Array<SubtitleWordGeometry & { word: SubtitleEditUnit }> =>
+  (subtitleEditUnits(clip) ?? []).map((word) => ({ word, ...subtitleWordGeometry(clip, word) }))
 
 export interface SubtitleBoundaryPair {
   left: SubtitleClip
@@ -62,8 +65,8 @@ export const subtitleBoundaryPairs = (track: TimelineTrack): SubtitleBoundaryPai
 }
 
 export const subtitleBoundaryPositionUs = (pair: SubtitleBoundaryPair): number => {
-  const leftEndUs = pair.left.words?.at(-1)?.endUs ?? pair.left.startUs
-  const rightStartUs = pair.right.words?.[0]?.startUs ?? pair.right.startUs
+  const leftEndUs = subtitleEditUnits(pair.left)?.at(-1)?.endUs ?? pair.left.startUs
+  const rightStartUs = subtitleEditUnits(pair.right)?.[0]?.startUs ?? pair.right.startUs
   return (leftEndUs + rightStartUs) / 2
 }
 
@@ -124,6 +127,12 @@ interface SubtitleBoundaryDrag {
   currentX: number
 }
 
+interface RazorGhost {
+  clipId: string
+  timeUs: TimeUs
+  boundaryIndex: number
+}
+
 export const POINTER_EDIT_DRAG_THRESHOLD_PX = 3
 
 export const shouldCommitPointerEdit = ({
@@ -172,6 +181,7 @@ function TrackControls({ track, tracks }: { track: TimelineTrack; tracks: Timeli
 
 export default function Timeline(): React.JSX.Element {
   const state = useEditorStore()
+  const review = useReviewStore()
   const {
     project,
     selectedClipIds,
@@ -209,6 +219,8 @@ export default function Timeline(): React.JSX.Element {
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [pointerEdit, setPointerEdit] = useState<PointerEdit | null>(null)
   const [subtitleBoundaryDrag, setSubtitleBoundaryDrag] = useState<SubtitleBoundaryDrag | null>(null)
+  const [razorGhost, setRazorGhost] = useState<RazorGhost | null>(null)
+  const [mergeHoverKey, setMergeHoverKey] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; clipId: string } | null>(null)
   const durationUs = editorDurationUs(project)
   const timelineWidth = Math.max(900, seconds(durationUs) * zoomPxPerSecond)
@@ -254,22 +266,39 @@ export default function Timeline(): React.JSX.Element {
     return Math.max(0, ((clientX - bounds.left + scrollOffset) / zoomPxPerSecond) * 1_000_000)
   }
 
-  const beginPlayheadDrag = (event: React.PointerEvent): void => {
+  const snapTime = (atUs: TimeUs, bypass = false): TimeUs => snapSubtitleTimelinePosition({
+    project: useEditorStore.getState().project,
+    atUs,
+    selectedClipIds: useEditorStore.getState().selectedClipIds,
+    reviewEnabled: review.enabled,
+    reviewTargetId: review.enabled ? review.targetIds[review.targetIndex] : undefined,
+    snapping,
+    bypass
+  })
+
+  const beginTimelineScrub = (event: React.PointerEvent, lane: HTMLElement): void => {
     event.preventDefault()
     event.stopPropagation()
     const target = event.currentTarget as HTMLElement
+    const bypass = event.altKey
     try { target.setPointerCapture(event.pointerId) } catch { /* synthetic smoke events may not have an active pointer */ }
-    const move = (pointerEvent: PointerEvent): void => {
-      const viewport = viewportRef.current
-      if (viewport) setPlayhead(timeFromPointer(pointerEvent.clientX, viewport))
-    }
-    const up = (pointerEvent: PointerEvent): void => {
-      if (target.hasPointerCapture(pointerEvent.pointerId)) target.releasePointerCapture(pointerEvent.pointerId)
+    const update = (clientX: number): void => setPlayhead(snapTime(timeFromPointer(clientX, lane), bypass))
+    update(event.clientX)
+    const move = (pointerEvent: PointerEvent): void => update(pointerEvent.clientX)
+    const finish = (pointerEvent: PointerEvent): void => {
       target.removeEventListener('pointermove', move)
-      target.removeEventListener('pointerup', up)
+      target.removeEventListener('pointerup', finish)
+      target.removeEventListener('pointercancel', finish)
+      if (target.hasPointerCapture(pointerEvent.pointerId)) target.releasePointerCapture(pointerEvent.pointerId)
     }
     target.addEventListener('pointermove', move)
-    target.addEventListener('pointerup', up)
+    target.addEventListener('pointerup', finish)
+    target.addEventListener('pointercancel', finish)
+  }
+
+  const beginPlayheadDrag = (event: React.PointerEvent): void => {
+    const viewport = viewportRef.current
+    if (viewport) beginTimelineScrub(event, viewport)
   }
 
   const showContextMenu = (event: React.MouseEvent, clip: TimelineClip): void => {
@@ -313,11 +342,15 @@ export default function Timeline(): React.JSX.Element {
     event.stopPropagation()
     if (tool === 'razor' && mode === 'move') {
       const lane = event.currentTarget.closest('.track-lane') as HTMLElement | null
-      if (!lane) return
-      const atUs = timeFromPointer(event.clientX, lane)
+      if (!lane || clip.kind !== 'subtitle') return
+      const units = subtitleEditUnits(clip)
+      const boundaryIndex = units ? nearestSubtitleWordBoundaryIndex(clip, timeFromPointer(event.clientX, lane)) : null
+      const boundaryTimeUs = boundaryIndex === null || !units?.[boundaryIndex + 1] ? null : units[boundaryIndex + 1]!.startUs
+      if (boundaryIndex === null || boundaryTimeUs === null) return showNotice('字幕の編集境界を解決できません。', 'warning')
+      const atUs = snapTime(boundaryTimeUs, event.altKey)
       selectClip(clip.id)
       setPlayhead(atUs)
-      window.setTimeout(() => useEditorStore.getState().splitSelected(), 0)
+      useEditorStore.getState().splitSelectedAt(atUs)
       return
     }
     selectClip(clip.id, event.ctrlKey || event.metaKey)
@@ -437,7 +470,7 @@ export default function Timeline(): React.JSX.Element {
           <div className="timeline-content" style={{ width: timelineWidth, '--track-count': project.tracks.length } as React.CSSProperties}>
             <div
               className="time-ruler"
-              onPointerDown={(event) => setPlayhead(timeFromPointer(event.clientX, event.currentTarget))}
+              onPointerDown={(event) => beginTimelineScrub(event, event.currentTarget)}
             >
               {ticks.map((tick) => <span key={tick} style={{ left: tick * zoomPxPerSecond }}><i />{formatTimecode(tick * 1_000_000, project).slice(3, 8)}</span>)}
             </div>
@@ -449,7 +482,7 @@ export default function Timeline(): React.JSX.Element {
                 onPointerDown={(event) => {
                   setContextMenu(null)
                   if (event.target === event.currentTarget) {
-                    setPlayhead(timeFromPointer(event.clientX, event.currentTarget))
+                    setPlayhead(snapTime(timeFromPointer(event.clientX, event.currentTarget), event.altKey))
                     selectClip(null)
                   }
                 }}
@@ -467,15 +500,32 @@ export default function Timeline(): React.JSX.Element {
                   const boundaryUs = subtitleBoundaryPositionUs(pair)
                   const dragging = subtitleBoundaryDrag?.leftClipId === pair.left.id && subtitleBoundaryDrag.rightClipId === pair.right.id
                   const visualLeft = (boundaryUs / 1_000_000) * zoomPxPerSecond + (dragging ? subtitleBoundaryDrag.currentX - subtitleBoundaryDrag.initialX : 0)
-                  return <button
-                    key={`${pair.left.id}:${pair.right.id}`}
-                    type="button"
-                    className={`subtitle-boundary-handle${dragging ? ' is-dragging' : ''}`}
+                  const pairKey = `${pair.left.id}:${pair.right.id}`
+                  const mergeAllowed = !track.locked
+                  return <div
+                    key={pairKey}
+                    className="subtitle-boundary-zone"
                     style={{ left: visualLeft }}
-                    aria-label="字幕の単語所有境界を移動"
-                    title="単語の所有境界をドラッグ"
-                    onPointerDown={(event) => beginSubtitleBoundaryDrag(event, pair)}
-                  />
+                    onPointerEnter={() => setMergeHoverKey(pairKey)}
+                    onPointerLeave={() => setMergeHoverKey((current) => current === pairKey ? null : current)}
+                  >
+                    <button
+                      type="button"
+                      className={`subtitle-boundary-handle${dragging ? ' is-dragging' : ''}`}
+                      aria-label="字幕の編集境界を移動"
+                      title="字幕の編集境界をドラッグ"
+                      onPointerDown={(event) => beginSubtitleBoundaryDrag(event, pair)}
+                    />
+                    {mergeHoverKey === pairKey ? <button
+                      type="button"
+                      className="subtitle-merge-control"
+                      disabled={!mergeAllowed}
+                      aria-label="隣接する字幕を結合"
+                      title={mergeAllowed ? '隣接する字幕を結合' : 'ロック中のため結合不可'}
+                      onPointerDown={(event) => { event.preventDefault(); event.stopPropagation() }}
+                      onClick={(event) => { event.preventDefault(); event.stopPropagation(); if (mergeAllowed) mergeSubtitleWithNext(pair.left.id) }}
+                    >結合</button> : null}
+                  </div>
                 })}
                 {track.clips.map((clip) => {
                   const edit = pointerEdit?.clipId === clip.id ? pointerEdit : null
@@ -488,6 +538,15 @@ export default function Timeline(): React.JSX.Element {
                       className={`timeline-clip clip-${clip.kind} ${selectedClipIds.includes(clip.id) ? 'is-selected' : ''} ${!clip.enabled ? 'is-disabled' : ''} ${edit ? 'is-dragging' : ''}`}
                       style={{ left: Math.max(0, visualLeft), width: Math.max(8, visualWidth) }}
                       onPointerDown={(event) => beginPointerEdit(event, clip, 'move', track.id)}
+                      onPointerMove={(event) => {
+                        if (tool !== 'razor' || clip.kind !== 'subtitle') return
+                        const units = subtitleEditUnits(clip)
+                        const lane = event.currentTarget.closest('.track-lane') as HTMLElement | null
+                        const index = lane && units ? nearestSubtitleWordBoundaryIndex(clip, timeFromPointer(event.clientX, lane)) : null
+                        const timeUs = index === null || !units?.[index + 1] ? null : units[index + 1]!.startUs
+                        setRazorGhost(timeUs === null || index === null ? null : { clipId: clip.id, timeUs, boundaryIndex: index })
+                      }}
+                      onPointerLeave={() => setRazorGhost((current) => current?.clipId === clip.id ? null : current)}
                       onContextMenu={(event) => showContextMenu(event, clip)}
                       title={`${clip.name}\n${seconds(clip.durationUs).toFixed(2)} 秒\n右クリックで編集操作`}
                     >
@@ -508,6 +567,12 @@ export default function Timeline(): React.JSX.Element {
                         </div>
                       ) : null}
                       <span className="clip-content">{clipGlyph(clip)}{clip.linkGroupId ? <Link2 size={12} aria-label="リンクされたクリップ" /> : null}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
+                      {razorGhost?.clipId === clip.id ? <span
+                        className="subtitle-razor-ghost"
+                        style={{ left: `${((razorGhost.timeUs - clip.startUs) / clip.durationUs) * 100}%` }}
+                        aria-label="字幕の分割候補"
+                        title="ここで字幕を分割"
+                      /> : null}
                       {clip.kind === 'audio' || clip.kind === 'video' ? <Waveform asset={project.media.find((asset) => asset.id === clip.assetId)} clip={clip} peakCount={peakCountForPixelWidth(visualWidth)} /> : null}
                       <button type="button" className="trim-handle trim-end" aria-label="終了位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-end', track.id)} />
                     </div>

@@ -677,8 +677,12 @@ select {
 .subtitle-word-layer { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .subtitle-word-unit { position: absolute; top: 0; bottom: 0; overflow: hidden; min-width: 0; padding: 20px 2px 2px; color: rgb(255 240 216 / .72); font-size: 7px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; border-left: 1px solid rgb(255 240 216 / .58); }
 .subtitle-word-unit:first-child { border-left: 0; }
-.subtitle-boundary-handle { position: absolute; top: 1px; bottom: 1px; z-index: 10; width: 10px; padding: 0; background: linear-gradient(90deg, transparent 35%, var(--mint) 35% 65%, transparent 65%); border: 0; cursor: ew-resize; transform: translateX(-50%); filter: drop-shadow(0 0 2px rgb(0 0 0 / .8)); }
+.subtitle-boundary-zone { position: absolute; top: 1px; bottom: 1px; z-index: 10; width: 46px; transform: translateX(-50%); }
+.subtitle-boundary-handle { position: absolute; inset: 0 18px; width: 10px; padding: 0; background: linear-gradient(90deg, transparent 35%, var(--mint) 35% 65%, transparent 65%); border: 0; cursor: ew-resize; filter: drop-shadow(0 0 2px rgb(0 0 0 / .8)); }
 .subtitle-boundary-handle:hover, .subtitle-boundary-handle.is-dragging { background: linear-gradient(90deg, transparent 25%, #fff 25% 75%, transparent 75%); }
+.subtitle-merge-control { position: absolute; top: 4px; left: 18px; padding: 2px 5px; color: #07100d; background: var(--mint); border: 1px solid #d6fff0; border-radius: 4px; font-size: 9px; font-weight: 800; box-shadow: 0 2px 5px rgb(0 0 0 / .35); cursor: pointer; white-space: nowrap; }
+.subtitle-merge-control:disabled { opacity: .45; cursor: not-allowed; }
+.subtitle-razor-ghost { position: absolute; top: 1px; bottom: 1px; z-index: 8; width: 2px; background: #ffdb70; box-shadow: 0 0 0 1px rgb(255 219 112 / .25), 0 0 8px rgb(255 219 112 / .8); transform: translateX(-1px); pointer-events: none; }
 .clip-content { position: relative; z-index: 2; display: flex; align-items: center; gap: 5px; padding: 4px 7px; pointer-events: none; }
 .clip-content strong { overflow: hidden; font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .film-glyph { font-size: 10px; }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryPairs, subtitleBoundaryPositionUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
+import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
+import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
+import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
 
 describe('timeline interaction guards', () => {
   it('leaves native clipboard behavior to editable controls', () => {
@@ -51,6 +53,15 @@ describe('timeline interaction guards', () => {
     expect(timelineSplitMenuState({ kind: 'subtitle', text: '字幕', words: [{ id: 'w1', text: '字幕', startUs: 0, endUs: 1 }, { id: 'w2', text: 'を', startUs: 1, endUs: 2 }] } as never)).toEqual({ disabled: true, label: '単語境界情報がないため分割不可' })
     expect(timelineSplitMenuState({ kind: 'subtitle', text: '字幕を', words: [{ id: 'w1', text: '字幕', startUs: 0, endUs: 1 }, { id: 'w2', text: 'を', startUs: 1, endUs: 2 }] } as never)).toEqual({ disabled: false, label: 'ここで字幕を分割（単語境界）' })
     expect(timelineSplitMenuState({ kind: 'image' } as never)).toEqual({ disabled: false, label: '再生位置で分割' })
+  })
+
+  it('uses derived edit units for the visible subtitle boundary layer', () => {
+    const sourceWord = { id: 'raw', text: '皆さんこんばんはアルマジロウです', startUs: 0, endUs: 1_000_000 }
+    const clip = {
+      id: 'caption', name: 'caption', kind: 'subtitle' as const, startUs: 0, durationUs: 1_000_000, sourceInUs: 0,
+      enabled: true, text: sourceWord.text, style: structuredClone(DEFAULT_SUBTITLE_STYLE), words: [sourceWord], editUnits: deriveSubtitleEditUnits([sourceWord])
+    }
+    expect(subtitleWordGeometries(clip).map(({ word }) => word.text)).toEqual(['皆さん', 'こんばんは', 'アルマジロウ', 'です'])
   })
 
   it('keeps ownership boundary jitter local and exposes only compatible adjacent pairs', () => {

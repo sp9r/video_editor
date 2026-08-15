@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from 'react'
 import { Captions, Image as ImageIcon, SlidersHorizontal, Volume2 } from 'lucide-react'
 import { findSubtitleContext, subtitleWordsMatchText } from '../../../shared/project'
+import { subtitleEditUnits } from '../../../shared/editing/edit-units'
 import type { AudioSettings, SubtitleClip, SubtitleStyle, TimelineClip, TransformSettings } from '../../../shared/types'
 import { findClip, useEditorStore } from '../store'
 import { Button, EmptyState, Field, NumberField, Section, SelectField } from './Controls'
@@ -98,6 +99,7 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
     patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, style: { ...current.style, ...values } } : current)
   const { previous, next } = findSubtitleContext(project, clip.id)
   const wordsMatchText = subtitleWordsMatchText(clip)
+  const editUnits = subtitleEditUnits(clip)
   const selectContext = (item: SubtitleClip): void => {
     selectClip(item.id)
     setPlayhead(item.startUs)
@@ -119,16 +121,17 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
         <Field label="本文" wide>
           <textarea {...transaction} value={clip.text} rows={4} onChange={(event) => patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, text: event.target.value } : current)} />
         </Field>
-        {clip.words?.length ? (
+        {clip.words?.length || editUnits?.length ? (
           <Field label="単語境界" wide>
             <div className="subtitle-word-boundaries" aria-label="単語境界で分割">
-              {clip.words.map((word, index) => (
-                <span className="subtitle-word-boundary" key={word.id}>
-                  <span className="subtitle-word-token" title={`${(word.startUs / 1_000_000).toFixed(2)}–${(word.endUs / 1_000_000).toFixed(2)}秒`}>{word.text}</span>
-                  {index < clip.words!.length - 1 && <button type="button" disabled={!wordsMatchText} aria-label={`「${word.text}」の後で分割`} onClick={() => splitSubtitleAtWordBoundary(clip.id, index)}>分割</button>}
+              {(editUnits ?? clip.words ?? []).map((unit, index, units) => (
+                <span className="subtitle-word-boundary" key={unit.id}>
+                  <span className="subtitle-word-token" title={`${(unit.startUs / 1_000_000).toFixed(2)}–${(unit.endUs / 1_000_000).toFixed(2)}秒`}>{unit.text}</span>
+                  {index < units.length - 1 && <button type="button" disabled={!editUnits || !wordsMatchText} aria-label={`「${unit.text}」の後で分割`} onClick={() => splitSubtitleAtWordBoundary(clip.id, index)}>分割</button>}
                 </span>
               ))}
             </div>
+            {editUnits?.some((unit) => unit.timingProvenance === 'estimated') && <p className="field-hint">日本語語塊から推定した編集境界です。音響的な単語alignmentではありません。</p>}
             {!wordsMatchText && <p className="field-hint warning">本文が編集されているため、現在の単語タイミングでは分割できません。</p>}
           </Field>
         ) : <p className="field-hint">単語タイミング情報がない字幕は、単語境界分割を利用できません。</p>}
