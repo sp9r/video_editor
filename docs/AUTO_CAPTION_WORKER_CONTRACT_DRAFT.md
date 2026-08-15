@@ -45,9 +45,21 @@ timelineWordUs = clip.startUs + (sourceWordUs - clip.sourceInUs)
 
 生成時の不変source truthは`experimental.auto-caption-baseline.v1`として、将来app userData配下へatomic保存する。review logやcurrent ProjectFileへ混ぜず、fingerprint、source clip identity、mapping formula、rawWords、initial captions、settings、provider/model、diagnostics/fallbackだけを持つ。Stage 1では型とpath-free validatorまでを追加し、永続化は次段階とする。
 
+## Stage 3 integration
+
+`src/main/ai/auto-caption-service.ts`が正式workerのmain-process境界である。旧`caption_bridge.py`は
+互換テスト・参考実装として残るが、通常の「自動字幕」runtime pathでは使用しない。
+
+- worker rootは、userData配下の`auto-caption-worker.json`にある明示設定、環境変数、兄弟directory discoveryの順に解決する。Pythonも同じ優先順で解決し、absolute pathをsource codeへ埋め込まない。未発見時はpathを表示せず利用不可を返す。
+- rendererはworker commandを渡さない。main processがselected clipを1件に制限し、video/audio、online、audio stream、absolute media path、source rangeを検証してrequestを生成する。
+- worker processは`ProcessExecutor`経由で`shell:false`、argv配列、temporary request/resultを使う。stdout JSONL progress、result size、version、jobId、range、ownership、forbidden fieldをruntime validationする。stderr・exceptionのcredential/local pathはrendererへ返さない。
+- source absolute microsecondsは`mapAutoCaptionSourceTimeToTimelineUs`でcaptionとowned wordsへ同じ式を適用する。ProjectFileへworker pathは保存しない。
+- 成功したresultだけを`userData/experimental.auto-caption-baseline.v1/*.json`へatomic保存する。baselineはproject/media fingerprint、clip identity、mapping、rawWords、initial captions、settings、diagnostics/fallbackだけを保持し、media/project pathを保持しない。malformed baselineは他のrecordを止めずにskipする。
+- typed IPCは`autoCaptionHealth`、`startAutoCaption`、`onAutoCaptionProgress`、`cancelAutoCaption`、`loadAutoCaptionBaselines`だけを公開する。自動字幕生成は完了progressのresultを検証済みProject Model planへ変換し、通常のUndo可能な適用経路へ渡す。
+
 ## Stage 1 non-goals
 
-- 自動字幕UI、IPC request接続、Project Modelへの適用
+- Stage 3で実装済み: 自動字幕UIからのrequest接続、Project Modelへの適用
 - faster-whisperのrange decodeやcaption algorithmの変更
 - existing `spectra.caption_bridge.v1`のcutover
 - history/review logへのbaseline混入

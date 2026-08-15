@@ -1,5 +1,14 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-15 Stage 3 Auto Caption Worker Integration
+
+- `src/main/ai/worker-discovery.ts`を追加。userDataの`auto-caption-worker.json`、環境変数、兄弟`clip_automation`の順でworker/Pythonを解決し、source codeやProjectFileへabsolute worker pathを埋め込まない。未発見時healthはpath-free unavailableを返す。
+- `src/main/ai/auto-caption-service.ts`を追加。main processだけがselected clipのmedia path/source rangeを解決し、formal `spectra.auto-caption.request.v1`をshell:falseの外部workerへ渡す。progress、timeout、cancel、size/version/range/ownership validation、safe error、atomic baseline保存を一元管理する。
+- `experimental.auto-caption-baseline.v1`をuserData配下へatomic保存し、malformed recordは安全にskipする。baselineはfingerprint、clip identity、mapping、rawWords、initial captions、settings、diagnostics/fallbackのみでpath/credentialを含めない。
+- typed IPCをhealth/start/progress/cancel/baseline loadへ更新。rendererの自動字幕は旧`caption_bridge.v1`ではなく、selected video/audio clipのsource absolute resultをshared mappingでtimelineへ変換してUndo可能なsubtitle planへ適用する。
+- source wordとdisplay textが異なるdisplay normalizationも、Project Modelのword metadataを失わないように扱う。旧bridge実装・testsは互換参考として残すがruntimeの正式経路から外した。
+- Stage 3 tests: worker discovery、Japanese/space path、selection/audio validation、bounded range、progress、cancel、timeout、malformed/oversized/nonzero、baseline redaction、source→timeline mappingを追加。
+
 ## 2026-08-15 Human Review Readiness / Auto Caption Bridge
 
 - video clip選択後の「自動字幕」を追加。main processがProjectFileのassetを検証し、外部`caption_bridge.py`をshellなしで実行する。video_editorはclip_automationをimportせず、bridge未設定でもstandalone editorとして動作する。
