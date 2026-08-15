@@ -1,5 +1,13 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-15 Human Review Readiness / Auto Caption Bridge
+
+- video clip選択後の「自動字幕」を追加。main processがProjectFileのassetを検証し、外部`caption_bridge.py`をshellなしで実行する。video_editorはclip_automationをimportせず、bridge未設定でもstandalone editorとして動作する。
+- clip_automationのfaster-whisperと既存caption algorithmの結果を、`spectra.caption_bridge.v1` transcript JSONとして受け取り、word timing付きsubtitle clipと内部`SubtitleEditUnit`へ一つのundo可能な変更として適用する。
+- generated Japanese speech/videoで実Whisper large-v3 CUDA実行、caption 1件、word metadata、bridge schemaを受入確認した。ユーザー素材と既存runは未使用。
+- `docs/AUTO_CAPTION_BRIDGE.md`に設定、信頼境界、失敗時挙動、非対象Phaseを記録した。
+- readiness: **AUTO CAPTION READY / FULL CORRECTION READY / HUMAN REVIEW READY**。長尺のGPU memory・処理進捗、AI baselineの長期保存形式、mass Human Reviewは未着手。
+
 最終更新: 2026-08-13 17:00 JST
 状態: **Phase 3 standalone `edit_project.v1`基盤を実装。実画面E2E、別PC受入、GitHub公開は未完了の実用アルファ0.1.0**
 branch: `main`
