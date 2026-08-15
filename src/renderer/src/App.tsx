@@ -62,6 +62,8 @@ export default function App(): React.JSX.Element {
     addSubtitle,
     autoCaptionSelected,
     setUserSubtitleTemplates: setStoreUserSubtitleTemplates,
+    setDefaultSubtitleTemplateId,
+    defaultSubtitleTemplateId,
     cancelAutoCaption,
     autoCaptionProgress,
     fullCorrectionSession,
@@ -105,8 +107,26 @@ export default function App(): React.JSX.Element {
     void window.spectra.loadSubtitleTemplates().then((catalog) => {
       setUserSubtitleTemplates(catalog.userTemplates)
       setStoreUserSubtitleTemplates(catalog.userTemplates)
+      setDefaultSubtitleTemplateId(catalog.defaultTemplateId)
+      const selected = catalog.userTemplates.find((template) => template.id === catalog.defaultTemplateId)
+        ?? SUBTITLE_TEMPLATES.find((template) => template.id === catalog.defaultTemplateId)
+      setCaptionSettings((current) => ({
+        ...current,
+        subtitleTemplate: catalog.defaultTemplateId,
+        ...(selected ? { maxChars: selected.maxChars, maxLines: selected.maxLines } : {})
+      }))
     }).catch(() => undefined)
-  }, [setStoreUserSubtitleTemplates])
+  }, [setDefaultSubtitleTemplateId, setStoreUserSubtitleTemplates])
+
+  useEffect(() => {
+    const selected = userSubtitleTemplates.find((template) => template.id === defaultSubtitleTemplateId)
+      ?? SUBTITLE_TEMPLATES.find((template) => template.id === defaultSubtitleTemplateId)
+    setCaptionSettings((current) => ({
+      ...current,
+      subtitleTemplate: defaultSubtitleTemplateId,
+      ...(selected ? { maxChars: selected.maxChars, maxLines: selected.maxLines } : {})
+    }))
+  }, [defaultSubtitleTemplateId, userSubtitleTemplates])
 
   const save = useCallback(async (saveAs = false): Promise<void> => {
     if (!window.spectra) {

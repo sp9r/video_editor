@@ -33,6 +33,7 @@ export interface SubtitleTemplateDraft {
 export interface SubtitleTemplateLoadResult {
   userTemplates: UserSubtitleTemplate[]
   malformedCount: number
+  defaultTemplateId: SubtitleTemplateId
 }
 
 const template = (id: SubtitleTemplateId, label: string, style: Partial<SubtitleStyle>): SubtitleTemplateOption => ({

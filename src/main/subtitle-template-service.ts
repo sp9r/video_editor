@@ -2,17 +2,20 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
+  SUBTITLE_TEMPLATES,
   SUBTITLE_TEMPLATE_STORE_VERSION,
   SUBTITLE_TEMPLATE_VERSION,
   type SubtitleTemplateDraft,
   type SubtitleTemplateLoadResult,
   type UserSubtitleTemplate
 } from '../shared/subtitle-templates.js'
+import type { SubtitleTemplateId } from '../shared/auto-caption-contract.js'
 import type { SubtitleStyle } from '../shared/types.js'
 
 const STORE_FILE = 'subtitle-templates.v1.json'
 const MAX_TEMPLATES = 256
 const MAX_NAME_LENGTH = 100
+const DEFAULT_TEMPLATE_ID: SubtitleTemplateId = 'default'
 const STYLE_KEYS = [
   'fontFamily', 'fontSize', 'color', 'outlineColor', 'outlineWidth', 'shadowColor', 'shadowBlur',
   'backgroundColor', 'backgroundOpacity', 'bold', 'italic', 'letterSpacing', 'lineHeight',
@@ -98,6 +101,11 @@ const parseTemplate = (value: unknown): UserSubtitleTemplate => {
 
 const storePath = (userDataPath: string): string => path.join(userDataPath, STORE_FILE)
 
+const validTemplateId = (value: unknown): value is SubtitleTemplateId =>
+  typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)
+
+const isBuiltInTemplateId = (id: SubtitleTemplateId): boolean => SUBTITLE_TEMPLATES.some((template) => template.id === id)
+
 const readStore = async (userDataPath: string): Promise<SubtitleTemplateLoadResult> => {
   try {
     const parsed: unknown = JSON.parse(await readFile(storePath(userDataPath), 'utf8'))
@@ -107,20 +115,27 @@ const readStore = async (userDataPath: string): Promise<SubtitleTemplateLoadResu
       try { templates.push(parseTemplate(item)) } catch { /* ignore one malformed template */ }
     }
     const unique = templates.filter((template, index) => templates.findIndex((candidate) => candidate.id === template.id) === index)
-    return { userTemplates: unique, malformedCount: parsed.templates.length - templates.length + templates.length - unique.length }
+    let defaultTemplateId = DEFAULT_TEMPLATE_ID
+    let malformedCount = parsed.templates.length - templates.length + templates.length - unique.length
+    if (parsed.defaultTemplateId !== undefined) {
+      if (!validTemplateId(parsed.defaultTemplateId)) malformedCount += 1
+      else if (isBuiltInTemplateId(parsed.defaultTemplateId) || unique.some((template) => template.id === parsed.defaultTemplateId)) defaultTemplateId = parsed.defaultTemplateId
+      else malformedCount += 1
+    }
+    return { userTemplates: unique, malformedCount, defaultTemplateId }
   } catch (error) {
-    if (isRecord(error) && error.code === 'ENOENT') return { userTemplates: [], malformedCount: 0 }
-    return { userTemplates: [], malformedCount: 1 }
+    if (isRecord(error) && error.code === 'ENOENT') return { userTemplates: [], malformedCount: 0, defaultTemplateId: DEFAULT_TEMPLATE_ID }
+    return { userTemplates: [], malformedCount: 1, defaultTemplateId: DEFAULT_TEMPLATE_ID }
   }
 }
 
-const writeStore = async (userDataPath: string, templates: readonly UserSubtitleTemplate[]): Promise<void> => {
+const writeStore = async (userDataPath: string, templates: readonly UserSubtitleTemplate[], defaultTemplateId: SubtitleTemplateId): Promise<void> => {
   const directory = path.dirname(storePath(userDataPath))
   await mkdir(directory, { recursive: true })
   const target = storePath(userDataPath)
   const temporary = path.join(directory, `.${path.basename(target)}.${randomUUID()}.tmp`)
   try {
-    await writeFile(temporary, `${JSON.stringify({ version: SUBTITLE_TEMPLATE_STORE_VERSION, templates }, null, 2)}\n`, 'utf8')
+    await writeFile(temporary, `${JSON.stringify({ version: SUBTITLE_TEMPLATE_STORE_VERSION, defaultTemplateId, templates }, null, 2)}\n`, 'utf8')
     await rename(temporary, target)
   } finally {
     await rm(temporary, { force: true }).catch(() => undefined)
@@ -143,7 +158,7 @@ export class SubtitleTemplateService {
     const draft = parseDraft(input)
     const current = await readStore(this.userDataPath)
     const created = newTemplate(draft)
-    await writeStore(this.userDataPath, [...current.userTemplates, created])
+    await writeStore(this.userDataPath, [...current.userTemplates, created], current.defaultTemplateId)
     return created
   }
 
@@ -154,7 +169,7 @@ export class SubtitleTemplateService {
     const existing = current.userTemplates.find((template) => template.id === id)
     if (!existing) throw new Error('subtitle template not found')
     const updated = { ...existing, ...draft, updatedAt: new Date().toISOString() }
-    await writeStore(this.userDataPath, current.userTemplates.map((template) => template.id === id ? updated : template))
+    await writeStore(this.userDataPath, current.userTemplates.map((template) => template.id === id ? updated : template), current.defaultTemplateId)
     return updated
   }
 
@@ -162,7 +177,7 @@ export class SubtitleTemplateService {
     const draft = parseDraft(input)
     const current = await readStore(this.userDataPath)
     const created = newTemplate({ ...draft, name: `${draft.name} copy`.slice(0, MAX_NAME_LENGTH) })
-    await writeStore(this.userDataPath, [...current.userTemplates, created])
+    await writeStore(this.userDataPath, [...current.userTemplates, created], current.defaultTemplateId)
     return created
   }
 
@@ -171,7 +186,17 @@ export class SubtitleTemplateService {
     const current = await readStore(this.userDataPath)
     const next = current.userTemplates.filter((template) => template.id !== id)
     if (next.length === current.userTemplates.length) return false
-    await writeStore(this.userDataPath, next)
+    await writeStore(this.userDataPath, next, current.defaultTemplateId === id ? DEFAULT_TEMPLATE_ID : current.defaultTemplateId)
     return true
+  }
+
+  async setDefault(idInput: unknown): Promise<SubtitleTemplateLoadResult> {
+    const id = text(idInput, 'subtitle template.id', 128)
+    const current = await readStore(this.userDataPath)
+    if (!validTemplateId(id) || (!isBuiltInTemplateId(id) && !current.userTemplates.some((template) => template.id === id))) {
+      throw new Error('subtitle template not found')
+    }
+    await writeStore(this.userDataPath, current.userTemplates, id)
+    return { ...current, defaultTemplateId: id }
   }
 }

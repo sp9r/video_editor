@@ -379,6 +379,7 @@ export interface DesktopApi {
   cancelAutoCaption(jobId: string): Promise<boolean>
   loadAutoCaptionBaselines(): Promise<AutoCaptionBaselineLoadResult>
   loadSubtitleTemplates(): Promise<SubtitleTemplateLoadResult>
+  setDefaultSubtitleTemplate(id: string): Promise<SubtitleTemplateLoadResult>
   createSubtitleTemplate(input: SubtitleTemplateDraft): Promise<UserSubtitleTemplate>
   updateSubtitleTemplate(id: string, input: SubtitleTemplateDraft): Promise<UserSubtitleTemplate>
   duplicateSubtitleTemplate(input: SubtitleTemplateDraft): Promise<UserSubtitleTemplate>

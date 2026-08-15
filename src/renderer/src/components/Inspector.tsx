@@ -3,6 +3,7 @@ import { Captions, Image as ImageIcon, SlidersHorizontal, Volume2 } from 'lucide
 import { findSubtitleContext, subtitleWordsMatchText } from '../../../shared/project'
 import { subtitleEditUnits } from '../../../shared/editing/edit-units'
 import type { AudioSettings, SubtitleClip, SubtitleStyle, TimelineClip, TransformSettings } from '../../../shared/types'
+import { getSubtitleTemplate, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../../shared/subtitle-templates'
 import { findClip, useEditorStore } from '../store'
 import { Button, EmptyState, Field, NumberField, Section, SelectField } from './Controls'
 
@@ -12,6 +13,31 @@ const numberValue = (value: string, fallback = 0): number => {
 }
 
 const FALLBACK_FONTS = ['Noto Sans JP', 'Yu Gothic UI', 'Meiryo', 'Arial', 'sans-serif']
+const TEMPLATE_SAMPLE = '皆さんこんばんは\nアルマジロウです'
+
+const withAlpha = (color: string, opacity: number): string => {
+  const match = /^#([0-9a-f]{6})$/i.exec(color)
+  if (!match) return color
+  const value = match[1] ?? '000000'
+  return `rgba(${Number.parseInt(value.slice(0, 2), 16)}, ${Number.parseInt(value.slice(2, 4), 16)}, ${Number.parseInt(value.slice(4, 6), 16)}, ${opacity})`
+}
+
+const templatePreviewStyle = (style: SubtitleStyle): React.CSSProperties => ({
+  color: style.color,
+  fontFamily: style.fontFamily,
+  fontSize: `${Math.min(56, Math.max(18, style.fontSize * 0.55))}px`,
+  fontWeight: style.bold ? 700 : 400,
+  fontStyle: style.italic ? 'italic' : 'normal',
+  letterSpacing: `${style.letterSpacing}px`,
+  lineHeight: style.lineHeight,
+  textAlign: 'center',
+  whiteSpace: 'pre-line',
+  WebkitTextStroke: `${Math.min(8, style.outlineWidth * 0.55)}px ${style.outlineColor}`,
+  textShadow: style.shadowBlur > 0 ? `0 2px ${Math.min(20, style.shadowBlur * 0.55)}px ${style.shadowColor}` : 'none',
+  backgroundColor: withAlpha(style.backgroundColor, style.backgroundOpacity),
+  padding: '10px 18px',
+  maxWidth: '100%'
+})
 
 const hasTransform = (clip: TimelineClip): clip is Extract<TimelineClip, { kind: 'video' | 'image' }> =>
   clip.kind === 'video' || clip.kind === 'image'
@@ -80,6 +106,144 @@ function AudioEditor({ clip }: { clip: Extract<TimelineClip, { kind: 'video' | '
         <NumberField {...transaction} label="パン" min={-100} max={100} value={clip.audio.pan} onChange={(event) => patch({ pan: numberValue(event.target.value) })} />
         <NumberField {...transaction} label="フェードイン" suffix="秒" min={0} step={0.1} value={clip.audio.fadeInUs / 1_000_000} onChange={(event) => patch({ fadeInUs: Math.max(0, numberValue(event.target.value) * 1_000_000) })} />
         <NumberField {...transaction} label="フェードアウト" suffix="秒" min={0} step={0.1} value={clip.audio.fadeOutUs / 1_000_000} onChange={(event) => patch({ fadeOutUs: Math.max(0, numberValue(event.target.value) * 1_000_000) })} />
+      </div>
+    </Section>
+  )
+}
+
+function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.Element {
+  const {
+    userSubtitleTemplates,
+    defaultSubtitleTemplateId,
+    setUserSubtitleTemplates,
+    setDefaultSubtitleTemplateId,
+    patchClip,
+    showNotice
+  } = useEditorStore()
+  const [templateId, setTemplateId] = useState(defaultSubtitleTemplateId)
+  useEffect(() => setTemplateId(defaultSubtitleTemplateId), [defaultSubtitleTemplateId])
+
+  const selected = getSubtitleTemplate(templateId, userSubtitleTemplates)
+  const selectedUser = userSubtitleTemplates.find((template) => template.id === templateId)
+  const isUserTemplate = Boolean(selectedUser)
+  const templateDraft = (name: string, style: SubtitleStyle, source?: UserSubtitleTemplate): SubtitleTemplateDraft => ({
+    name,
+    style: structuredClone(style),
+    maxChars: source?.maxChars ?? 32,
+    maxLines: source?.maxLines ?? 2
+  })
+  const replaceCatalog = (catalog: { userTemplates: UserSubtitleTemplate[]; defaultTemplateId: string }): void => {
+    setUserSubtitleTemplates(catalog.userTemplates)
+    setDefaultSubtitleTemplateId(catalog.defaultTemplateId)
+    setTemplateId(catalog.defaultTemplateId)
+  }
+  const getDesktopApi = (): NonNullable<Window['spectra']> | null => {
+    const api = window.spectra
+    if (api) return api
+    showNotice('テンプレート管理はElectron環境で利用できます。', 'warning')
+    return null
+  }
+  const applyTemplate = (): void => {
+    if (!selected) return
+    patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, style: structuredClone(selected.style) } : current)
+    showNotice(`「${'name' in selected ? selected.name : selected.label}」を字幕へ適用しました。`, 'success')
+  }
+  const saveCurrentAsTemplate = async (): Promise<void> => {
+    const api = getDesktopApi()
+    if (!api) return
+    const name = window.prompt('テンプレート名', '字幕テンプレート')?.trim()
+    if (!name) return
+    try {
+      const created = await api.createSubtitleTemplate(templateDraft(name, clip.style, selectedUser))
+      setUserSubtitleTemplates([...userSubtitleTemplates, created])
+      setTemplateId(created.id)
+      showNotice(`「${created.name}」を保存しました。`, 'success')
+    } catch {
+      showNotice('テンプレートを保存できませんでした。', 'error')
+    }
+  }
+  const duplicateTemplate = async (): Promise<void> => {
+    const api = getDesktopApi()
+    if (!api || !selected) return
+    const name = window.prompt('複製後のテンプレート名', `${'name' in selected ? selected.name : selected.label} copy`)?.trim()
+    if (!name) return
+    try {
+      const created = await api.duplicateSubtitleTemplate(templateDraft(name, selected.style, 'name' in selected ? selected : undefined))
+      setUserSubtitleTemplates([...userSubtitleTemplates, created])
+      setTemplateId(created.id)
+      showNotice(`「${created.name}」を複製しました。`, 'success')
+    } catch {
+      showNotice('テンプレートを複製できませんでした。', 'error')
+    }
+  }
+  const renameTemplate = async (): Promise<void> => {
+    const api = getDesktopApi()
+    if (!api || !selectedUser) return
+    const name = window.prompt('新しいテンプレート名', selectedUser.name)?.trim()
+    if (!name || name === selectedUser.name) return
+    try {
+      const updated = await api.updateSubtitleTemplate(selectedUser.id, templateDraft(name, selectedUser.style, selectedUser))
+      setUserSubtitleTemplates(userSubtitleTemplates.map((template) => template.id === updated.id ? updated : template))
+      showNotice(`「${updated.name}」へ名前を変更しました。`, 'success')
+    } catch {
+      showNotice('テンプレート名を変更できませんでした。', 'error')
+    }
+  }
+  const updateTemplate = async (): Promise<void> => {
+    const api = getDesktopApi()
+    if (!api || !selectedUser) return
+    try {
+      const updated = await api.updateSubtitleTemplate(selectedUser.id, templateDraft(selectedUser.name, clip.style, selectedUser))
+      setUserSubtitleTemplates(userSubtitleTemplates.map((template) => template.id === updated.id ? updated : template))
+      showNotice(`「${updated.name}」を現在の字幕styleで更新しました。`, 'success')
+    } catch {
+      showNotice('テンプレートを更新できませんでした。', 'error')
+    }
+  }
+  const deleteTemplate = async (): Promise<void> => {
+    const api = getDesktopApi()
+    if (!api || !selectedUser || !window.confirm(`「${selectedUser.name}」を削除しますか？`)) return
+    try {
+      if (!(await api.deleteSubtitleTemplate(selectedUser.id))) return
+      const next = userSubtitleTemplates.filter((template) => template.id !== selectedUser.id)
+      setUserSubtitleTemplates(next)
+      setTemplateId(defaultSubtitleTemplateId === selectedUser.id ? 'default' : defaultSubtitleTemplateId)
+      showNotice(`「${selectedUser.name}」を削除しました。`, 'success')
+    } catch {
+      showNotice('テンプレートを削除できませんでした。', 'error')
+    }
+  }
+  const setAsDefault = async (): Promise<void> => {
+    const api = getDesktopApi()
+    if (!api || !selected) return
+    try {
+      const catalog = await api.setDefaultSubtitleTemplate(selected.id)
+      replaceCatalog(catalog)
+      showNotice(`「${'name' in selected ? selected.name : selected.label}」をデフォルトに設定しました。`, 'success')
+    } catch {
+      showNotice('デフォルトtemplateを設定できませんでした。', 'error')
+    }
+  }
+  return (
+    <Section title="字幕テンプレート">
+      <div className="subtitle-template-manager">
+        <select aria-label="字幕テンプレート" value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
+          <optgroup label="組み込み（変更不可）">{SUBTITLE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</optgroup>
+          {userSubtitleTemplates.length > 0 && <optgroup label="ユーザー">{userSubtitleTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</optgroup>}
+        </select>
+        <div className="subtitle-template-preview" aria-label="字幕template sample preview">
+          {selected && <div style={templatePreviewStyle(selected.style)}>{TEMPLATE_SAMPLE}</div>}
+        </div>
+        <div className="template-actions">
+          <Button className="primary-button" onClick={() => void saveCurrentAsTemplate()}>テンプレートとして保存</Button>
+          <Button className="subtle-button" disabled={!selected} onClick={applyTemplate}>適用</Button>
+          <Button className="subtle-button" disabled={!selected} onClick={() => void duplicateTemplate()}>複製</Button>
+          <Button className="subtle-button" disabled={!isUserTemplate} onClick={() => void renameTemplate()}>名前変更</Button>
+          <Button className="subtle-button" disabled={!isUserTemplate} onClick={() => void updateTemplate()}>更新</Button>
+          <Button className="subtle-button" disabled={!isUserTemplate} onClick={() => void deleteTemplate()}>削除</Button>
+          <Button className="subtle-button" disabled={!selected || defaultSubtitleTemplateId === templateId} onClick={() => void setAsDefault()}>デフォルトに設定</Button>
+        </div>
+        <small className="field-hint">{defaultSubtitleTemplateId === templateId ? '現在のデフォルト' : '選択中のtemplate'} · Finalと同じSubtitleStyleを使って表示します。</small>
       </div>
     </Section>
   )
@@ -190,6 +354,7 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
         </SelectField>
         <NumberField label="効果の長さ" suffix="秒" min={0.05} max={3} step={0.05} value={clip.style.animationDurationUs / 1_000_000} onChange={(event) => patchStyle({ animationDurationUs: numberValue(event.target.value) * 1_000_000 })} />
       </Section>
+      <SubtitleTemplateManager clip={clip} />
     </>
   )
 }

@@ -47,6 +47,7 @@ interface EditorState {
   autoCaptionProgress: AutoCaptionProgress | null
   autoCaptionJobId: string | null
   userSubtitleTemplates: UserSubtitleTemplate[]
+  defaultSubtitleTemplateId: string
   savedFingerprint: string
   transactionBase: ProjectFile | null
   clipboard: ClipboardItem[]
@@ -72,6 +73,7 @@ interface EditorState {
   autoCaptionSelected(settings?: AutoCaptionSettings): Promise<AutoCaptionApplySummary | null>
   cancelAutoCaption(): Promise<void>
   setUserSubtitleTemplates(templates: UserSubtitleTemplate[]): void
+  setDefaultSubtitleTemplateId(id: string): void
   hydrateFullCorrectionSessions(sessions: FullCorrectionSession[]): void
   startFullCorrection(): Promise<boolean>
   finishFullCorrection(): Promise<FullCorrectionSession | null>
@@ -152,6 +154,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   autoCaptionProgress: null,
   autoCaptionJobId: null,
   userSubtitleTemplates: [],
+  defaultSubtitleTemplateId: 'default',
   applyProject: (project, options = {}) => {
     const current = get().project
     if (project === current) return
@@ -344,6 +347,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({ autoCaptionProgress: state.autoCaptionProgress ? { ...state.autoCaptionProgress, message: 'キャンセル中…' } : null }))
   },
   setUserSubtitleTemplates: (templates) => set({ userSubtitleTemplates: structuredClone(templates) }),
+  setDefaultSubtitleTemplateId: (id) => set({ defaultSubtitleTemplateId: id }),
   hydrateFullCorrectionSessions: (sessions) => {
     const current = get().project
     const active = sessions

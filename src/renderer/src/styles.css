@@ -713,6 +713,19 @@ select {
 .dialog-body { display: grid; grid-template-columns: minmax(0, 1fr) 270px; min-height: 0; }
 .caption-dialog-body { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow: auto; padding: 20px 22px; }
 .template-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.subtitle-template-manager { display: grid; gap: 10px; }
+.subtitle-template-manager > select { width: 100%; }
+.subtitle-template-preview {
+  min-height: 132px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  background: #1c2028;
+}
+.subtitle-template-preview > div { text-align: center; }
 .caption-target { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; background: #12171c; border: 1px solid var(--line-soft); border-radius: 5px; }
 .caption-target span, .caption-dialog-body .field-label { color: var(--text-dim); font-size: 9px; }
 .caption-target strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }

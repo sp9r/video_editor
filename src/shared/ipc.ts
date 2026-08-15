@@ -20,6 +20,7 @@ export const IPC = {
   autoCaptionProgress: 'auto-caption:progress',
   autoCaptionBaselinesLoad: 'auto-caption:baselines-load',
   subtitleTemplatesLoad: 'subtitle-templates:load',
+  subtitleTemplateDefault: 'subtitle-templates:default',
   subtitleTemplateCreate: 'subtitle-templates:create',
   subtitleTemplateUpdate: 'subtitle-templates:update',
   subtitleTemplateDuplicate: 'subtitle-templates:duplicate',

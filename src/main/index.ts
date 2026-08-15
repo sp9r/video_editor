@@ -201,6 +201,10 @@ const registerIpcHandlers = (): void => {
     assertTrustedSender(event)
     return requireSubtitleTemplateService().load()
   })
+  ipcMain.handle(IPC.subtitleTemplateDefault, async (event, id: unknown) => {
+    assertTrustedSender(event)
+    return requireSubtitleTemplateService().setDefault(id)
+  })
 
   ipcMain.handle(IPC.subtitleTemplateCreate, async (event, input: unknown) => {
     assertTrustedSender(event)

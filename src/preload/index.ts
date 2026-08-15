@@ -28,6 +28,7 @@ const api: DesktopApi = {
   cancelAutoCaption: (jobId: string) => ipcRenderer.invoke(IPC.autoCaptionCancel, jobId),
   loadAutoCaptionBaselines: () => ipcRenderer.invoke(IPC.autoCaptionBaselinesLoad),
   loadSubtitleTemplates: () => ipcRenderer.invoke(IPC.subtitleTemplatesLoad),
+  setDefaultSubtitleTemplate: (id: string) => ipcRenderer.invoke(IPC.subtitleTemplateDefault, id),
   createSubtitleTemplate: (input: SubtitleTemplateDraft) => ipcRenderer.invoke(IPC.subtitleTemplateCreate, input),
   updateSubtitleTemplate: (id: string, input: SubtitleTemplateDraft) => ipcRenderer.invoke(IPC.subtitleTemplateUpdate, id, input),
   duplicateSubtitleTemplate: (input: SubtitleTemplateDraft) => ipcRenderer.invoke(IPC.subtitleTemplateDuplicate, input),

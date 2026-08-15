@@ -19,7 +19,7 @@ describe('subtitle template service', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'spectra-template-'))
     roots.push(root)
     const service = new SubtitleTemplateService(root)
-    expect(await service.load()).toEqual({ userTemplates: [], malformedCount: 0 })
+    expect(await service.load()).toEqual({ userTemplates: [], malformedCount: 0, defaultTemplateId: 'default' })
     const created = await service.create(draft())
     expect(created.version).toBe('spectra.subtitle-template.v1')
     expect(created.id).toMatch(/^user-template-/)
@@ -33,6 +33,9 @@ describe('subtitle template service', () => {
     expect(await service.remove(created.id)).toBe(true)
     expect(await service.remove(created.id)).toBe(false)
     expect((await service.load()).userTemplates.map((template) => template.id)).toEqual([copied.id])
+    expect((await service.setDefault(copied.id)).defaultTemplateId).toBe(copied.id)
+    expect(await service.remove(copied.id)).toBe(true)
+    expect((await service.load()).defaultTemplateId).toBe('default')
   })
 
   it('writes a versioned path-free store atomically', async () => {
@@ -42,6 +45,7 @@ describe('subtitle template service', () => {
     await service.create(draft())
     const stored = await readFile(path.join(root, 'subtitle-templates.v1.json'), 'utf8')
     expect(stored).toContain('spectra.subtitle-template-store.v1')
+    expect(stored).toContain('defaultTemplateId')
     expect(stored).not.toContain(root)
     expect(stored).not.toContain('absolutePath')
   })
@@ -56,6 +60,15 @@ describe('subtitle template service', () => {
     const loaded = await new SubtitleTemplateService(root).load()
     expect(loaded.userTemplates).toEqual([])
     expect(loaded.malformedCount).toBe(1)
+    expect(loaded.defaultTemplateId).toBe('default')
+  })
+
+  it('supports built-in defaults and rejects unknown defaults', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'spectra-template-default-'))
+    roots.push(root)
+    const service = new SubtitleTemplateService(root)
+    expect((await service.setDefault('high-contrast')).defaultTemplateId).toBe('high-contrast')
+    await expect(service.setDefault('missing-template')).rejects.toThrow()
   })
 
   it('rejects malformed style fields and does not allow path-shaped names', async () => {
