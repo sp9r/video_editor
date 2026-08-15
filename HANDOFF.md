@@ -415,3 +415,10 @@ Phase 5、planning、highlight、publishing、mass Human Review、caption algori
 - parallel-capable local worker discoveryを追加。bounded range audioを一度だけ準備し、WhisperとCPU signal silence analysisを並列実行。既存caption result、baseline、edit_project.v1、atomic subtitle applyは維持。
 - progress state `silence_analyzing`とTimeline適用表示を追加。silence artifactはsize/schema/path-free diagnosticsをmainで検証し、cancel/failure時はProjectFileとpartial resultを公開しない。parallel workerがない場合はlegacy caption workerへfallback。
 - 実生成QA media先頭10秒でserial 9,430.9ms / parallel 8,081.4ms、約14.3%短縮を確認。`npm.cmd run check` 246 tests、build PASS。詳細: `docs/PHASE_8_PARALLEL_AUTO_PROCESSING.md`。
+
+## 2026-08-16 Stage 9 Non-Destructive Silence Cut Apply
+
+- `silenceAnalysis.keepRanges`をsource absolute integerµsとして検証し、media fileを変更せずselected clipをgaplessな複数segmentへ置換する`src/shared/silence-cut.ts`を追加した。
+- linked video/audioは同一cut planとsegmentごとのlink groupで分割し、target終了後の全track clipだけを削除時間分rippleする。target intervalと重なる非対象clip、locked target、範囲不整合は安全側でrejectし、ProjectFile/historyを変更しない。
+- Auto Captionではsilence cutと生成subtitle trackを1回のhistory transactionへ合成し、Ctrl+Z/Redo一回で両方を復元できる。caption/word source timeは圧縮後timelineへ写像する。silence artifactがないlegacy workerでは従来の字幕のみ適用する。
+- `tests/shared/silence-cut.test.ts`と`tests/renderer/auto-caption.test.ts`でA/V、ripple、source mapping、failure safety、one-step Undo/Redoを追加した。
