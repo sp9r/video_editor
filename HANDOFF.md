@@ -319,4 +319,4 @@ Phase Aが完了するまで、multicamや高度なAI機能へ先に進まない
 
 字幕human review MVPを実装した。Review Mode、baseline/final snapshot、correction summary、learning eligibility、local experimental review log、typed IPC、ReviewPanelを追加している。ProjectFile schema、`edit_project.v1`、`caption_review.v1`、字幕生成アルゴリズムは変更していない。詳細は [`docs/PHASE_3_5B_1_IMPLEMENTATION.md`](docs/PHASE_3_5B_1_IMPLEMENTATION.md) を参照すること。
 
-自動検証は `npm.cmd run check`（34 files / 192 tests）、`npm.cmd run build`、`npm.cmd run smoke:electron` がPASS。QA用16字幕projectでGUI reviewを10件実施し、Good 3 / Acceptable 3 / Corrected 3 / Skip 1を確認した。split/merge/boundary moveの実操作を含む長時間human acceptanceは未完了である。
+自動検証は `npm.cmd run check`（34 files / 193 tests）、`npm.cmd run build`、`npm.cmd run smoke:electron` がPASS。QA用16字幕projectでGUI reviewを10件実施し、Good 3 / Acceptable 3 / Corrected 3 / Skip 1を確認した。review provenanceからraw local pathを除去する回帰も追加した。split/merge/boundary moveの実操作を含む長時間human acceptanceは未完了である。
