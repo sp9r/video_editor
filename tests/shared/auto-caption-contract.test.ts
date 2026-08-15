@@ -56,7 +56,7 @@ describe('auto-caption worker contract draft', () => {
   it('rejects unsupported unified processing settings', () => {
     expect(() => parseAutoCaptionRequest({ ...request(), silenceCut: 'aggressive' })).toThrow()
     expect(() => parseAutoCaptionRequest({ ...request(), accelerationMode: 'fallback' })).toThrow()
-    expect(() => parseAutoCaptionRequest({ ...request(), subtitleTemplate: 'unknown' })).toThrow()
+    expect(() => parseAutoCaptionRequest({ ...request(), subtitleTemplate: '../unknown' })).toThrow()
   })
 
   it('validates word ownership, provenance, diagnostics, and fallback', () => {

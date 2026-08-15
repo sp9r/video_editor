@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { DesktopApi, ExportProgress, ExportSettings, ProjectFile, TimeUs, WaveformRequest } from '../shared/types'
+import type { SubtitleTemplateDraft } from '../shared/subtitle-templates'
 import type { AutoCaptionProgress } from '../shared/auto-caption-contract'
 import type { ExperimentalReviewRecord } from '../shared/review/types'
 import type { FullCorrectionSession } from '../shared/full-correction'
@@ -26,6 +27,11 @@ const api: DesktopApi = {
   startAutoCaption: (project: ProjectFile, selectedClipIds: string[], settings) => ipcRenderer.invoke(IPC.autoCaptionStart, project, selectedClipIds, settings),
   cancelAutoCaption: (jobId: string) => ipcRenderer.invoke(IPC.autoCaptionCancel, jobId),
   loadAutoCaptionBaselines: () => ipcRenderer.invoke(IPC.autoCaptionBaselinesLoad),
+  loadSubtitleTemplates: () => ipcRenderer.invoke(IPC.subtitleTemplatesLoad),
+  createSubtitleTemplate: (input: SubtitleTemplateDraft) => ipcRenderer.invoke(IPC.subtitleTemplateCreate, input),
+  updateSubtitleTemplate: (id: string, input: SubtitleTemplateDraft) => ipcRenderer.invoke(IPC.subtitleTemplateUpdate, id, input),
+  duplicateSubtitleTemplate: (input: SubtitleTemplateDraft) => ipcRenderer.invoke(IPC.subtitleTemplateDuplicate, input),
+  deleteSubtitleTemplate: (id: string) => ipcRenderer.invoke(IPC.subtitleTemplateDelete, id),
   onAutoCaptionProgress: (callback: (progress: AutoCaptionProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: AutoCaptionProgress): void => callback(progress)
     ipcRenderer.on(IPC.autoCaptionProgress, listener)

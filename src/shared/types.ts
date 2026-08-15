@@ -1,4 +1,5 @@
 import type { AutoCaptionBaseline, AutoCaptionProgress, AutoCaptionSettings } from './auto-caption-contract'
+import type { SubtitleTemplateDraft, SubtitleTemplateLoadResult, UserSubtitleTemplate } from './subtitle-templates'
 
 export const PROJECT_SCHEMA_VERSION = 1 as const
 export const APP_VERSION = '0.1.0'
@@ -377,6 +378,11 @@ export interface DesktopApi {
   startAutoCaption(project: ProjectFile, selectedClipIds: string[], settings?: AutoCaptionSettings): Promise<AutoCaptionStartResult>
   cancelAutoCaption(jobId: string): Promise<boolean>
   loadAutoCaptionBaselines(): Promise<AutoCaptionBaselineLoadResult>
+  loadSubtitleTemplates(): Promise<SubtitleTemplateLoadResult>
+  createSubtitleTemplate(input: SubtitleTemplateDraft): Promise<UserSubtitleTemplate>
+  updateSubtitleTemplate(id: string, input: SubtitleTemplateDraft): Promise<UserSubtitleTemplate>
+  duplicateSubtitleTemplate(input: SubtitleTemplateDraft): Promise<UserSubtitleTemplate>
+  deleteSubtitleTemplate(id: string): Promise<boolean>
   onAutoCaptionProgress(callback: (progress: AutoCaptionProgress) => void): () => void
   detectEncoders(force?: boolean): Promise<EncoderReport>
   chooseExportPath(defaultName: string): Promise<string | null>

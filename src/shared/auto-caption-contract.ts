@@ -12,7 +12,6 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const SEGMENTATION_MODES = ['auto', 'rule', 'llm'] as const
 const SILENCE_CUT_MODES = ['off', 'natural', 'strong'] as const
 const ACCELERATION_MODES = ['auto', 'gpu', 'cpu'] as const
-const SUBTITLE_TEMPLATE_IDS = ['default', 'high-contrast', 'minimal'] as const
 const TEXT_STATUSES = ['as_transcribed', 'display_normalized', 'manually_corrected'] as const
 const PROVENANCES = ['caption_algorithm', 'rule_fallback', 'llm', 'unknown'] as const
 const FORBIDDEN_KEYS = new Set([
@@ -23,7 +22,8 @@ const FORBIDDEN_KEYS = new Set([
 export type SegmentationMode = typeof SEGMENTATION_MODES[number]
 export type SilenceCutMode = typeof SILENCE_CUT_MODES[number]
 export type AccelerationMode = typeof ACCELERATION_MODES[number]
-export type SubtitleTemplateId = typeof SUBTITLE_TEMPLATE_IDS[number]
+export type BuiltinSubtitleTemplateId = 'default' | 'high-contrast' | 'minimal'
+export type SubtitleTemplateId = string
 export type AutoCaptionTextStatus = typeof TEXT_STATUSES[number]
 export type AutoCaptionProvenance = typeof PROVENANCES[number]
 
@@ -341,8 +341,7 @@ const parseSettings = (value: unknown): AutoCaptionBaseline['settings'] => {
   if (silenceCut !== undefined && !SILENCE_CUT_MODES.includes(silenceCut)) throw new Error('settings.silenceCut is invalid')
   const accelerationMode = value.accelerationMode === undefined ? undefined : requiredString(value.accelerationMode, 'settings.accelerationMode', 16) as AccelerationMode
   if (accelerationMode !== undefined && !ACCELERATION_MODES.includes(accelerationMode)) throw new Error('settings.accelerationMode is invalid')
-  const subtitleTemplate = value.subtitleTemplate === undefined ? undefined : requiredString(value.subtitleTemplate, 'settings.subtitleTemplate', 32) as SubtitleTemplateId
-  if (subtitleTemplate !== undefined && !SUBTITLE_TEMPLATE_IDS.includes(subtitleTemplate)) throw new Error('settings.subtitleTemplate is invalid')
+  const subtitleTemplate = value.subtitleTemplate === undefined ? undefined : identifier(value.subtitleTemplate, 'settings.subtitleTemplate') as SubtitleTemplateId
   return {
     language: requiredString(own(value, 'language'), 'settings.language', 35),
     maxChars: boundedCount(own(value, 'maxChars'), 'settings.maxChars', 1, 10_000),
@@ -370,8 +369,7 @@ export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
   if (silenceCut !== undefined && !SILENCE_CUT_MODES.includes(silenceCut)) throw new Error('unsupported silenceCut')
   const accelerationMode = input.accelerationMode === undefined ? undefined : requiredString(input.accelerationMode, 'accelerationMode', 16) as AccelerationMode
   if (accelerationMode !== undefined && !ACCELERATION_MODES.includes(accelerationMode)) throw new Error('unsupported accelerationMode')
-  const subtitleTemplate = input.subtitleTemplate === undefined ? undefined : requiredString(input.subtitleTemplate, 'subtitleTemplate', 32) as SubtitleTemplateId
-  if (subtitleTemplate !== undefined && !SUBTITLE_TEMPLATE_IDS.includes(subtitleTemplate)) throw new Error('unsupported subtitleTemplate')
+  const subtitleTemplate = input.subtitleTemplate === undefined ? undefined : identifier(input.subtitleTemplate, 'subtitleTemplate') as SubtitleTemplateId
   return {
     version: AUTO_CAPTION_REQUEST_VERSION,
     jobId: identifier(own(input, 'jobId'), 'jobId'),

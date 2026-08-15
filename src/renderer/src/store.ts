@@ -22,6 +22,7 @@ import type { AutoCaptionProgress, AutoCaptionResult, AutoCaptionSettings, AutoC
 import { applyAutoCaptionResultToProject } from '../../shared/auto-caption-adapter'
 import { applySilenceCutToProject, createSilenceCutTimeMapper } from '../../shared/silence-cut'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
+import type { UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { FullCorrectionSession } from '../../shared/full-correction'
 import { createDemoProject } from './demo'
 
@@ -45,6 +46,7 @@ interface EditorState {
   notice: Notice | null
   autoCaptionProgress: AutoCaptionProgress | null
   autoCaptionJobId: string | null
+  userSubtitleTemplates: UserSubtitleTemplate[]
   savedFingerprint: string
   transactionBase: ProjectFile | null
   clipboard: ClipboardItem[]
@@ -69,6 +71,7 @@ interface EditorState {
   addAssetClip(assetId: string, trackId: string, atUs: TimeUs): void
   autoCaptionSelected(settings?: AutoCaptionSettings): Promise<AutoCaptionApplySummary | null>
   cancelAutoCaption(): Promise<void>
+  setUserSubtitleTemplates(templates: UserSubtitleTemplate[]): void
   hydrateFullCorrectionSessions(sessions: FullCorrectionSession[]): void
   startFullCorrection(): Promise<boolean>
   finishFullCorrection(): Promise<FullCorrectionSession | null>
@@ -148,6 +151,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   notice: null,
   autoCaptionProgress: null,
   autoCaptionJobId: null,
+  userSubtitleTemplates: [],
   applyProject: (project, options = {}) => {
     const current = get().project
     if (project === current) return
@@ -313,10 +317,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         captionClip = silenceApplied.sourceClip
         silenceSummary = silenceApplied.summary
       }
+      const userSubtitleTemplates = get().userSubtitleTemplates
       const applied = applyAutoCaptionResultToProject(applyProject, captionClip, result, {
         maxLines: settings?.maxLines ?? 2,
         sourceTimeMapper,
-        subtitleTemplate: settings?.subtitleTemplate ?? 'default'
+        subtitleTemplate: settings?.subtitleTemplate ?? 'default',
+        userSubtitleTemplates
       })
       set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 0.96, message: '字幕をTimelineへ適用中…', result } })
       const firstCaption = applied.project.tracks.find((track) => track.id === applied.trackId)?.clips[0]
@@ -337,6 +343,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     await window.spectra.cancelAutoCaption(jobId)
     set((state) => ({ autoCaptionProgress: state.autoCaptionProgress ? { ...state.autoCaptionProgress, message: 'キャンセル中…' } : null }))
   },
+  setUserSubtitleTemplates: (templates) => set({ userSubtitleTemplates: structuredClone(templates) }),
   hydrateFullCorrectionSessions: (sessions) => {
     const current = get().project
     const active = sessions

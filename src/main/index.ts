@@ -18,6 +18,7 @@ import { parseAutoCaptionSettings } from '../shared/auto-caption-contract'
 import { AutoCaptionService } from './ai/auto-caption-service'
 import { loadAutoCaptionBaselines } from './ai/auto-caption-baseline'
 import type { AutoCaptionSettings } from '../shared/auto-caption-contract'
+import { SubtitleTemplateService } from './subtitle-template-service'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
@@ -37,6 +38,7 @@ const MEDIA_FILTERS = [
 let mainWindow: BrowserWindow | null = null
 let ffmpegService: FfmpegService | null = null
 let autoCaptionService: AutoCaptionService | null = null
+let subtitleTemplateService: SubtitleTemplateService | null = null
 
 const assertTrustedSender = (event: Electron.IpcMainInvokeEvent): void => {
   const senderUrl = event.senderFrame?.url ?? ''
@@ -51,6 +53,11 @@ const requireService = (): FfmpegService => {
 const requireAutoCaptionService = (): AutoCaptionService => {
   if (!autoCaptionService) throw new Error('自動字幕エンジンの初期化が完了していません。')
   return autoCaptionService
+}
+
+const requireSubtitleTemplateService = (): SubtitleTemplateService => {
+  if (!subtitleTemplateService) throw new Error('字幕テンプレートサービスの初期化が完了していません。')
+  return subtitleTemplateService
 }
 
 const validateExportSettings = (settings: ExportSettings): ExportSettings => {
@@ -188,6 +195,31 @@ const registerIpcHandlers = (): void => {
   ipcMain.handle(IPC.autoCaptionBaselinesLoad, async (event) => {
     assertTrustedSender(event)
     return loadAutoCaptionBaselines(app.getPath('userData'))
+  })
+
+  ipcMain.handle(IPC.subtitleTemplatesLoad, async (event) => {
+    assertTrustedSender(event)
+    return requireSubtitleTemplateService().load()
+  })
+
+  ipcMain.handle(IPC.subtitleTemplateCreate, async (event, input: unknown) => {
+    assertTrustedSender(event)
+    return requireSubtitleTemplateService().create(input)
+  })
+
+  ipcMain.handle(IPC.subtitleTemplateUpdate, async (event, id: unknown, input: unknown) => {
+    assertTrustedSender(event)
+    return requireSubtitleTemplateService().update(id, input)
+  })
+
+  ipcMain.handle(IPC.subtitleTemplateDuplicate, async (event, input: unknown) => {
+    assertTrustedSender(event)
+    return requireSubtitleTemplateService().duplicate(input)
+  })
+
+  ipcMain.handle(IPC.subtitleTemplateDelete, async (event, id: unknown) => {
+    assertTrustedSender(event)
+    return requireSubtitleTemplateService().remove(id)
   })
 
   ipcMain.handle(IPC.waveformPeaks, async (event, request) => {
@@ -426,6 +458,7 @@ const start = async (): Promise<void> => {
     workspaceRoot: path.join(app.getPath('temp'), 'spectra-video-studio')
   })
   autoCaptionService = new AutoCaptionService({ appPath: app.getAppPath(), userDataPath: app.getPath('userData') })
+  subtitleTemplateService = new SubtitleTemplateService(app.getPath('userData'))
   registerIpcHandlers()
   mainWindow = createMainWindow()
   if (process.env.SPECTRA_SUBTITLE_PARITY_SMOKE === '1') {

@@ -712,6 +712,7 @@ select {
 .dialog-title-icon { display: grid; place-items: center; width: 34px; height: 34px; color: var(--mint); background: var(--mint-dark); border: 1px solid #2d695c; border-radius: 7px; }
 .dialog-body { display: grid; grid-template-columns: minmax(0, 1fr) 270px; min-height: 0; }
 .caption-dialog-body { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow: auto; padding: 20px 22px; }
+.template-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .caption-target { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; background: #12171c; border: 1px solid var(--line-soft); border-radius: 5px; }
 .caption-target span, .caption-dialog-body .field-label { color: var(--text-dim); font-size: 9px; }
 .caption-target strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }

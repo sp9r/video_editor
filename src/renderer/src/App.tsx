@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { createEmptyProject } from '../../shared/project'
 import type { AutoCaptionSettings } from '../../shared/auto-caption-contract'
-import { SUBTITLE_TEMPLATES } from '../../shared/subtitle-templates'
+import { getSubtitleTemplateStyleForId, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { EncoderReport, ProjectFile } from '../../shared/types'
 import { BrandMark } from './components/Brand'
 import { Button, IconButton } from './components/Controls'
@@ -61,6 +61,7 @@ export default function App(): React.JSX.Element {
     selectClip,
     addSubtitle,
     autoCaptionSelected,
+    setUserSubtitleTemplates: setStoreUserSubtitleTemplates,
     cancelAutoCaption,
     autoCaptionProgress,
     fullCorrectionSession,
@@ -79,6 +80,7 @@ export default function App(): React.JSX.Element {
   const [captioning, setCaptioning] = useState(false)
   const [captionDialogOpen, setCaptionDialogOpen] = useState(false)
   const [autoCaptionEnabled, setAutoCaptionEnabled] = useState(true)
+  const [userSubtitleTemplates, setUserSubtitleTemplates] = useState<UserSubtitleTemplate[]>([])
   const [captionSettings, setCaptionSettings] = useState<AutoCaptionSettings>({
     language: 'ja', maxChars: 32, maxLines: 2, segmentationMode: 'auto',
     silenceCut: 'natural', accelerationMode: 'auto', subtitleTemplate: 'default'
@@ -97,6 +99,14 @@ export default function App(): React.JSX.Element {
         .catch(() => undefined)
     }
   }, [hydrateFullCorrectionSessions, project.id])
+
+  useEffect(() => {
+    if (!window.spectra) return
+    void window.spectra.loadSubtitleTemplates().then((catalog) => {
+      setUserSubtitleTemplates(catalog.userTemplates)
+      setStoreUserSubtitleTemplates(catalog.userTemplates)
+    }).catch(() => undefined)
+  }, [setStoreUserSubtitleTemplates])
 
   const save = useCallback(async (saveAs = false): Promise<void> => {
     if (!window.spectra) {
@@ -297,6 +307,76 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  const selectedSubtitleTemplate = (): SubtitleTemplateDraft => {
+    const selected = userSubtitleTemplates.find((template) => template.id === captionSettings.subtitleTemplate)
+      ?? SUBTITLE_TEMPLATES.find((template) => template.id === captionSettings.subtitleTemplate)
+    return {
+      name: selected ? ('name' in selected ? selected.name : selected.label) : '新しい字幕テンプレート',
+      style: selected?.style ? structuredClone(selected.style) : getSubtitleTemplateStyleForId('default', userSubtitleTemplates),
+      maxChars: captionSettings.maxChars,
+      maxLines: captionSettings.maxLines ?? 2
+    }
+  }
+
+  const selectSubtitleTemplate = (id: string): void => {
+    const selected = userSubtitleTemplates.find((template) => template.id === id)
+      ?? SUBTITLE_TEMPLATES.find((template) => template.id === id)
+    setCaptionSettings((current) => ({
+      ...current,
+      subtitleTemplate: id,
+      ...(selected ? { maxChars: selected.maxChars, maxLines: selected.maxLines } : {})
+    }))
+  }
+
+  const createUserSubtitleTemplate = async (duplicate: boolean): Promise<void> => {
+    if (!window.spectra) {
+      showNotice('字幕テンプレートの保存はElectron環境で利用できます。', 'warning')
+      return
+    }
+    const draft = selectedSubtitleTemplate()
+    const name = window.prompt('テンプレート名', duplicate ? `${draft.name} copy` : draft.name)
+    if (!name?.trim()) return
+    const input = { ...draft, name: name.trim() }
+    try {
+      const created = duplicate ? await window.spectra.duplicateSubtitleTemplate(input) : await window.spectra.createSubtitleTemplate(input)
+      const next = [...userSubtitleTemplates.filter((template) => template.id !== created.id), created]
+      setUserSubtitleTemplates(next)
+      setStoreUserSubtitleTemplates(next)
+      setCaptionSettings((current) => ({ ...current, subtitleTemplate: created.id, maxChars: created.maxChars, maxLines: created.maxLines }))
+    } catch {
+      showNotice('字幕テンプレートを保存できませんでした。', 'error')
+    }
+  }
+
+  const updateUserSubtitleTemplate = async (): Promise<void> => {
+    if (!window.spectra) return
+    const selected = userSubtitleTemplates.find((template) => template.id === captionSettings.subtitleTemplate)
+    if (!selected) return
+    try {
+      const updated = await window.spectra.updateSubtitleTemplate(selected.id, selectedSubtitleTemplate())
+      const next = userSubtitleTemplates.map((template) => template.id === updated.id ? updated : template)
+      setUserSubtitleTemplates(next)
+      setStoreUserSubtitleTemplates(next)
+    } catch {
+      showNotice('字幕テンプレートを更新できませんでした。', 'error')
+    }
+  }
+
+  const deleteUserSubtitleTemplate = async (): Promise<void> => {
+    if (!window.spectra) return
+    const selected = userSubtitleTemplates.find((template) => template.id === captionSettings.subtitleTemplate)
+    if (!selected || !window.confirm(`「${selected.name}」を削除しますか？`)) return
+    try {
+      if (!(await window.spectra.deleteSubtitleTemplate(selected.id))) return
+      const next = userSubtitleTemplates.filter((template) => template.id !== selected.id)
+      setUserSubtitleTemplates(next)
+      setStoreUserSubtitleTemplates(next)
+      setCaptionSettings((current) => ({ ...current, subtitleTemplate: 'default' }))
+    } catch {
+      showNotice('字幕テンプレートを削除できませんでした。', 'error')
+    }
+  }
+
   return (
     <main className={`app-shell workspace-${workspace}`}>
       <header className="app-header">
@@ -387,7 +467,8 @@ export default function App(): React.JSX.Element {
                   <label className="field"><span className="field-label">最大文字数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={10000} value={captionSettings.maxChars} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxChars: Math.max(1, Math.min(10000, Number(event.target.value) || 32)) }))} /><span>文字</span></span></label>
                   <label className="field"><span className="field-label">最大行数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={16} value={captionSettings.maxLines ?? 2} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxLines: Math.max(1, Math.min(16, Number(event.target.value) || 2)) }))} /><span>行</span></span></label>
                   <label className="field"><span className="field-label">字幕品質</span><select disabled={captioning} value={captionSettings.segmentationMode} onChange={(event) => setCaptionSettings((current) => ({ ...current, segmentationMode: event.target.value as AutoCaptionSettings['segmentationMode'] }))}><option value="auto">高品質</option><option value="rule">ルール</option></select></label>
-                  <label className="field"><span className="field-label">字幕テンプレート</span><select disabled={captioning} value={captionSettings.subtitleTemplate ?? 'default'} onChange={(event) => setCaptionSettings((current) => ({ ...current, subtitleTemplate: event.target.value as AutoCaptionSettings['subtitleTemplate'] }))}>{SUBTITLE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</select></label>
+                  <label className="field"><span className="field-label">字幕テンプレート</span><select disabled={captioning} value={captionSettings.subtitleTemplate ?? 'default'} onChange={(event) => selectSubtitleTemplate(event.target.value)}><optgroup label="組み込み（変更不可）">{SUBTITLE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</optgroup>{userSubtitleTemplates.length > 0 && <optgroup label="ユーザー">{userSubtitleTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</optgroup>}</select></label>
+                  <div className="template-actions"><Button disabled={captioning} onClick={() => void createUserSubtitleTemplate(false)}>新規保存</Button><Button disabled={captioning} onClick={() => void createUserSubtitleTemplate(true)}>複製</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} onClick={() => void updateUserSubtitleTemplate()}>更新</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} onClick={() => void deleteUserSubtitleTemplate()}>削除</Button></div>
                   {autoCaptionProgress && (
                     <div className={`caption-progress ${autoCaptionProgress.state === 'failed' ? 'stage-failed' : ''}`} aria-live="polite">
                       <div className="progress-heading"><strong>{autoCaptionProgress.state === 'preparing' ? '音声準備' : autoCaptionProgress.state === 'transcribing' ? '文字起こし' : autoCaptionProgress.state === 'silence_analyzing' ? '無音解析' : autoCaptionProgress.state === 'segmenting' ? '字幕区切り' : autoCaptionProgress.state === 'completed' ? '字幕配置' : '自動字幕'}</strong><span>{Math.round(autoCaptionProgress.ratio * 100)}%</span></div>
