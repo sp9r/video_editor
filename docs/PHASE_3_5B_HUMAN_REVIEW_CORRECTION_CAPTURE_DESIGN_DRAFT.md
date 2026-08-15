@@ -182,3 +182,19 @@ review開始時にbaseline snapshotを固定し、通常のUndo/RedoはProject M
 - formal projectとreal transcriptを分けたfixtureを用意する。
 
 本Phaseの実装は開始していない。
+
+## 15. keyboard workflow案
+
+大量レビューでは、Review Modeが明示的に有効な時だけ、次の仮案を検討する。
+
+- `A`: Good
+- `B`: Acceptable
+- `C`: Corrected
+- `D`: Skip
+- `Esc`または別の明示操作: 中断してsession stateを保存
+
+ただし`C`は既存のRazor/編集ショートカットと衝突し得るため、通常編集時のglobal shortcutにはしない。Review Mode toggle、focus中のtext input、既存`V`/`C`操作との優先順位はPhase 3.5B-1でE2E確認してから固定する。
+
+## 16. audio / context方針
+
+CLIレビューで不足しやすい音声、前後字幕、映像contextは、独立review appへ複製せず、通常のvideo_editor playback、timeline、neighborhood表示をそのまま使って補う。Review modeはProject Modelと通常のplayhead/Accurate Previewを共有し、評価だけを別session stateとして重ねる。これにより、レビュー用の別timeline解釈や別render経路を作らない。
