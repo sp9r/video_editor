@@ -20,6 +20,8 @@ export const IPC = {
   exportStart: 'export:start',
   exportCancel: 'export:cancel',
   exportSrt: 'export:srt',
+  reviewLoad: 'review:load',
+  reviewUpsert: 'review:upsert',
   exportProgress: 'export:progress'
 } as const
 

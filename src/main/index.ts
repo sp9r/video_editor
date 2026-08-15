@@ -11,6 +11,8 @@ import { enumerateFontFamilies } from './fonts'
 import { generateAss } from './ffmpeg/subtitles'
 import { buildSubtitleRenderSpec } from '../shared/subtitle-render'
 import { createSubtitleParityFixture } from '../shared/subtitle-parity-fixture'
+import { loadExperimentalReviewRecords, saveExperimentalReviewRecord } from './review-service'
+import type { ExperimentalReviewRecord } from '../shared/review/types'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
@@ -219,6 +221,19 @@ const registerIpcHandlers = (): void => {
     const outputPath = response.filePath.toLowerCase().endsWith('.srt') ? response.filePath : `${response.filePath}.srt`
     await requireService().writeSrt(project, outputPath)
     return outputPath
+  })
+
+  ipcMain.handle(IPC.reviewLoad, (event) => {
+    assertTrustedSender(event)
+    return loadExperimentalReviewRecords()
+  })
+
+  ipcMain.handle(IPC.reviewUpsert, (event, record: ExperimentalReviewRecord) => {
+    assertTrustedSender(event)
+    if (!record || record.version !== 'experimental.phase3.5b1' || typeof record.sessionId !== 'string') {
+      throw new Error('レビュー記録の形式が不正です。')
+    }
+    return saveExperimentalReviewRecord(structuredClone(record))
   })
 }
 

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '../shared/ipc'
 import type { DesktopApi, ExportProgress, ExportSettings, ProjectFile, TimeUs, WaveformRequest } from '../shared/types'
+import type { ExperimentalReviewRecord } from '../shared/review/types'
 
 const api: DesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
@@ -24,6 +25,8 @@ const api: DesktopApi = {
   startExport: (project: ProjectFile, settings: ExportSettings) => ipcRenderer.invoke(IPC.exportStart, project, settings),
   cancelExport: (jobId: string) => ipcRenderer.invoke(IPC.exportCancel, jobId),
   exportSrt: (project: ProjectFile, suggestedName: string) => ipcRenderer.invoke(IPC.exportSrt, project, suggestedName),
+  loadExperimentalReviewRecords: () => ipcRenderer.invoke(IPC.reviewLoad),
+  upsertExperimentalReviewRecord: (record: ExperimentalReviewRecord) => ipcRenderer.invoke(IPC.reviewUpsert, record),
   onExportProgress: (callback: (progress: ExportProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: ExportProgress): void => callback(progress)
     ipcRenderer.on(IPC.exportProgress, listener)

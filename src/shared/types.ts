@@ -336,6 +336,8 @@ export interface DesktopApi {
   startExport(project: ProjectFile, settings: ExportSettings): Promise<StartExportResult>
   cancelExport(jobId: string): Promise<boolean>
   exportSrt(project: ProjectFile, suggestedName: string): Promise<string | null>
+  loadExperimentalReviewRecords(): Promise<import('./review/types').ExperimentalReviewRecord[]>
+  upsertExperimentalReviewRecord(record: import('./review/types').ExperimentalReviewRecord): Promise<{ path: string; records: import('./review/types').ExperimentalReviewRecord[] }>
   onExportProgress(callback: (progress: ExportProgress) => void): () => void
 }
 

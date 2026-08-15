@@ -343,6 +343,8 @@ select {
 }
 
 .export-button { margin-left: 3px; }
+.review-toggle { color: var(--amber); background: #2a2418; border-color: #70552a; }
+.review-toggle.is-active { color: #081912; background: var(--mint); border-color: var(--mint); }
 .secondary-button { background: transparent; }
 .danger-button { color: #ffdadd; background: #482329; border-color: #794049; }
 .subtle-button { min-height: 27px; padding: 0 8px; color: var(--text-muted); font-size: 11px; background: transparent; }
@@ -766,6 +768,24 @@ select {
 .error-banner { position: fixed; z-index: 200; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: 20px auto 1fr auto; align-items: center; gap: 8px; padding: 10px 14px; color: #ffe0e2; background: #461f26; border-top: 1px solid #a14c59; }
 .error-banner span { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .error-banner button { color: inherit; background: transparent; border: 0; cursor: pointer; }
+.review-panel { position: fixed; z-index: 80; top: 92px; right: 18px; display: flex; flex-direction: column; gap: 10px; width: 310px; max-height: calc(100vh - 112px); padding: 12px; overflow: auto; color: var(--text); background: rgb(23 27 33 / .97); border: 1px solid var(--mint-soft); border-radius: 7px; box-shadow: var(--shadow); }
+.review-panel-header, .review-progress, .review-navigation { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.review-panel-header strong { display: block; color: var(--mint); }
+.review-panel-header small, .review-progress span, .review-log-path { color: var(--text-dim); font-size: 10px; }
+.review-progress { padding: 8px; background: var(--panel-soft); border-radius: 4px; }
+.review-neighborhood { display: flex; flex-direction: column; gap: 5px; }
+.review-neighborhood > div { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 7px; padding: 7px; color: var(--text-muted); background: #11151a; border: 1px solid var(--line); border-radius: 4px; }
+.review-neighborhood > div.is-current { color: var(--text); background: var(--mint-dark); border-color: var(--mint-soft); }
+.review-neighborhood small { color: var(--text-dim); }
+.review-neighborhood span { overflow-wrap: anywhere; line-height: 1.35; }
+.review-baseline-note, .review-empty { margin: 0; color: var(--text-muted); font-size: 10px; line-height: 1.4; }
+.review-ratings { display: grid; gap: 5px; }
+.review-ratings .button { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 7px; min-height: 31px; padding: 5px 8px; text-align: left; }
+.review-ratings .button b { color: var(--mint); }
+.review-decision { padding: 6px 8px; color: var(--amber); font-size: 10px; background: #332919; border-radius: 4px; }
+.review-navigation { justify-content: flex-end; }
+.review-complete { display: grid; gap: 7px; justify-items: center; padding: 24px 8px; color: var(--mint); text-align: center; }
+.review-complete span { color: var(--text-muted); font-size: 10px; }
 
 @media (max-width: 1280px) {
   .app-header { gap: 3px; }

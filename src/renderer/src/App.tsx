@@ -24,7 +24,9 @@ import Inspector from './components/Inspector'
 import MediaBin from './components/MediaBin'
 import Preview from './components/Preview'
 import Timeline from './components/Timeline'
+import ReviewPanel from './components/ReviewPanel'
 import { useEditorStore } from './store'
+import { useReviewStore } from './review-store'
 
 const isTypingTarget = (target: EventTarget | null): boolean => {
   const element = target as HTMLElement | null
@@ -62,6 +64,14 @@ export default function App(): React.JSX.Element {
   const [recoveryStatus, setRecoveryStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [encoderReport, setEncoderReport] = useState<EncoderReport | null>(null)
   const [appError, setAppError] = useState<string | null>(null)
+  const reviewEnabled = useReviewStore((state) => state.enabled)
+
+  useEffect(() => {
+    useReviewStore.getState().stop()
+    if (window.spectra) {
+      void window.spectra.loadExperimentalReviewRecords().then((records) => useReviewStore.getState().hydrate(project, records)).catch(() => undefined)
+    }
+  }, [project.id])
 
   const save = useCallback(async (saveAs = false): Promise<void> => {
     if (!window.spectra) {
@@ -193,6 +203,7 @@ export default function App(): React.JSX.Element {
         event.preventDefault(); void open(); return
       }
       if (typing) return
+      if (useReviewStore.getState().enabled && ['a', 'b', 'c', 'd'].includes(event.key.toLocaleLowerCase())) return
       if (command && event.key.toLocaleLowerCase() === 'z') {
         event.preventDefault(); event.shiftKey ? redo() : undo(); return
       }
@@ -264,6 +275,10 @@ export default function App(): React.JSX.Element {
           <IconButton label="元に戻す（Ctrl+Z）" disabled={!past.length} onClick={undo}><Undo2 size={16} /></IconButton>
           <IconButton label="やり直す（Ctrl+Shift+Z）" disabled={!future.length} onClick={redo}><Redo2 size={16} /></IconButton>
           <Button className="save-button" disabled={saving} onClick={() => void save()}><Save size={15} />{saving ? '保存中…' : '保存'}</Button>
+          <Button className={reviewEnabled ? 'review-toggle is-active' : 'review-toggle'} onClick={() => {
+            if (reviewEnabled) useReviewStore.getState().stop()
+            else if (!useReviewStore.getState().start(project, useEditorStore.getState().selectedClipIds[0])) showNotice('レビュー対象の字幕がありません。', 'warning')
+          }}>レビュー {reviewEnabled ? 'ON' : 'OFF'}</Button>
           <Button className="primary-button export-button" onClick={() => setExportOpen(true)}><MonitorUp size={16} />書き出す</Button>
         </div>
       </header>
@@ -281,6 +296,7 @@ export default function App(): React.JSX.Element {
         <Inspector />
         <Timeline />
       </div>
+      <ReviewPanel />
       {notice && (
         <div className={`toast toast-${notice.tone}`} role="status">
           {notice.tone === 'error' || notice.tone === 'warning' ? <CircleAlert size={17} /> : <Check size={17} />}
