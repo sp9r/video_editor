@@ -290,7 +290,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
       const subtitle = selectedSubtitles[0]
       if (!subtitle) return
-      if (subtitle.kind !== 'subtitle' || !subtitle.words?.length) {
+      if (subtitle.kind !== 'subtitle' || (!subtitle.words?.length && !subtitle.editUnits?.length)) {
         get().showNotice('単語境界情報がないため分割できません。', 'warning')
         return
       }

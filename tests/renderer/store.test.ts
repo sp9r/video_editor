@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { addClipToTrack, createClipForAsset, createEmptyProject, createTrack } from '../../src/shared/project'
+import { addClipToTrack, createClipForAsset, createEmptyProject, createTrack, validateProject } from '../../src/shared/project'
+import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
 import { DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile, type TimelineClip } from '../../src/shared/types'
 import { useEditorStore } from '../../src/renderer/src/store'
 
@@ -206,6 +207,33 @@ describe('editor history and linked selection', () => {
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips).toHaveLength(1)
     useEditorStore.getState().redo()
     expect(useEditorStore.getState().project.tracks.find((track) => track.kind === 'subtitle')!.clips).toHaveLength(2)
+  })
+
+  it('keeps derived edit units and source identity through split, merge, undo, redo, and JSON reload', () => {
+    const project = createEmptyProject('derived subtitle edit units')
+    const track = project.tracks.find((item) => item.kind === 'subtitle')!
+    const sourceWord = { id: 'raw-long', text: '皆さんこんばんはアルマジロウです', startUs: 0, endUs: 1_000_000 }
+    track.clips.push({
+      id: 'derived-caption', name: 'derived', kind: 'subtitle', startUs: 0, durationUs: 1_000_000, sourceInUs: 0,
+      enabled: true, text: sourceWord.text, style: structuredClone(DEFAULT_SUBTITLE_STYLE), words: [sourceWord],
+      editUnits: deriveSubtitleEditUnits([sourceWord])
+    })
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('derived-caption')
+    useEditorStore.getState().splitSubtitleAtWordBoundary('derived-caption', 1)
+    const splitClips = useEditorStore.getState().project.tracks.find((item) => item.kind === 'subtitle')!.clips.filter((item) => item.kind === 'subtitle')
+    expect(splitClips.map((item) => item.kind === 'subtitle' ? item.text : '')).toEqual(['皆さんこんばんは', 'アルマジロウです'])
+    expect(splitClips.flatMap((item) => item.kind === 'subtitle' ? item.editUnits!.map((unit) => unit.parentSourceWordId) : [])).toEqual(['raw-long', 'raw-long', 'raw-long', 'raw-long'])
+    expect(splitClips.every((item) => item.kind === 'subtitle' && !item.words)).toBe(true)
+    useEditorStore.getState().mergeSubtitleWithNext('derived-caption')
+    const merged = useEditorStore.getState().project.tracks.find((item) => item.kind === 'subtitle')!.clips.find((item) => item.id === 'derived-caption')
+    expect(merged?.kind === 'subtitle' ? merged.editUnits?.map((unit) => unit.text).join('') : undefined).toBe(sourceWord.text)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().project.tracks.find((item) => item.kind === 'subtitle')!.clips.filter((item) => item.kind === 'subtitle')).toHaveLength(2)
+    useEditorStore.getState().redo()
+    const roundTrip = validateProject(JSON.parse(JSON.stringify(useEditorStore.getState().project)))
+    expect(roundTrip.tracks.find((item) => item.kind === 'subtitle')!.clips.filter((item) => item.kind === 'subtitle')).toHaveLength(1)
+    expect(roundTrip.tracks.find((item) => item.kind === 'subtitle')!.clips[0]).toEqual(merged)
   })
 
   it.each([

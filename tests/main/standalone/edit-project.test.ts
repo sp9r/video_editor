@@ -215,6 +215,9 @@ describe('standalone edit_project.v1 loader', () => {
         { id: 'source-word:123', text: '私', startUs: 250_000, endUs: 430_000 },
         { id: 'source-word:124', text: 'の', startUs: 430_000, endUs: 650_000 }
       ])
+      expect(caption?.kind === 'subtitle' ? caption.editUnits?.map((unit) => [unit.text, unit.parentSourceWordId, unit.timingProvenance]) : undefined).toEqual([
+        ['私', 'source-word:123', 'source'], ['の', 'source-word:124', 'source']
+      ])
       const split = splitSubtitleAtWordBoundary(loaded.project, 'caption_1', 0)
       expect(split.tracks.find((track) => track.kind === 'subtitle')?.clips.map((item) => item.kind === 'subtitle' ? item.text : item.id)).toEqual(['私', 'の'])
     } finally {

@@ -119,11 +119,29 @@ export interface SubtitleWord {
   endUs: TimeUs
 }
 
+/**
+ * Internal editor boundary metadata derived from SubtitleWord text.
+ * This is intentionally not part of edit_project.v1: the contract words remain
+ * source/transcript metadata, while these units are safe UI edit candidates.
+ */
+export type SubtitleEditUnitTimingProvenance = 'source' | 'estimated' | 'point'
+
+export interface SubtitleEditUnit {
+  id: string
+  text: string
+  parentSourceWordId: string
+  startUs: TimeUs
+  endUs: TimeUs
+  timingProvenance: SubtitleEditUnitTimingProvenance
+}
+
 export interface SubtitleClip extends BaseClip {
   kind: 'subtitle'
   text: string
   style: SubtitleStyle
   words?: SubtitleWord[]
+  /** Internal .spectra edit units; never serialized into edit_project.v1. */
+  editUnits?: SubtitleEditUnit[]
 }
 
 export type TimelineClip = VideoClip | ImageClip | AudioClip | SubtitleClip

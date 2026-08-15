@@ -246,6 +246,9 @@ export const shiftClipTimeline = <T extends TimelineClip>(clip: T, deltaUs: Time
   startUs: clip.startUs + deltaUs,
   ...(clip.kind === 'subtitle' && clip.words
     ? { words: clip.words.map((word) => ({ ...word, startUs: word.startUs + deltaUs, endUs: word.endUs + deltaUs })) }
+    : {}),
+  ...(clip.kind === 'subtitle' && clip.editUnits
+    ? { editUnits: clip.editUnits.map((unit) => ({ ...unit, startUs: unit.startUs + deltaUs, endUs: unit.endUs + deltaUs })) }
     : {})
 }) as T
 
@@ -255,10 +258,10 @@ export const subtitleTrimKeepsWordTiming = (
   edge: 'start' | 'end',
   timelineUs: TimeUs
 ): boolean => {
-  if (clip.kind !== 'subtitle' || !clip.words?.length) return true
+  if (clip.kind !== 'subtitle' || (!clip.words?.length && !clip.editUnits?.length)) return true
   const snapped = snapUsToFrame(timelineUs, project)
-  const firstWord = clip.words[0]
-  const lastWord = clip.words.at(-1)
+  const firstWord = clip.editUnits?.[0] ?? clip.words?.[0]
+  const lastWord = clip.editUnits?.at(-1) ?? clip.words?.at(-1)
   if (!firstWord || !lastWord) return true
   return edge === 'start' ? snapped <= firstWord.startUs : snapped >= lastWord.endUs
 }
@@ -406,6 +409,20 @@ export const validateProject = (input: unknown): ProjectFile => {
           wordIds.add(word.id)
           previousEnd = word.endUs
         }
+      }
+      if (clip.kind === 'subtitle' && clip.editUnits) {
+        const unitIds = new Set<string>()
+        let previousEnd = clip.startUs
+        let reconstructed = ''
+        for (const unit of clip.editUnits) {
+          if (!unit.id || unitIds.has(unit.id) || !unit.parentSourceWordId || typeof unit.text !== 'string' || !Number.isFinite(unit.startUs) || !Number.isFinite(unit.endUs) || unit.startUs < clip.startUs || unit.endUs < unit.startUs || unit.endUs > clip.startUs + clip.durationUs || unit.startUs < previousEnd || !['source', 'estimated', 'point'].includes(unit.timingProvenance)) {
+            throw new Error(`字幕の編集単位が不正です: ${clip.id}`)
+          }
+          unitIds.add(unit.id)
+          reconstructed += unit.text
+          previousEnd = unit.endUs
+        }
+        if (!clip.editUnits.length || reconstructed !== clip.text) throw new Error(`字幕の編集単位が本文と一致しません: ${clip.id}`)
       }
     }
   }

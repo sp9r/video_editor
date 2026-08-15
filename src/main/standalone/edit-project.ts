@@ -18,6 +18,7 @@ import {
 } from '../../shared/types.js'
 import { layoutSubtitleTracks, validateProject } from '../../shared/project.js'
 import { inferLinkedAudioPairs } from '../../shared/editing/links.js'
+import { deriveSubtitleEditUnits } from '../../shared/editing/edit-units.js'
 
 export const EDIT_PROJECT_SCHEMA_VERSION = 'edit_project.v1' as const
 
@@ -608,6 +609,12 @@ const buildProjectModel = async (
   const targetCaptionTrack: TimelineTrack = captionTrack ?? { id: 'C1', name: 'C1', kind: 'subtitle', clips: [], locked: false, muted: false, hidden: false }
   if (!captionTrack) tracks.push(targetCaptionTrack)
   for (const caption of document.captions) {
+    const subtitleWords = caption.words?.map((word): SubtitleWord => ({
+      id: word.id,
+      text: word.text,
+      startUs: toMicroseconds(word.timeline.start),
+      endUs: toMicroseconds(word.timeline.start + word.timeline.duration)
+    }))
     const subtitle: SubtitleClip = {
       id: caption.id,
       name: caption.text.slice(0, 32) || caption.id,
@@ -618,14 +625,7 @@ const buildProjectModel = async (
       enabled: caption.enabled,
       text: caption.text,
       style: captionStyle(caption.style),
-      ...(caption.words ? {
-        words: caption.words.map((word): SubtitleWord => ({
-          id: word.id,
-          text: word.text,
-          startUs: toMicroseconds(word.timeline.start),
-          endUs: toMicroseconds(word.timeline.start + word.timeline.duration)
-        }))
-      } : {})
+      ...(subtitleWords ? { words: subtitleWords, editUnits: deriveSubtitleEditUnits(subtitleWords) } : {})
     }
     const destination = tracks.find((track) => track.id === (caption.track_id ?? targetCaptionTrack.id)) ?? targetCaptionTrack
     destination.clips.push(subtitle)
