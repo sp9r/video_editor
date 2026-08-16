@@ -125,7 +125,7 @@
 
 ### UX-TL-002 — 再生ヘッドdrag時のedge auto-scroll
 
-**Status:** `PLANNED`
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
 
 再生ヘッドをdragしてTimeline viewport左端/右端へ近づけたとき、pointerを保持したままTimelineを連続スクロールする。
 
@@ -135,6 +135,14 @@
 - pointer captureを維持。
 - playheadとtime mappingがずれない。
 - zoom倍率に依存して操作不能にならない。
+
+**Implemented:**
+
+- playhead drag中、pointerがviewport左右48px以内にある間はRAFで連続scrollする。
+- pointer captureをdrag終了まで維持し、scroll後も同じpointer座標を現在のscrollLeftで再計算する。
+- edgeから離れた位置ではscrollせず、Timeline末尾・先頭ではclampして不要な更新を行わない。
+
+**Human acceptance:** 実動画でplayheadを左右端へ保持してdragし、連続scroll・pointer capture・time mappingが自然に維持されること。
 
 ### UX-TL-003 — Timeline clip labelの可読性改善
 

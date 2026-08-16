@@ -104,6 +104,28 @@ export const timelineFollowScrollLeft = (input: TimelineFollowScrollInput): numb
   return targetScrollLeft > currentScrollLeft + 0.5 ? targetScrollLeft : null
 }
 
+export interface TimelineEdgeScrollInput {
+  pointerX: number
+  viewportLeft: number
+  viewportRight: number
+  edgeZonePx?: number
+  maxStepPx?: number
+}
+
+/** Returns a bounded per-frame scroll delta for a pointer held near either viewport edge. */
+export const timelineEdgeScrollDelta = (input: TimelineEdgeScrollInput): number => {
+  const { pointerX, viewportLeft, viewportRight } = input
+  const edgeZonePx = input.edgeZonePx ?? 48
+  const maxStepPx = input.maxStepPx ?? 24
+  if (![pointerX, viewportLeft, viewportRight, edgeZonePx, maxStepPx].every(Number.isFinite)) return 0
+  if (viewportRight <= viewportLeft || edgeZonePx <= 0 || maxStepPx <= 0) return 0
+  const leftEdge = viewportLeft + edgeZonePx
+  const rightEdge = viewportRight - edgeZonePx
+  if (pointerX <= leftEdge) return -maxStepPx * Math.min(1, (leftEdge - pointerX) / edgeZonePx)
+  if (pointerX >= rightEdge) return maxStepPx * Math.min(1, (pointerX - rightEdge) / edgeZonePx)
+  return 0
+}
+
 export const isTextEditingTarget = (target: EventTarget | null): boolean => {
   const element = target as HTMLElement | null
   return element?.matches('input, textarea, select, [contenteditable="true"]') ?? false
@@ -316,16 +338,40 @@ export default function Timeline(): React.JSX.Element {
     bypass
   })
 
-  const beginTimelineScrub = (event: React.PointerEvent, lane: HTMLElement): void => {
+  const beginTimelineScrub = (event: React.PointerEvent, lane: HTMLElement, enableEdgeAutoScroll = false): void => {
     event.preventDefault()
     event.stopPropagation()
     const target = event.currentTarget as HTMLElement
     const bypass = event.altKey
+    let active = true
+    let latestClientX = event.clientX
+    let animationFrame: number | null = null
     try { target.setPointerCapture(event.pointerId) } catch { /* synthetic smoke events may not have an active pointer */ }
     const update = (clientX: number): void => setPlayhead(snapTime(timeFromPointer(clientX, lane), bypass))
     update(event.clientX)
-    const move = (pointerEvent: PointerEvent): void => update(pointerEvent.clientX)
+    const edgeScroll = (): void => {
+      if (!active) return
+      const bounds = lane.getBoundingClientRect()
+      const delta = timelineEdgeScrollDelta({ pointerX: latestClientX, viewportLeft: bounds.left, viewportRight: bounds.right })
+      if (delta !== 0) {
+        const before = lane.scrollLeft
+        const maxScrollLeft = Math.max(0, lane.scrollWidth - lane.clientWidth)
+        const next = Math.min(maxScrollLeft, Math.max(0, before + delta))
+        if (next !== before) {
+          lane.scrollLeft = next
+          update(latestClientX)
+        }
+      }
+      animationFrame = window.requestAnimationFrame(edgeScroll)
+    }
+    const move = (pointerEvent: PointerEvent): void => {
+      latestClientX = pointerEvent.clientX
+      update(latestClientX)
+    }
     const finish = (pointerEvent: PointerEvent): void => {
+      active = false
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame)
+      animationFrame = null
       target.removeEventListener('pointermove', move)
       target.removeEventListener('pointerup', finish)
       target.removeEventListener('pointercancel', finish)
@@ -334,11 +380,12 @@ export default function Timeline(): React.JSX.Element {
     target.addEventListener('pointermove', move)
     target.addEventListener('pointerup', finish)
     target.addEventListener('pointercancel', finish)
+    if (enableEdgeAutoScroll) animationFrame = window.requestAnimationFrame(edgeScroll)
   }
 
   const beginPlayheadDrag = (event: React.PointerEvent): void => {
     const viewport = viewportRef.current
-    if (viewport) beginTimelineScrub(event, viewport)
+    if (viewport) beginTimelineScrub(event, viewport, true)
   }
 
   const showContextMenu = (event: React.MouseEvent, clip: TimelineClip): void => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineFollowScrollLeft, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
+import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
 import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
 
@@ -31,6 +31,14 @@ describe('timeline interaction guards', () => {
   it('does not jitter at the end or scroll when there is no overflow', () => {
     expect(timelineFollowScrollLeft({ scrollLeft: 1_500, clientWidth: 500, scrollWidth: 2_000, playheadPx: 2_000 })).toBeNull()
     expect(timelineFollowScrollLeft({ scrollLeft: 0, clientWidth: 500, scrollWidth: 500, playheadPx: 500 })).toBeNull()
+  })
+
+  it('scales continuous drag scrolling near both viewport edges', () => {
+    expect(timelineEdgeScrollDelta({ pointerX: 250, viewportLeft: 0, viewportRight: 500 })).toBe(0)
+    expect(timelineEdgeScrollDelta({ pointerX: 0, viewportLeft: 0, viewportRight: 500 })).toBe(-24)
+    expect(timelineEdgeScrollDelta({ pointerX: 24, viewportLeft: 0, viewportRight: 500 })).toBe(-12)
+    expect(timelineEdgeScrollDelta({ pointerX: 500, viewportLeft: 0, viewportRight: 500 })).toBe(24)
+    expect(timelineEdgeScrollDelta({ pointerX: 476, viewportLeft: 0, viewportRight: 500 })).toBe(12)
   })
 
   it('does not commit a move for a click or small pointer jitter', () => {
