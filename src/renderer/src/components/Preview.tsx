@@ -171,6 +171,8 @@ export default function Preview(): React.JSX.Element {
       cueKey: active.map(({ clip, trackIndex }) => `${trackIndex}:${clip.id}`).join('|')
     }
   }, [playheadUs, project])
+  const activeSubtitleIdentityRef = useRef({ visualKey: activeSubtitleState.key, cueKey: activeSubtitleState.cueKey })
+  activeSubtitleIdentityRef.current = { visualKey: activeSubtitleState.key, cueKey: activeSubtitleState.cueKey }
 
   useEffect(() => {
     previewDiagnosticStore.recordSubtitleVisualState(activeSubtitleState.key)
@@ -241,14 +243,15 @@ export default function Preview(): React.JSX.Element {
   useEffect(() => {
     const sequence = ++subtitleOverlayRequestSequence.current
     setSubtitleOverlayError(null)
+    subtitlePrefetchKey.current = null
     if (!playing || !window.spectra || activeSubtitleState.active.length === 0 || activeSubtitleState.hasAnimated) {
       subtitleOverlayScheduler.current.cancel()
       setSubtitleOverlayRendering(false)
       if (activeSubtitleState.active.length === 0 || activeSubtitleState.hasAnimated) setSubtitleOverlay(null)
       return
     }
-    const cueChanged = subtitleOverlay?.cueKey !== activeSubtitleState.cueKey
-    if (cueChanged) setSubtitleOverlay(null)
+    const overlayChanged = subtitleOverlay?.visualKey !== activeSubtitleState.key || subtitleOverlay.cueKey !== activeSubtitleState.cueKey
+    if (overlayChanged) setSubtitleOverlay(null)
     setSubtitleOverlayRendering(true)
     const api = window.spectra
     const requestOverlay = (timeUs: number, key: string): Promise<SubtitleOverlayResult> => {
@@ -262,10 +265,16 @@ export default function Preview(): React.JSX.Element {
     const requestedCueKey = activeSubtitleState.cueKey
     subtitleOverlayScheduler.current.schedule({
       key: requestedKey,
-      debounceMs: cueChanged ? 0 : 40,
+      debounceMs: overlayChanged ? 0 : 40,
       run: () => requestOverlay(playheadRef.current, requestedKey),
       onCommit: (result, key) => {
-        if (sequence !== subtitleOverlayRequestSequence.current || !useEditorStore.getState().playing) return
+        const currentIdentity = activeSubtitleIdentityRef.current
+        if (
+          sequence !== subtitleOverlayRequestSequence.current
+          || !useEditorStore.getState().playing
+          || currentIdentity.visualKey !== key
+          || currentIdentity.cueKey !== requestedCueKey
+        ) return
         setSubtitleOverlay({ result, visualKey: key, cueKey: requestedCueKey })
         setSubtitleOverlayRendering(false)
         setSubtitleOverlayError(null)
@@ -485,7 +494,7 @@ export default function Preview(): React.JSX.Element {
                 </button>
               })()
             ))}
-            {playing && subtitleOverlay && subtitleOverlay.cueKey === activeSubtitleState.cueKey && !activeSubtitleState.hasAnimated && window.spectra && (
+            {playing && subtitleOverlay && subtitleOverlay.visualKey === activeSubtitleState.key && subtitleOverlay.cueKey === activeSubtitleState.cueKey && !activeSubtitleState.hasAnimated && window.spectra && (
               <img
                 className="fast-authoritative-subtitle-overlay"
                 data-subtitle-renderer="authoritative-libass"

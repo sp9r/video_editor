@@ -60,19 +60,19 @@
 
 ### PREV-001 — Fast Preview字幕が現在時刻へ追従せず古い1枚を表示する
 
-**Status:** `PLANNED`
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
 
 **User feedback:** 高速Previewで字幕が正しく更新されず、数秒前に描画できた1枚の字幕overlayがそのまま残っているように見える。
 
-**Likely investigation boundary:**
+**Implemented:**
 
-- static subtitle authoritative overlayのcache / in-flight request / stale-result guard。
-- active cueが変わったときに旧overlayを即時clearできているか。
-- prefetchした次cue overlayへのboundary swap。
-- Fast Preview再生中のplayhead/currentTimeからactive subtitle visual stateが継続更新されているか。
-- `last successful overlay`を保持する既存UXが、cue変更後にも誤って残っていないか。
+- Fast Preview overlayはcue IDだけでなくsubtitle visual keyにも一致する場合だけ表示する。
+- cue切替、cue終了、字幕なし区間、同一cueのtext/style変更で旧overlayを即時無効化する。
+- staleなin-flight resultはsequenceと現在のactive subtitle identityの両方でcommitを拒否する。
+- stale requestが残っていても、最新cueのrender requestを待たせない。
+- prefetch keyはoverlay request lifecycleごとにリセットし、project/cue変更後のcache warm-upを抑止しない。
 
-**Do not assume root cause yet:** Stage 27.1Bでは字幕表示あり/hiddenでCPU差はなく、overlay自体のCPU高負荷は観測されていない。今回の問題はperformanceではなくstale presentation / synchronization bugとして切り分ける。
+**Scope:** Stage 28.3ではFinal / Accurate Previewのauthorityとrender pathは変更していない。Stage 27.1Bでは字幕表示あり/hiddenでCPU差はなく、overlay自体のCPU高負荷は観測されていないため、今回の問題はperformanceではなくstale presentation / synchronization bugとして修正した。
 
 **Human acceptance:** 再生中、字幕cue boundaryに合わせて字幕が切替・消失し、過去cueの画像が残留しないこと。
 

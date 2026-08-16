@@ -66,4 +66,40 @@ describe('latest-only subtitle overlay scheduling', () => {
       vi.useRealTimers()
     }
   })
+
+  it('starts the latest cue without waiting for a stale in-flight render', async () => {
+    vi.useFakeTimers()
+    try {
+      const calls: string[] = []
+      const resolvers = new Map<string, (value: string) => void>()
+      const scheduler = new LatestSubtitleOverlayScheduler<string>(40)
+      const schedule = (key: string): void => scheduler.schedule({
+        key,
+        debounceMs: 0,
+        run: () => {
+          calls.push(key)
+          return new Promise<string>((resolve) => { resolvers.set(key, resolve) })
+        },
+        onCommit: () => undefined,
+        onError: () => undefined
+      })
+
+      schedule('cue-a')
+      await vi.advanceTimersByTimeAsync(0)
+      schedule('cue-b')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(calls).toEqual(['cue-a', 'cue-b'])
+      resolvers.get('cue-b')?.('cue-b')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(scheduler.inFlight).toBe(true)
+
+      resolvers.get('cue-a')?.('cue-a')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(scheduler.inFlight).toBe(false)
+      scheduler.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

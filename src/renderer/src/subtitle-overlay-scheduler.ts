@@ -11,7 +11,7 @@ export class LatestSubtitleOverlayScheduler<T> {
   readonly #debounceMs: number
   #timer: ReturnType<typeof setTimeout> | null = null
   #pending: (LatestSubtitleOverlayRequest<T> & { sequence: number }) | null = null
-  #running: { sequence: number; request: LatestSubtitleOverlayRequest<T> } | null = null
+  #running = new Map<number, LatestSubtitleOverlayRequest<T>>()
   #sequence = 0
 
   constructor(debounceMs = 40) {
@@ -22,7 +22,6 @@ export class LatestSubtitleOverlayScheduler<T> {
   schedule(request: LatestSubtitleOverlayRequest<T>): void {
     const sequence = ++this.#sequence
     this.#pending = { ...request, sequence }
-    if (this.#running) return
     this.#arm()
   }
 
@@ -40,7 +39,7 @@ export class LatestSubtitleOverlayScheduler<T> {
   }
 
   get inFlight(): boolean {
-    return this.#running !== null
+    return this.#running.size > 0
   }
 
   get hasPending(): boolean {
@@ -48,7 +47,7 @@ export class LatestSubtitleOverlayScheduler<T> {
   }
 
   #arm(): void {
-    if (this.#timer !== null || this.#running || !this.#pending) return
+    if (this.#timer !== null || !this.#pending) return
     this.#timer = setTimeout(() => {
       this.#timer = null
       this.#start()
@@ -56,10 +55,10 @@ export class LatestSubtitleOverlayScheduler<T> {
   }
 
   #start(): void {
-    if (this.#running || !this.#pending) return
+    if (!this.#pending) return
     const pending = this.#pending
     this.#pending = null
-    this.#running = { sequence: pending.sequence, request: pending }
+    this.#running.set(pending.sequence, pending)
     void pending.run()
       .then((value) => {
         if (this.#sequence === pending.sequence) pending.onCommit(value, pending.key)
@@ -68,7 +67,7 @@ export class LatestSubtitleOverlayScheduler<T> {
         if (this.#sequence === pending.sequence) pending.onError(error, pending.key)
       })
       .finally(() => {
-        if (this.#running?.sequence === pending.sequence) this.#running = null
+        this.#running.delete(pending.sequence)
         if (this.#pending) this.#arm()
       })
   }
