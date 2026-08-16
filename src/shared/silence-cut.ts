@@ -222,6 +222,17 @@ export const applySilenceCutToProject = (
   timeMapper.assertNoRemovedOverlap(options.protectedIntervals ?? [], 'raw Whisper word')
   const keptDurationUs = keepRanges.reduce((sum, range) => sum + range.endUs - range.startUs, 0)
   const removedDurationUs = selected.durationUs - keptDurationUs
+  // A signal analysis may legitimately produce the full source interval
+  // (for example when no removable silence is found).  This is a true
+  // no-op: do not treat existing subtitle/overlay clips as unsafe ripple
+  // conflicts and do not manufacture a replacement media clip.
+  if (removedDurationUs === 0) {
+    return {
+      project,
+      summary: { selectedClipId, affectedClipIds: targets.map((clip) => clip.id), segmentCount: keepRanges.length, removedDurationUs: 0, keepRanges },
+      sourceClip: { startUs: selected.startUs, sourceInUs: selected.sourceInUs, durationUs: selected.durationUs }
+    }
+  }
   const targetIds = new Set(targets.map((clip) => clip.id))
   for (const track of project.tracks) {
     for (const clip of track.clips) {

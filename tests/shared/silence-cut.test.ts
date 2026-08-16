@@ -51,6 +51,20 @@ describe('non-destructive silence cut', () => {
     expect(before).toEqual(snapshot)
   })
 
+  it('treats a full keep range as a no-op even when existing subtitles overlap', () => {
+    const before = fixture()
+    before.tracks[2]!.clips.push({
+      id: 'existing-caption', name: 'existing caption', kind: 'subtitle', startUs: 1_500_000, durationUs: 500_000, sourceInUs: 0,
+      enabled: true, text: '既存字幕', style: structuredClone(DEFAULT_SUBTITLE_STYLE)
+    })
+    const snapshot = structuredClone(before)
+    const result = applySilenceCutToProject(before, 'video', { keepRanges: [{ startUs: 0, endUs: 4_000_000, durationUs: 4_000_000 }] })
+    expect(result.summary.removedDurationUs).toBe(0)
+    expect(result.summary.segmentCount).toBe(1)
+    expect(result.sourceClip).toEqual({ startUs: 1_000_000, sourceInUs: 0, durationUs: 4_000_000 })
+    expect(result.project).toEqual(snapshot)
+  })
+
   it('maps source timestamps through compacted keep ranges', () => {
     const clip = { startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 4_000_000 }
     expect(mapSourceTimeThroughSilenceCut(clip, [{ startUs: 20_000_000, endUs: 21_000_000 }, { startUs: 22_000_000, endUs: 24_000_000 }], 22_500_000)).toBe(11_500_000)
