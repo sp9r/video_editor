@@ -1,9 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { inlineSubtitleBlocksForVideoClip, isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryGuidesForVideoClip, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineCandidateRelationIds, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineScrubTimeUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
+import { inlineSubtitleBlocksForVideoClip, isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryGuidesForVideoClip, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, ticksFor, timelineCandidateRelationIds, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineScrubTimeUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
+import { timelineZoomScrollLeft } from '../../src/renderer/src/action-state'
 import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
 
 describe('timeline interaction guards', () => {
+  it('supports the extended zoom range and preserves the playhead screen position', () => {
+    expect(ticksFor(60 * 60 * 1_000_000, 1000).length).toBeLessThanOrEqual(2_000)
+    const oldZoom = 220
+    const newZoom = 1000
+    const playheadUs = 30_000_000
+    const scrollLeft = 5_000
+    const screenX = (playheadUs / 1_000_000) * oldZoom - scrollLeft
+    const nextScrollLeft = timelineZoomScrollLeft({
+      scrollLeft,
+      viewportWidth: 800,
+      nextContentWidth: 60_000,
+      oldZoom,
+      newZoom,
+      anchorTimeUs: playheadUs
+    })!
+    expect((playheadUs / 1_000_000) * newZoom - nextScrollLeft).toBeCloseTo(screenX)
+  })
+
   it('leaves native clipboard behavior to editable controls', () => {
     for (const tag of ['input', 'textarea', 'select']) expect(isTextEditingTarget(document.createElement(tag))).toBe(true)
     const contenteditable = document.createElement('div')

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { autoCaptionControlState, mediaAddControlState, timelineZoomControlState, trackControlState } from '../../src/renderer/src/action-state'
+import { autoCaptionControlState, clampTimelineZoom, mediaAddControlState, timelineZoomControlState, trackControlState } from '../../src/renderer/src/action-state'
 
 const track = (id: string, kind: 'media' | 'subtitle', clips: unknown[] = []) => ({ id, kind, name: id, clips } as never)
 
@@ -19,8 +19,11 @@ describe('visible action prerequisites', () => {
   })
 
   it('disables zoom buttons at both bounded endpoints', () => {
-    expect(timelineZoomControlState(28)).toEqual({ canZoomOut: false, canZoomIn: true })
-    expect(timelineZoomControlState(220)).toEqual({ canZoomOut: true, canZoomIn: false })
+    expect([4, 28, 220, 500, 1000].map(clampTimelineZoom)).toEqual([4, 28, 220, 500, 1000])
+    expect(timelineZoomControlState(4)).toEqual({ canZoomOut: false, canZoomIn: true })
+    expect(timelineZoomControlState(1000)).toEqual({ canZoomOut: true, canZoomIn: false })
+    expect(timelineZoomControlState(28)).toEqual({ canZoomOut: true, canZoomIn: true })
+    expect(timelineZoomControlState(220)).toEqual({ canZoomOut: true, canZoomIn: true })
     expect(timelineZoomControlState(100)).toEqual({ canZoomOut: true, canZoomIn: true })
   })
 

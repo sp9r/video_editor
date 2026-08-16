@@ -1,7 +1,33 @@
 import { isMediaTrack, type TimelineTrack } from '../../shared/types'
 
-export const TIMELINE_ZOOM_MIN = 28
-export const TIMELINE_ZOOM_MAX = 220
+export const TIMELINE_ZOOM_MIN = 4
+export const TIMELINE_ZOOM_MAX = 1000
+export const TIMELINE_ZOOM_DEFAULT = 72
+
+export const clampTimelineZoom = (zoom: number): number => {
+  if (!Number.isFinite(zoom)) return TIMELINE_ZOOM_DEFAULT
+  return Math.min(TIMELINE_ZOOM_MAX, Math.max(TIMELINE_ZOOM_MIN, zoom))
+}
+
+export interface TimelineZoomScrollInput {
+  scrollLeft: number
+  viewportWidth: number
+  nextContentWidth: number
+  oldZoom: number
+  newZoom: number
+  anchorTimeUs: number
+}
+
+/** Keeps the chosen timeline time at the same viewport x-coordinate after zooming. */
+export const timelineZoomScrollLeft = (input: TimelineZoomScrollInput): number | null => {
+  const { scrollLeft, viewportWidth, nextContentWidth, oldZoom, newZoom, anchorTimeUs } = input
+  if (![scrollLeft, viewportWidth, nextContentWidth, oldZoom, newZoom, anchorTimeUs].every(Number.isFinite)) return null
+  if (viewportWidth <= 0 || nextContentWidth <= 0 || oldZoom <= 0 || newZoom <= 0 || anchorTimeUs < 0) return null
+  const anchorScreenX = (anchorTimeUs / 1_000_000) * oldZoom - scrollLeft
+  const nextAnchorX = (anchorTimeUs / 1_000_000) * newZoom
+  const maxScrollLeft = Math.max(0, nextContentWidth - viewportWidth)
+  return Math.min(maxScrollLeft, Math.max(0, nextAnchorX - anchorScreenX))
+}
 
 export interface TrackControlState {
   canMoveUp: boolean

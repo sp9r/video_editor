@@ -25,7 +25,7 @@ import { subtitleEditUnits } from '../../../shared/editing/edit-units'
 import { snapSubtitleTimelinePosition } from '../../../shared/editing/subtitle-snap'
 import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type SubtitleClip, type SubtitleEditUnit, type SubtitleWord, type TimelineClip, type TimelineTrack, type TimeUs } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
-import { TIMELINE_ZOOM_MAX, TIMELINE_ZOOM_MIN, timelineZoomControlState, trackControlState } from '../action-state'
+import { TIMELINE_ZOOM_MAX, TIMELINE_ZOOM_MIN, clampTimelineZoom, timelineZoomControlState, timelineZoomScrollLeft, trackControlState } from '../action-state'
 import { useReviewStore } from '../review-store'
 import { previewDiagnosticStore } from '../preview-performance-diagnostics'
 import { Button, IconButton } from './Controls'
@@ -244,10 +244,15 @@ export const timelineClipClassName = (clip: Pick<TimelineClip, 'kind' | 'linkGro
   !clip.enabled ? 'is-disabled' : ''
 ].filter(Boolean).join(' ')
 
-const ticksFor = (durationUs: number, zoom: number): number[] => {
-  const interval = zoom >= 110 ? 1 : zoom >= 55 ? 2 : 5
+export const ticksFor = (durationUs: number, zoom: number): number[] => {
+  const durationSeconds = Math.max(0, Math.ceil(seconds(durationUs)))
+  const preferredInterval = zoom >= 110 ? 1 : zoom >= 55 ? 2 : 5
+  // Keep ruler DOM bounded for long sources at high zoom without hiding the
+  // fine-grained ruler on normal-length clips.
+  const maxTickCount = 2_000
+  const interval = Math.max(preferredInterval, Math.ceil(durationSeconds / (maxTickCount - 1)))
   const result: number[] = []
-  for (let second = 0; second <= Math.ceil(seconds(durationUs)); second += interval) result.push(second)
+  for (let second = 0; second <= durationSeconds; second += interval) result.push(second)
   return result
 }
 
@@ -398,6 +403,36 @@ export default function Timeline(): React.JSX.Element {
   const canMergePrevious = Boolean(contextSubtitle?.previous && !contextTrack?.locked)
   const canMergeNext = Boolean(contextSubtitle?.next && !contextTrack?.locked)
   const zoomControls = timelineZoomControlState(zoomPxPerSecond)
+
+  const zoomTimeline = (requestedZoom: number): void => {
+    const nextZoom = clampTimelineZoom(requestedZoom)
+    const viewport = viewportRef.current
+    if (!viewport || nextZoom === zoomPxPerSecond) {
+      setZoom(nextZoom)
+      return
+    }
+    const oldScrollLeft = viewport.scrollLeft
+    const viewportWidth = viewport.clientWidth
+    const nextContentWidth = Math.max(900, seconds(durationUs) * nextZoom)
+    setZoom(nextZoom)
+    const applyScrollCorrection = (): void => {
+      const currentViewport = viewportRef.current
+      if (!currentViewport) return
+      const nextScrollLeft = timelineZoomScrollLeft({
+        scrollLeft: oldScrollLeft,
+        viewportWidth: viewportWidth || currentViewport.clientWidth,
+        nextContentWidth,
+        oldZoom: zoomPxPerSecond,
+        newZoom: nextZoom,
+        anchorTimeUs: playheadUs
+      })
+      if (nextScrollLeft === null || Math.abs(currentViewport.scrollLeft - nextScrollLeft) <= 0.5) return
+      currentViewport.scrollLeft = nextScrollLeft
+      scheduleViewportWindowUpdate()
+    }
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(applyScrollCorrection)
+    else applyScrollCorrection()
+  }
 
   const scheduleViewportWindowUpdate = (): void => {
     const update = (): void => {
@@ -690,9 +725,9 @@ export default function Timeline(): React.JSX.Element {
           <IconButton label={selectedClipIds.length ? '再生位置で分割（Ctrl+K）' : '再生位置で分割（クリップを選択してください）'} disabled={!selectedClipIds.length} onClick={splitSelected}><Scissors size={16} /></IconButton>
           <IconButton label={selectedClipIds.length ? (rippleMode ? '選択クリップを自動詰め削除' : '選択クリップを削除') : '選択クリップを削除（クリップを選択してください）'} disabled={!selectedClipIds.length} onClick={() => deleteSelected()}><Trash2 size={16} /></IconButton>
           <span className="toolbar-separator" />
-          <IconButton label={zoomControls.canZoomOut ? 'タイムラインを縮小' : `タイムラインを縮小（最小${TIMELINE_ZOOM_MIN}px/秒）`} disabled={!zoomControls.canZoomOut} onClick={() => setZoom(zoomPxPerSecond - 12)}><ZoomOut size={15} /></IconButton>
-          <input className="zoom-slider" type="range" min={TIMELINE_ZOOM_MIN} max={TIMELINE_ZOOM_MAX} value={zoomPxPerSecond} onChange={(event) => setZoom(Number(event.target.value))} aria-label="タイムラインの拡大率" />
-          <IconButton label={zoomControls.canZoomIn ? 'タイムラインを拡大' : `タイムラインを拡大（最大${TIMELINE_ZOOM_MAX}px/秒）`} disabled={!zoomControls.canZoomIn} onClick={() => setZoom(zoomPxPerSecond + 12)}><ZoomIn size={15} /></IconButton>
+          <IconButton label={zoomControls.canZoomOut ? 'タイムラインを縮小' : `タイムラインを縮小（最小${TIMELINE_ZOOM_MIN}px/秒）`} disabled={!zoomControls.canZoomOut} onClick={() => zoomTimeline(zoomPxPerSecond - 12)}><ZoomOut size={15} /></IconButton>
+          <input className="zoom-slider" type="range" min={TIMELINE_ZOOM_MIN} max={TIMELINE_ZOOM_MAX} value={zoomPxPerSecond} onChange={(event) => zoomTimeline(Number(event.target.value))} aria-label="タイムラインの拡大率" />
+          <IconButton label={zoomControls.canZoomIn ? 'タイムラインを拡大' : `タイムラインを拡大（最大${TIMELINE_ZOOM_MAX}px/秒）`} disabled={!zoomControls.canZoomIn} onClick={() => zoomTimeline(zoomPxPerSecond + 12)}><ZoomIn size={15} /></IconButton>
         </div>
       </header>
       <div className="timeline-shell">
@@ -707,7 +742,7 @@ export default function Timeline(): React.JSX.Element {
           onWheel={(event) => {
             if (event.ctrlKey || event.metaKey) {
               event.preventDefault()
-              setZoom(zoomPxPerSecond + (event.deltaY < 0 ? 8 : -8))
+              zoomTimeline(zoomPxPerSecond + (event.deltaY < 0 ? 8 : -8))
               return
             }
             event.currentTarget.scrollLeft += event.deltaX + event.deltaY

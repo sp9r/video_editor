@@ -26,6 +26,7 @@ import type { UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { FullCorrectionSession } from '../../shared/full-correction'
 import { describeAutoCaptionBackend } from '../../shared/auto-caption-ui'
 import { createDemoProject } from './demo'
+import { clampTimelineZoom, TIMELINE_ZOOM_DEFAULT } from './action-state'
 
 type EditTool = 'select' | 'razor'
 type Notice = { id: number; tone: 'info' | 'success' | 'warning' | 'error'; message: string }
@@ -165,7 +166,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   tool: 'select',
   snapping: true,
   rippleMode: false,
-  zoomPxPerSecond: 72,
+  zoomPxPerSecond: TIMELINE_ZOOM_DEFAULT,
   dirty: false,
   lastSavedAt: null,
   savedFingerprint: projectFingerprint(initialProject),
@@ -255,7 +256,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setTool: (tool) => set({ tool }),
   setSnapping: (snapping) => set({ snapping }),
   setRippleMode: (rippleMode) => set({ rippleMode }),
-  setZoom: (zoomPxPerSecond) => set({ zoomPxPerSecond: Math.min(220, Math.max(28, zoomPxPerSecond)) }),
+  setZoom: (zoomPxPerSecond) => set({ zoomPxPerSecond: clampTimelineZoom(zoomPxPerSecond) }),
   addAssets: (assets) => get().applyProject(addMediaAssets(get().project, assets)),
   relinkAsset: (assetId, asset) => get().applyProject(relinkMediaAsset(get().project, assetId, asset)),
   addAssetClip: (assetId, trackId, atUs) => {

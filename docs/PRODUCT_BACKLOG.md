@@ -228,9 +228,17 @@
 
 ### UX-TL-006 — Timeline zoom range拡張
 
-**Status:** `PLANNED`
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
 
-既存28–220 px/secより広い範囲を検討。長尺overviewとsub-second編集を両立する。
+4–1000 px/secへ拡張し、長尺overviewとsub-second編集を両立する。既存default 72 px/secは維持する。
+
+**Implemented:**
+
+- slider、zoom in/out、Ctrl/Cmd+wheelを同じ4–1000 px/secのclampへ統一。
+- zoom変更時はplayhead付近のscreen位置を維持するようhorizontal scrollを補正する。
+- ruler tick生成は長尺でも最大約2,000件に抑え、clip・字幕inline strip・waveformの既存geometryは同じzoom値を使用する。
+
+**Human acceptance:** 4 / 28 / 220 / 500 / 1000 px/secで、playhead、clip、字幕、waveform、ruler、follow/edge auto-scrollの操作性を実動画で確認する。
 
 ### UX-TL-007 — Shift不要の横スクロール
 
