@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { layoutSubtitleText, wrapSubtitleText } from '../../src/shared/subtitle-layout'
+import { layoutSubtitleText, subtitleMaxWidthPx, wrapSubtitleText } from '../../src/shared/subtitle-layout'
 
 const style = { fontSize: 20, letterSpacing: 0, maxWidthPercent: 80 }
 
 describe('shared subtitle wrapping', () => {
+  it.each([[50, 960], [80, 1536], [100, 1920]])('maps %s%% to the sequence line-box width', (percent, expected) => {
+    expect(subtitleMaxWidthPx({ maxWidthPercent: percent }, 1920)).toBe(expected)
+  })
+
+  it('uses the full sequence width for a 100% long Japanese line', () => {
+    const text = '字幕の利用可能な横幅を確認するための長い日本語テキストです'
+    const at80 = layoutSubtitleText(text, { ...style, maxWidthPercent: 80, fontSize: 54 }, 1920, 2)
+    const at100 = layoutSubtitleText(text, { ...style, maxWidthPercent: 100, fontSize: 54 }, 1920, 2)
+    expect(at100.lineCount).toBeLessThanOrEqual(at80.lineCount)
+    expect(at100.wrappedText.replace(/\n/gu, '')).toBe(text)
+    expect(at100.diagnostics).toEqual([])
+  })
+
   it('preserves explicit newlines and wraps English at word boundaries', () => {
     expect(wrapSubtitleText('alpha beta gamma\n日本語 caption', style, 160)).toBe('alpha beta\ngamma\n日本語\ncaption')
   })

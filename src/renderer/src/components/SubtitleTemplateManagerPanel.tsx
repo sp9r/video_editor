@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { deriveSubtitleTemplateGeneration, applySubtitleTemplateToClip } from '../../../shared/subtitle-template-seed'
 import { getSubtitleTemplate, SUBTITLE_TEMPLATES, type SubtitleTemplateCaptionGeneration, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../../shared/subtitle-templates'
 import type { SubtitleClip, SubtitleStyle } from '../../../shared/types'
+import { FALLBACK_FONT_FAMILIES } from '../../../shared/font-families'
 import { Button } from './Controls'
 import SubtitleTemplatePreview from './SubtitleTemplatePreview'
 import { useEditorStore } from '../store'
@@ -38,6 +39,12 @@ const styleRows: Array<[keyof SubtitleStyle, string, (value: SubtitleStyle[keyof
 
 const PREVIEW_SAMPLE = '皆さんこんばんは\nアルマジロウです'
 
+export const resolveFontFamilyOptions = (families: readonly string[], currentFamily?: string): string[] => [...new Set([
+  ...(currentFamily ? [currentFamily] : []),
+  ...families,
+  ...FALLBACK_FONT_FAMILIES
+].map((family) => family.trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right, 'ja'))
+
 export default function SubtitleTemplateManagerPanel({
   userTemplates,
   defaultTemplateId,
@@ -53,10 +60,22 @@ export default function SubtitleTemplateManagerPanel({
   const [mode, setMode] = useState<TemplateMode>('view')
   const [draft, setDraft] = useState<SubtitleTemplateDraft | null>(null)
   const [previewText, setPreviewText] = useState('')
+  const [fontFamilies, setFontFamilies] = useState<string[]>([...FALLBACK_FONT_FAMILIES])
   const selected = getSubtitleTemplate(selectedId, userTemplates)
   const selectedUser = userTemplates.find((template) => template.id === selectedId)
   const canEdit = Boolean(selectedUser)
   const editable = mode === 'create' || canEdit
+
+  useEffect(() => {
+    let mounted = true
+    if (!window.spectra) return () => { mounted = false }
+    void window.spectra.listFontFamilies()
+      .then((families) => {
+        if (mounted) setFontFamilies(resolveFontFamilyOptions(families))
+      })
+      .catch(() => undefined)
+    return () => { mounted = false }
+  }, [])
 
   useEffect(() => {
     if (getSubtitleTemplate(selectedId, userTemplates)) return
@@ -223,7 +242,7 @@ export default function SubtitleTemplateManagerPanel({
               {mode === 'create' || canEdit ? <label className="field"><span className="field-label">名前</span><input value={draft.name} onChange={(event) => setDraft((current) => current ? { ...current, name: event.target.value } : current)} /></label> : <div className="template-readonly-name"><span>名前</span><strong>{draft.name}</strong></div>}
               <div className="template-detail-section"><strong>生成設定</strong><div className="field-grid"><label className="field"><span className="field-label">最大文字数</span><input type="number" min={1} max={10000} disabled={mode === 'view' && !canEdit} value={draft.captionGeneration.maxChars} onChange={(event) => setDraft((current) => current ? { ...current, captionGeneration: { ...current.captionGeneration, maxChars: Math.max(1, Math.min(10000, Number(event.target.value) || 1)) } } : current)} /></label><label className="field"><span className="field-label">最大行数</span><input type="number" min={1} max={16} disabled={mode === 'view' && !canEdit} value={draft.captionGeneration.maxLines} onChange={(event) => setDraft((current) => current ? { ...current, captionGeneration: { ...current.captionGeneration, maxLines: Math.max(1, Math.min(16, Number(event.target.value) || 1)) } } : current)} /></label></div><label className="field"><span className="field-label">品質 / 区切り</span><select disabled={mode === 'view' && !canEdit} value={draft.captionGeneration.segmentationMode} onChange={(event) => setDraft((current) => current ? { ...current, captionGeneration: { ...current.captionGeneration, segmentationMode: event.target.value as SubtitleTemplateCaptionGeneration['segmentationMode'] } } : current)}><option value="auto">高品質（自動）</option><option value="rule">ルール</option><option value="llm">LLM</option></select></label></div>
               <div className="template-detail-section"><strong>表示設定エディター</strong><div className="template-style-editor">
-                <label className="field"><span className="field-label">フォント</span><input disabled={!editable} value={draft.style.fontFamily} onChange={(event) => updateStyle('fontFamily', event.target.value)} /></label>
+                <label className="field"><span className="field-label">フォント</span><select disabled={!editable} value={draft.style.fontFamily} onChange={(event) => updateStyle('fontFamily', event.target.value)}>{resolveFontFamilyOptions(fontFamilies, draft.style.fontFamily).map((family) => <option key={family} value={family}>{family}</option>)}</select></label>
                 <label className="field"><span className="field-label">サイズ（px）</span><input disabled={!editable} type="number" min={1} max={10000} value={draft.style.fontSize} onChange={(event) => updateNumberStyle('fontSize', event.target.value, 1, 10000)} /></label>
                 <label className="field"><span className="field-label">文字色</span><input disabled={!editable} value={draft.style.color} onChange={(event) => updateStyle('color', event.target.value)} /></label>
                 <label className="field"><span className="field-label">縁取り色</span><input disabled={!editable} value={draft.style.outlineColor} onChange={(event) => updateStyle('outlineColor', event.target.value)} /></label>

@@ -36,6 +36,13 @@ describe('canonical subtitle render spec', () => {
     expect(spec).toMatchObject({ fontFamily: 'Test Family', fontSizePx: 64, bold: false, italic: true, color: '#123456', outlineColor: '#654321', outlineWidthPx: 7, letterSpacingPx: 3, lineHeight: 1.4, shadowColor: '#abcdef', shadowBlurPx: 8, shadowOffsetXPx: 0, shadowOffsetYPx: 2, backgroundColor: '#fedcba', backgroundOpacity: 0.4, maxLines: 2 })
   })
 
+  it.each([[50, 960], [80, 1536], [100, 1920]])('propagates %s%% into the canonical line box', (percent, expected) => {
+    const text = '字幕の利用可能な横幅を確認するための長い日本語テキストです'
+    const spec = buildSubtitleRenderSpec(caption({ maxWidthPercent: percent, fontSize: 54 }, text), { width: 1920, height: 1080 })
+    expect(spec.maxWidthPx).toBe(expected)
+    expect(spec.wrappedText.replace(/\n/gu, '')).toBe(text)
+  })
+
   it('uses the clip maxLines in the canonical spec and reports impossible overflow', () => {
     const clip = caption({ maxWidthPercent: 10, fontSize: 80 }, '超長い日本語字幕'.repeat(8))
     clip.maxLines = 1

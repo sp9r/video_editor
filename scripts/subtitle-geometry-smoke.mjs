@@ -84,13 +84,17 @@ const diffRegion = (left, right, region) => {
 }
 
 const simpleTransform = { positionX: 0, positionY: 0, scale: 1, rotation: 0, opacity: 1, crop: { left: 0, top: 0, right: 0, bottom: 0 } }
+const maxWidthText = '字幕の利用可能な横幅を確認するための長い日本語テキストです。'
 const fixtures = [
   { tag: 'jp54-top', text: '字幕を入力', style: { fontFamily: 'Noto Sans JP', fontSize: 54, outlineWidth: 3, alignment: 'top', positionX: 25, positionY: 20, backgroundOpacity: 0.15 } },
   { tag: 'jp123-middle', text: '字幕を入力', style: { fontFamily: 'Noto Sans JP', fontSize: 123, outlineWidth: 14, alignment: 'middle', positionX: 50, positionY: 50, backgroundOpacity: 0.15 } },
   { tag: 'jp123-bottom', text: '字幕を入力', style: { fontFamily: 'Noto Sans JP', fontSize: 123, outlineWidth: 14, alignment: 'bottom', positionX: 75, positionY: 86, backgroundOpacity: 0.15 } },
   { tag: 'arial64-bottom', text: 'English subtitle', style: { fontFamily: 'Arial', fontSize: 64, outlineWidth: 6, alignment: 'bottom', positionX: 50, positionY: 86, backgroundOpacity: 0.15 } },
   { tag: 'bg-off', text: '字幕を入力', style: { fontFamily: 'Noto Sans JP', fontSize: 64, outlineWidth: 6, alignment: 'bottom', positionX: 50, positionY: 86, backgroundOpacity: 0 } },
-  { tag: 'bg-on', text: '字幕を入力', style: { fontFamily: 'Noto Sans JP', fontSize: 64, outlineWidth: 6, alignment: 'bottom', positionX: 50, positionY: 86, backgroundOpacity: 0.15 } }
+  { tag: 'bg-on', text: '字幕を入力', style: { fontFamily: 'Noto Sans JP', fontSize: 64, outlineWidth: 6, alignment: 'bottom', positionX: 50, positionY: 86, backgroundOpacity: 0.15 } },
+  { tag: 'max-width-50', text: maxWidthText, style: { fontFamily: 'Noto Sans JP', fontSize: 54, outlineWidth: 3, alignment: 'bottom', positionX: 50, positionY: 86, maxWidthPercent: 50, backgroundOpacity: 0 } },
+  { tag: 'max-width-80', text: maxWidthText, style: { fontFamily: 'Noto Sans JP', fontSize: 54, outlineWidth: 3, alignment: 'bottom', positionX: 50, positionY: 86, maxWidthPercent: 80, backgroundOpacity: 0 } },
+  { tag: 'max-width-100', text: maxWidthText, style: { fontFamily: 'Noto Sans JP', fontSize: 54, outlineWidth: 3, alignment: 'bottom', positionX: 50, positionY: 86, maxWidthPercent: 100, backgroundOpacity: 0 } }
 ].map((fixture) => ({ ...fixture, style: { ...fixture.style, shadowColor: '#00000000', shadowBlur: 0 }, transform: simpleTransform }))
 
 const runFixture = (fixture) => new Promise((resolve, reject) => {
@@ -130,6 +134,7 @@ for (const fixture of fixtures) {
     tag: fixture.tag,
     text: fixture.text,
     style: fixture.style,
+    subtitleSpec: report.subtitleSpec,
     screenshots: { fast: report.fastScreenshotPath, accurate: report.accurateScreenshotPath },
     comparison: report.screenshotComparison
   })
@@ -140,6 +145,16 @@ console.log(JSON.stringify({ fixtures: results }, null, 2))
 const backgroundOff = results.find((result) => result.tag === 'bg-off')
 const backgroundOn = results.find((result) => result.tag === 'bg-on')
 if (!backgroundOff || !backgroundOn) throw new Error('background A/B fixtures are missing')
+const maxWidthResults = ['max-width-50', 'max-width-80', 'max-width-100'].map((tag) => results.find((result) => result.tag === tag))
+if (maxWidthResults.some((result) => !result)) throw new Error('max-width fixtures are missing')
+const expectedMaxWidths = [960, 1536, 1920]
+for (const [index, result] of maxWidthResults.entries()) {
+  const actual = result?.comparison?.subtitleSpec?.maxWidthPx ?? result?.subtitleSpec?.maxWidthPx
+  if (actual !== expectedMaxWidths[index]) throw new Error(`max-width ${expectedMaxWidths[index]}px was not propagated: ${JSON.stringify(result)}`)
+}
+if ((maxWidthResults[2]?.comparison?.accurate?.white?.width ?? 0) < (maxWidthResults[1]?.comparison?.accurate?.white?.width ?? 0)) {
+  throw new Error('100% max-width wrapped earlier than 80% in Accurate Preview')
+}
 const [backgroundOffPng, backgroundOnPng] = await Promise.all([
   readFile(backgroundOff.screenshots.accurate),
   readFile(backgroundOn.screenshots.accurate)

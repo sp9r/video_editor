@@ -1,6 +1,7 @@
 import { defaultProcessExecutor, type ProcessExecutor } from './ffmpeg/process.js'
+import { FALLBACK_FONT_FAMILIES } from '../shared/font-families.js'
 
-export const FALLBACK_FONT_FAMILIES = ['Noto Sans JP', 'Yu Gothic UI', 'Meiryo', 'Arial', 'sans-serif'] as const
+export { FALLBACK_FONT_FAMILIES }
 
 const parseRegistryFonts = (text: string): string[] => text.split(/\r?\n/u)
   .map((line) => line.match(/^\s{2,}(.+?)\s+REG_SZ\s+/u)?.[1]?.replace(/\s+\((?:TrueType|OpenType)\)$/iu, '').trim())

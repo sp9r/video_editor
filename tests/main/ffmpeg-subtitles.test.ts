@@ -61,6 +61,29 @@ describe('subtitle serialization', () => {
     expect(ass).toContain('alpha beta gamma\\N日本語')
   })
 
+  it('uses the same 50/80/100% Japanese wrap as the canonical Preview spec', () => {
+    const widths = [50, 80, 100].map((maxWidthPercent) => {
+      const project = makeProject()
+      const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
+      if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
+      subtitle.text = '字幕の利用可能な横幅を確認するための長い日本語テキストです'
+      subtitle.style = { ...subtitle.style, fontSize: 54, maxWidthPercent }
+      const spec = buildSubtitleRenderSpec(subtitle, project.sequence)
+      const ass = generateAss(project)
+      expect(ass).toContain(spec.wrappedText.replace(/\n/gu, '\\N'))
+      return { maxWidthPercent, maxWidthPx: spec.maxWidthPx, lineCount: spec.lineCount }
+    })
+    const [fifty, eighty, hundred] = widths
+    if (!fifty || !eighty || !hundred) throw new Error('max-width fixtures are incomplete')
+    expect(widths.map(({ maxWidthPercent, maxWidthPx }) => ({ maxWidthPercent, maxWidthPx }))).toEqual([
+      { maxWidthPercent: 50, maxWidthPx: 960 },
+      { maxWidthPercent: 80, maxWidthPx: 1536 },
+      { maxWidthPercent: 100, maxWidthPx: 1920 }
+    ])
+    expect(hundred.maxWidthPx).toBeGreaterThan(eighty.maxWidthPx)
+    expect(hundred.lineCount).toBeLessThanOrEqual(eighty.lineCount)
+  })
+
   it.each([
     ['A', { outlineWidth: 0, shadowColor: '#00000000', shadowBlur: 0, backgroundOpacity: 0 }],
     ['B', { outlineWidth: 14, shadowColor: '#00000000', shadowBlur: 0, backgroundOpacity: 0 }],

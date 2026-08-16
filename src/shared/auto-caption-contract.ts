@@ -38,6 +38,7 @@ export interface AutoCaptionSettings {
 }
 
 export type AutoCaptionProgressState = 'preparing' | 'transcribing' | 'silence_analyzing' | 'segmenting' | 'completed' | 'failed'
+export type AutoCaptionProgressMode = 'determinate' | 'indeterminate'
 
 export interface AutoCaptionSilenceAnalysis {
   silences: Array<{
@@ -65,6 +66,9 @@ export interface AutoCaptionProgress {
   jobId: string
   state: AutoCaptionProgressState
   ratio: number
+  /** Optional additive fields: old v1 workers remain valid and render as indeterminate while active. */
+  progressMode?: AutoCaptionProgressMode
+  stageRatio?: number
   message: string
   errorCode?: string
   diagnostics?: AutoCaptionDiagnostic[]
@@ -388,12 +392,16 @@ export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
 
 export const parseAutoCaptionProgress = (input: unknown): AutoCaptionProgress => {
   if (!isRecord(input)) throw new Error('auto-caption progress must be an object')
-  assertKeys(input, ['version', 'jobId', 'state', 'ratio', 'message', 'errorCode', 'diagnostics', 'silenceAnalysis'], 'auto-caption progress')
+  assertKeys(input, ['version', 'jobId', 'state', 'ratio', 'progressMode', 'stageRatio', 'message', 'errorCode', 'diagnostics', 'silenceAnalysis'], 'auto-caption progress')
   if (own(input, 'version') !== AUTO_CAPTION_PROGRESS_VERSION) throw new Error('unsupported auto-caption progress version')
   const state = requiredString(own(input, 'state'), 'progress.state', 32) as AutoCaptionProgressState
   if (!['preparing', 'transcribing', 'silence_analyzing', 'segmenting', 'completed', 'failed'].includes(state)) throw new Error('progress.state is invalid')
   const ratio = own(input, 'ratio')
   if (typeof ratio !== 'number' || !Number.isFinite(ratio) || ratio < 0 || ratio > 1) throw new Error('progress.ratio is invalid')
+  const progressMode = input.progressMode === undefined ? undefined : requiredString(input.progressMode, 'progress.progressMode', 16) as AutoCaptionProgressMode
+  if (progressMode !== undefined && !['determinate', 'indeterminate'].includes(progressMode)) throw new Error('progress.progressMode is invalid')
+  const stageRatio = input.stageRatio === undefined ? undefined : input.stageRatio
+  if (stageRatio !== undefined && (typeof stageRatio !== 'number' || !Number.isFinite(stageRatio) || stageRatio < 0 || stageRatio > 1)) throw new Error('progress.stageRatio is invalid')
   const errorCode = input.errorCode === undefined ? undefined : identifier(input.errorCode, 'progress.errorCode')
   const diagnostics = input.diagnostics === undefined ? undefined : parseDiagnostics(input.diagnostics)
   const silenceAnalysis = input.silenceAnalysis === undefined ? undefined : parseSilenceAnalysis(input.silenceAnalysis)
@@ -402,6 +410,8 @@ export const parseAutoCaptionProgress = (input: unknown): AutoCaptionProgress =>
     jobId: identifier(own(input, 'jobId'), 'progress.jobId'),
     state,
     ratio,
+    ...(progressMode ? { progressMode } : {}),
+    ...(stageRatio === undefined ? {} : { stageRatio }),
     message: requiredString(own(input, 'message'), 'progress.message', 4096),
     ...(errorCode ? { errorCode } : {}),
     ...(diagnostics ? { diagnostics } : {}),

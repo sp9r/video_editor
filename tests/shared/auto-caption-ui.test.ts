@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressStage, autoCaptionStageLabel, describeAutoCaptionBackend, formatClockDurationUs, formatDurationUs, silenceCutProfileLabel } from '../../src/shared/auto-caption-ui'
+import { autoCaptionDisplayRatio, autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressMode, autoCaptionProgressStage, autoCaptionStageLabel, describeAutoCaptionBackend, formatClockDurationUs, formatDurationUs, formatElapsedMs, silenceCutProfileLabel } from '../../src/shared/auto-caption-ui'
 import type { AutoCaptionProgress, AutoCaptionResult } from '../../src/shared/auto-caption-contract'
 
 const result = (diagnostics: AutoCaptionResult['diagnostics']): AutoCaptionResult => ({
@@ -35,5 +35,14 @@ describe('auto-caption product status helpers', () => {
     expect(formatClockDurationUs(65_000_000)).toBe('1:05')
     expect(silenceCutProfileLabel('youtube')).toBe('YouTubeジャンプカット')
     expect(autoCaptionProgressMessage({ state: 'silence_analyzing' })).toBe('無音区間を検出しています…')
+  })
+
+  it('uses measured stage progress and never treats legacy active ratios as total progress', () => {
+    expect(autoCaptionProgressMode({ state: 'transcribing' })).toBe('indeterminate')
+    expect(autoCaptionProgressMode({ state: 'silence_analyzing', progressMode: 'indeterminate' })).toBe('indeterminate')
+    expect(autoCaptionProgressMode({ state: 'transcribing', progressMode: 'determinate' })).toBe('determinate')
+    expect(autoCaptionDisplayRatio({ ratio: 0.70, stageRatio: 0.42 })).toBe(0.42)
+    expect(formatElapsedMs(65_400)).toBe('1:05')
+    expect(formatElapsedMs(3_665_000)).toBe('1:01:05')
   })
 })

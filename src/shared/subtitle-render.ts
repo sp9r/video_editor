@@ -1,4 +1,4 @@
-import { layoutSubtitleText, normalizeSubtitleMaxLines, subtitleMaxWidthPercent, type SubtitleLayoutDiagnostic } from './subtitle-layout.js'
+import { layoutSubtitleText, normalizeSubtitleMaxLines, subtitleMaxWidthPercent, subtitleMaxWidthPx, type SubtitleLayoutDiagnostic } from './subtitle-layout.js'
 import type { ProjectFile, SequenceSettings, SubtitleClip, SubtitleStyle } from './types.js'
 
 export type SubtitleAnchor = SubtitleStyle['alignment']
@@ -50,7 +50,7 @@ export const buildSubtitleRenderSpec = (clip: SubtitleClip, sequence: Pick<Seque
     lineCount: layout.lineCount,
     maxLines: normalizeSubtitleMaxLines(clip.maxLines),
     layoutDiagnostics: layout.diagnostics,
-    maxWidthPx: width * maxWidthPercent / 100,
+    maxWidthPx: subtitleMaxWidthPx({ maxWidthPercent }, width),
     fontFamily: style.fontFamily.trim() || 'Arial',
     fontSizePx,
     bold: style.bold,

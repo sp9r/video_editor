@@ -563,7 +563,8 @@ select {
 .viewer-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim); background: #090b0e; }
 .viewer-placeholder span { font-size: 10px; }
 .preview-subtitle { position: absolute; z-index: 5; box-sizing: border-box; padding: 0; color: white; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; background: transparent; border: 0; border-radius: 3px; cursor: pointer; }
-.preview-subtitle-stack { position: relative; display: inline-block; max-width: 100%; padding: 3px 8px; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; }
+.preview-subtitle-stack { position: relative; display: block; width: 100%; max-width: 100%; padding: 0; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; }
+.preview-subtitle-text-box { position: relative; display: inline-block; max-width: 100%; padding: 3px 8px; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; }
 .preview-subtitle-layer { display: block; box-sizing: border-box; max-width: 100%; padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 3px; }
 .preview-subtitle-background,
 .preview-subtitle-shadow { position: absolute; inset: 3px 8px; pointer-events: none; }
@@ -726,7 +727,15 @@ select {
 .caption-progress { padding: 10px; background: #181e24; border: 1px solid var(--line); border-radius: 5px; }
 .caption-progress .progress-heading { justify-content: space-between; }
 .caption-progress .progress-heading span { color: var(--text-muted); font: 9px ui-monospace, monospace; }
+.caption-progress .progress-track { overflow: hidden; position: relative; height: 4px; margin-top: 8px; background: #0d1115; border-radius: 999px; }
+.caption-progress .progress-track i { display: block; height: 100%; background: var(--mint); border-radius: inherit; transition: width 180ms ease-out; }
+.caption-progress .progress-track.is-indeterminate i { position: absolute; width: 34%; background: linear-gradient(90deg, transparent, var(--mint), transparent); animation: caption-progress-indeterminate 1.15s ease-in-out infinite; }
+.caption-progress .progress-meta { display: flex; align-items: center; gap: 8px; min-height: 15px; }
 .caption-progress small { display: block; margin-top: 7px; color: var(--text-muted); font-size: 9px; }
+.caption-progress .progress-elapsed { margin-left: auto; color: var(--text-dim); font: 9px ui-monospace, monospace; white-space: nowrap; }
+.caption-progress .progress-spinner { width: 10px; height: 10px; border: 1px solid #38504a; border-top-color: var(--mint); border-radius: 50%; animation: caption-progress-spin 800ms linear infinite; }
+@keyframes caption-progress-indeterminate { from { transform: translateX(-120%); } to { transform: translateX(320%); } }
+@keyframes caption-progress-spin { to { transform: rotate(360deg); } }
 .caption-success, .caption-failure { display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 5px; font-size: 9px; line-height: 1.5; }
 .caption-success { color: #d8f8ef; background: #17332c; border: 1px solid #347965; }
 .caption-success strong, .caption-failure strong { font-size: 10px; }

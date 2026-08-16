@@ -7,6 +7,7 @@ import {
   createAutoCaptionBaseline,
   mapAutoCaptionSourceTimeToTimelineUs,
   parseAutoCaptionBaseline,
+  parseAutoCaptionProgress,
   parseAutoCaptionRequest,
   parseAutoCaptionResult
 } from '../../src/shared/auto-caption-contract.js'
@@ -61,6 +62,21 @@ describe('auto-caption worker contract draft', () => {
 
   it('accepts the YouTube jump-cut silence profile', () => {
     expect(parseAutoCaptionRequest({ ...request(), silenceCut: 'youtube' })).toMatchObject({ silenceCut: 'youtube' })
+  })
+
+  it('accepts additive measured or indeterminate progress metadata', () => {
+    expect(parseAutoCaptionProgress({
+      version: 'spectra.auto-caption.progress.v1', jobId: 'caption-job-1', state: 'transcribing', ratio: 0.42,
+      progressMode: 'determinate', stageRatio: 0.5, message: 'Whisper'
+    })).toMatchObject({ progressMode: 'determinate', stageRatio: 0.5 })
+    expect(parseAutoCaptionProgress({
+      version: 'spectra.auto-caption.progress.v1', jobId: 'caption-job-1', state: 'silence_analyzing', ratio: 0.70,
+      progressMode: 'indeterminate', message: '無音解析'
+    }).progressMode).toBe('indeterminate')
+    expect(() => parseAutoCaptionProgress({
+      version: 'spectra.auto-caption.progress.v1', jobId: 'caption-job-1', state: 'transcribing', ratio: 0.42,
+      progressMode: 'determinate', stageRatio: 1.2, message: 'Whisper'
+    })).toThrow()
   })
 
   it('validates word ownership, provenance, diagnostics, and fallback', () => {

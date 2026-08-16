@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { createEmptyProject } from '../../shared/project'
 import type { AutoCaptionSettings } from '../../shared/auto-caption-contract'
-import { autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressStage, autoCaptionStageLabel, formatClockDurationUs, formatDurationUs, silenceCutProfileLabel } from '../../shared/auto-caption-ui'
+import { autoCaptionDisplayRatio, autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressMode, autoCaptionProgressStage, autoCaptionStageLabel, formatClockDurationUs, formatDurationUs, formatElapsedMs, silenceCutProfileLabel } from '../../shared/auto-caption-ui'
 import { getSubtitleTemplate, getSubtitleTemplateSettings, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { EncoderReport, ProjectFile } from '../../shared/types'
 import { BrandMark } from './components/Brand'
@@ -88,6 +88,7 @@ export default function App(): React.JSX.Element {
   const [encoderReport, setEncoderReport] = useState<EncoderReport | null>(null)
   const [appError, setAppError] = useState<string | null>(null)
   const [captioning, setCaptioning] = useState(false)
+  const [captionElapsedMs, setCaptionElapsedMs] = useState(0)
   const [captionDialogOpen, setCaptionDialogOpen] = useState(false)
   const [templateManagerOpen, setTemplateManagerOpen] = useState(false)
   const [autoCaptionEnabled, setAutoCaptionEnabled] = useState(true)
@@ -99,6 +100,14 @@ export default function App(): React.JSX.Element {
   })
   const [captionSummary, setCaptionSummary] = useState<AutoCaptionApplySummary | null>(null)
   const reviewEnabled = useReviewStore((state) => state.enabled)
+
+  useEffect(() => {
+    if (!captioning) return
+    const startedAt = performance.now()
+    setCaptionElapsedMs(0)
+    const timer = window.setInterval(() => setCaptionElapsedMs(performance.now() - startedAt), 250)
+    return () => window.clearInterval(timer)
+  }, [captioning])
 
   useEffect(() => {
     setAutoCaptionSettingsSeed({
@@ -381,6 +390,9 @@ export default function App(): React.JSX.Element {
     ? autoCaptionProgress.state === 'failed' ? autoCaptionFailureStage(autoCaptionProgress) : autoCaptionProgressStage(autoCaptionProgress)
     : null
   const captionProgressStageLabel = captionProgressStage ? autoCaptionStageLabel(captionProgressStage) : ''
+  const captionProgressDisplayMode = autoCaptionProgress ? autoCaptionProgressMode(autoCaptionProgress) : 'indeterminate'
+  const captionProgressRatio = autoCaptionProgress ? autoCaptionDisplayRatio(autoCaptionProgress) : 0
+  const captionProgressActive = Boolean(captioning && autoCaptionProgress && autoCaptionProgress.state !== 'failed' && autoCaptionProgress.state !== 'completed')
 
   const runAutoCaption = async (): Promise<void> => {
     setCaptionSummary(null)
@@ -572,10 +584,12 @@ export default function App(): React.JSX.Element {
                   {hasAutoProcessingOverrides && <small className="field-hint template-override-note">個別設定を使用中です。template本体は変更されません。次回template選択時にtemplate値へ戻ります。</small>}
                   <div className="template-actions"><Button disabled={captioning} title={captioning ? '生成中は変更できません' : '現在の設定を新しいtemplateとして保存'} onClick={() => void createUserSubtitleTemplate(false)}>新規保存</Button><Button disabled={captioning} title={captioning ? '生成中は変更できません' : '現在の設定をtemplateとして複製'} onClick={() => void createUserSubtitleTemplate(true)}>複製</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} title={captioning ? '生成中は変更できません' : 'ユーザーtemplateを選択すると更新できます'} onClick={() => void updateUserSubtitleTemplate()}>更新</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} title={captioning ? '生成中は変更できません' : 'ユーザーtemplateを選択すると削除できます'} onClick={() => void deleteUserSubtitleTemplate()}>削除</Button></div>
                   {autoCaptionProgress && (
-                    <div className={`caption-progress ${autoCaptionProgress.state === 'failed' ? 'stage-failed' : ''}`} aria-live="polite">
-                      <div className="progress-heading"><strong>{captionProgressStageLabel}</strong><span>{Math.round(autoCaptionProgress.ratio * 100)}%</span></div>
-                      <div className="progress-track"><i style={{ width: `${Math.max(0, Math.min(100, autoCaptionProgress.ratio * 100))}%` }} /></div>
-                      <small>{autoCaptionProgressMessage(autoCaptionProgress)}</small>
+                    <div className={`caption-progress ${autoCaptionProgress.state === 'failed' ? 'stage-failed' : ''}`} aria-live="polite" aria-busy={captionProgressActive} data-progress-mode={captionProgressDisplayMode}>
+                      <div className="progress-heading"><strong>{captionProgressStageLabel}</strong><span>{captionProgressActive && captionProgressDisplayMode === 'indeterminate' ? '処理中' : `${Math.round(Math.max(0, Math.min(1, captionProgressRatio)) * 100)}%`}</span></div>
+                      <div className={`progress-track ${captionProgressDisplayMode === 'indeterminate' && captionProgressActive ? 'is-indeterminate' : ''}`}>
+                        <i style={captionProgressDisplayMode === 'determinate' || !captionProgressActive ? { width: `${Math.max(0, Math.min(100, captionProgressRatio * 100))}%` } : undefined} />
+                      </div>
+                      <div className="progress-meta"><small>{autoCaptionProgressMessage(autoCaptionProgress)}</small><span className="progress-elapsed">経過 {formatElapsedMs(captionElapsedMs)}</span>{captionProgressActive && <span className="progress-spinner" aria-label="処理中" />}</div>
                     </div>
                   )}
                   {autoCaptionProgress?.state === 'failed' && !captionSummary && <div className="caption-failure" role="alert">

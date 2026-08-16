@@ -80,9 +80,10 @@ export default function SubtitleTemplatePreview({
             animationDuration: `${Math.max(0, spec.animationDurationUs / 1_000)}ms`,
             transform: subtitleAnchorTransform(spec.anchor)
           }}
-        >
-          <span className="preview-subtitle-stack">
-            {spec.backgroundOpacity > 0 && <span
+          >
+            <span className="preview-subtitle-stack">
+              <span className="preview-subtitle-text-box">
+              {spec.backgroundOpacity > 0 && <span
               className="preview-subtitle-layer preview-subtitle-background"
               aria-hidden="true"
               style={{
@@ -102,7 +103,7 @@ export default function SubtitleTemplatePreview({
                 filter: canonicalShadowBlurRadius(spec.shadowBlurPx) > 0 ? `blur(${canonicalShadowBlurRadius(spec.shadowBlurPx)}px)` : undefined
               }}
             >{spec.wrappedText}</span>}
-            <span
+              <span
               className="preview-subtitle-layer preview-subtitle-main"
               style={{
                 ...textStyle,
@@ -110,7 +111,8 @@ export default function SubtitleTemplatePreview({
                 WebkitTextStroke: `${spec.outlineWidthPx}px ${spec.outlineColor}`,
                 paintOrder: 'stroke fill'
               }}
-            >{spec.wrappedText}</span>
+              >{spec.wrappedText}</span>
+              </span>
           </span>
         </div>
       </div>

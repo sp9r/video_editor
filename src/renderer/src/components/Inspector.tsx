@@ -3,6 +3,7 @@ import { Captions, Image as ImageIcon, SlidersHorizontal, Volume2 } from 'lucide
 import { findSubtitleContext, subtitleWordsMatchText } from '../../../shared/project'
 import { subtitleEditUnits } from '../../../shared/editing/edit-units'
 import { DEFAULT_SUBTITLE_STYLE, type AudioSettings, type SubtitleClip, type SubtitleStyle, type TimelineClip, type TransformSettings } from '../../../shared/types'
+import { FALLBACK_FONT_FAMILIES } from '../../../shared/font-families'
 import { applySubtitleTemplateToClip, deriveSubtitleTemplateGeneration } from '../../../shared/subtitle-template-seed'
 import type { SubtitleTemplateCaptionGeneration } from '../../../shared/subtitle-templates'
 import { getSubtitleTemplate, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../../shared/subtitle-templates'
@@ -15,7 +16,6 @@ const numberValue = (value: string, fallback = 0): number => {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-const FALLBACK_FONTS = ['Noto Sans JP', 'Yu Gothic UI', 'Meiryo', 'Arial', 'sans-serif']
 const hasTransform = (clip: TimelineClip): clip is Extract<TimelineClip, { kind: 'video' | 'image' }> =>
   clip.kind === 'video' || clip.kind === 'image'
 
@@ -287,7 +287,7 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
 function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
   const { project, patchClip, selectClip, setPlayhead, splitSubtitleAtWordBoundary, mergeSubtitleWithPrevious, mergeSubtitleWithNext } = useEditorStore()
   const transaction = useEditTransaction()
-  const [fontFamilies, setFontFamilies] = useState(FALLBACK_FONTS)
+  const [fontFamilies, setFontFamilies] = useState<string[]>([...FALLBACK_FONT_FAMILIES])
   useEffect(() => {
     if (!window.spectra) return
     void window.spectra.listFontFamilies().then((families) => {

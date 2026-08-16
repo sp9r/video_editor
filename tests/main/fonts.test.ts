@@ -8,11 +8,12 @@ describe('font family enumeration', () => {
       command: request.command,
       args: request.args,
       exitCode: 0,
-      stdout: '    Test Sans (TrueType)    REG_SZ    test.ttf\r\n',
+      stdout: '    Test Sans (TrueType)    REG_SZ    test.ttf\r\n    游ゴシック    REG_SZ    yu.ttf\r\n',
       stderr: ''
     }) }
     const fonts = await enumerateFontFamilies(executor, 'win32')
     expect(fonts).toContain('Test Sans')
+    expect(fonts).toContain('游ゴシック')
     expect(fonts).toContain('Noto Sans JP')
   })
 

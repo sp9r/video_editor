@@ -297,6 +297,34 @@ describe('auto-caption worker discovery and service', () => {
     expect(JSON.stringify(terminal)).not.toContain('C:\\Users\\secret')
   })
 
+  it('preserves a caption-stage worker diagnostic instead of collapsing it to a generic failure', async () => {
+    const root = await makeTemp('caption-stage-failure')
+    const media = path.join(root, 'source.mp4')
+    await writeFile(media, 'fixture', 'utf8')
+    const fixture = makeProject(media)
+    const executor = async (request: CommandRequest): Promise<CommandResult> => {
+      const requestPath = request.args[request.args.indexOf('--request') + 1]!
+      const payload = JSON.parse(await readFile(requestPath, 'utf8')) as { jobId: string }
+      request.onStdout?.(JSON.stringify({
+        version: 'spectra.auto-caption.progress.v1',
+        jobId: payload.jobId,
+        state: 'failed',
+        ratio: 0.72,
+        message: '字幕区切りに失敗しました。',
+        errorCode: 'NO_SPEECH',
+        diagnostics: [{ level: 'error', code: 'NO_SPEECH', message: 'Whisper source words were unavailable.' }]
+      }) + '\n')
+      return { command: request.command, args: request.args, exitCode: 1, stdout: '', stderr: '' }
+    }
+    const service = new AutoCaptionService({ appPath: root, userDataPath: root, executor: { run: executor }, discover: async () => discovery(root) })
+    const run = await runUntilTerminal(service, fixture.project)
+    const terminal = await run.terminal
+    expect(terminal.errorCode).toBe('NO_SPEECH')
+    expect(terminal.message).toContain('字幕区切り')
+    expect(terminal.diagnostics?.[0]).toMatchObject({ code: 'NO_SPEECH' })
+    expect(JSON.stringify(terminal)).not.toContain('C:\\Users\\secret')
+  })
+
   it('cancels an active worker and rejects unsafe diagnostic text without leaking it', async () => {
     const root = await makeTemp('cancel')
     const media = path.join(root, 'source.mp4')

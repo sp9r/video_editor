@@ -371,6 +371,7 @@ export default function Preview(): React.JSX.Element {
                   }}
                 >
                   <span className="preview-subtitle-stack">
+                    <span className="preview-subtitle-text-box">
                     {spec.backgroundOpacity > 0 && <span
                       className="preview-subtitle-layer preview-subtitle-background"
                       aria-hidden="true"
@@ -400,6 +401,7 @@ export default function Preview(): React.JSX.Element {
                         paintOrder: 'stroke fill'
                       }}
                     >{spec.wrappedText}</span>
+                    </span>
                   </span>
                 </button>
               })()

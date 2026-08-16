@@ -1,4 +1,4 @@
-import type { AutoCaptionProgress, AutoCaptionResult } from './auto-caption-contract.js'
+import type { AutoCaptionProgress, AutoCaptionProgressMode, AutoCaptionResult } from './auto-caption-contract.js'
 
 export type AutoCaptionUiStage = 'preparing' | 'transcribing' | 'silence' | 'segmenting' | 'applying' | 'failed'
 
@@ -41,6 +41,22 @@ export const formatClockDurationUs = (durationUs: number): string => {
   const seconds = totalSeconds % 60
   return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}`
 }
+
+export const formatElapsedMs = (durationMs: number): string => {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000))
+  const hours = Math.floor(totalSeconds / 3_600)
+  const minutes = Math.floor((totalSeconds % 3_600) / 60)
+  const seconds = totalSeconds % 60
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+/** Active legacy v1 events have no measured total, so never show their ratio as a fake progress bar. */
+export const autoCaptionProgressMode = (progress: Pick<AutoCaptionProgress, 'state' | 'progressMode'>): AutoCaptionProgressMode => {
+  if (progress.progressMode) return progress.progressMode
+  return progress.state === 'completed' || progress.state === 'failed' ? 'determinate' : 'indeterminate'
+}
+
+export const autoCaptionDisplayRatio = (progress: Pick<AutoCaptionProgress, 'ratio' | 'stageRatio'>): number => progress.stageRatio ?? progress.ratio
 
 export const autoCaptionProgressStage = (progress: Pick<AutoCaptionProgress, 'state'>): AutoCaptionUiStage => {
   switch (progress.state) {

@@ -272,14 +272,23 @@ export class AutoCaptionService {
       const message = error instanceof Error ? error.message : ''
       const malformedResult = /result|JSON|Unexpected token|unsafe worker|identity|source range/i.test(message)
       const errorCode = malformedProgress ? 'MALFORMED_OUTPUT' : controller.signal.aborted || message === 'cancelled' ? 'CANCELLED' : workerFailure?.errorCode ?? (message.includes('timed out') ? 'TIMEOUT' : malformedResult ? 'MALFORMED_OUTPUT' : 'WORKER_FAILED')
+      const workerDiagnostics = workerFailure?.diagnostics?.map((diagnostic) => ({
+        ...diagnostic,
+        message: safeMessage(diagnostic.message)
+      }))
+      const diagnostics = errorCode === 'CANCELLED'
+        ? undefined
+        : workerDiagnostics && workerDiagnostics.length > 0
+          ? workerDiagnostics
+          : [{ level: 'error' as const, code: `AUTO_CAPTION_${phase.toUpperCase()}`, message: `failure phase=${phase}; reason=${safeMessage(message).slice(0, 200) || 'unknown'}` }]
       emit({
         version: AUTO_CAPTION_PROGRESS_VERSION,
         jobId,
         state: 'failed',
         ratio: 0,
-        message: errorCode === 'CANCELLED' ? '自動字幕をキャンセルしました。' : `自動字幕を完了できませんでした。（${phase}）`,
+        message: errorCode === 'CANCELLED' ? '自動字幕をキャンセルしました。' : workerFailure?.message ? safeMessage(workerFailure.message) : `自動字幕を完了できませんでした。（${phase}）`,
         errorCode,
-        diagnostics: errorCode === 'CANCELLED' ? undefined : [{ level: 'error', code: `AUTO_CAPTION_${phase.toUpperCase()}`, message: `failure phase=${phase}; reason=${safeMessage(message).slice(0, 200) || 'unknown'}` }]
+        diagnostics
       })
     } finally {
       this.active.delete(jobId)

@@ -22,6 +22,15 @@ export interface SubtitleLayoutResult {
 export const subtitleMaxWidthPercent = (style: Pick<SubtitleStyle, 'maxWidthPercent'>): number =>
   Number.isFinite(style.maxWidthPercent) && style.maxWidthPercent > 0 ? style.maxWidthPercent : 80
 
+/**
+ * Canonical subtitle line-box width used by both CSS Preview and ASS layout.
+ * This is a wrapping limit, not the width of the text-sized background box.
+ */
+export const subtitleMaxWidthPx = (
+  style: Pick<SubtitleStyle, 'maxWidthPercent'>,
+  sequenceWidth: number
+): number => Math.max(16, Number.isFinite(sequenceWidth) ? sequenceWidth : 1920) * subtitleMaxWidthPercent(style) / 100
+
 export const normalizeSubtitleMaxLines = (value: unknown): number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= MIN_SUBTITLE_MAX_LINES && value <= MAX_SUBTITLE_MAX_LINES
     ? value
@@ -52,7 +61,7 @@ const wordTokens = (text: string): string[] => {
 
 export const layoutSubtitleText = (text: string, style: Pick<SubtitleStyle, 'fontSize' | 'letterSpacing' | 'maxWidthPercent'>, sequenceWidth: number, requestedMaxLines?: number): SubtitleLayoutResult => {
   const maxLines = normalizeSubtitleMaxLines(requestedMaxLines)
-  const width = Math.max(16, sequenceWidth) * subtitleMaxWidthPercent(style) / 100
+  const width = subtitleMaxWidthPx(style, sequenceWidth)
   const glyphWidth = Math.max(1, style.fontSize)
   const letterSpacing = Math.max(0, style.letterSpacing)
   const tokenWidth = (token: string): number => graphemes(token).reduce((sum, grapheme) => {
