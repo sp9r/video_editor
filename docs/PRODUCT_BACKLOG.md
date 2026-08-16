@@ -13,7 +13,7 @@
 - `READY_FOR_HUMAN_REVIEW` — 自動テストは通ったが、GUI・聴感・操作感の人間確認が必要。
 - `DONE` — 実装・回帰確認済み。主観評価が必要な項目は人間確認後のみDONEにする。
 - `BLOCKED` — 外部依存または原因未確定で停止中。
-- `VERIFY` — 過去に要望が出たが、現在の実装状態を再確認する必要がある。
+- `VERIFY` — 過去に要望が出た、または条件依存で再現が必要な項目。
 
 ### ChatGPT / Luna workflow
 
@@ -30,9 +30,46 @@
 
 ## Current priorities / active investigation
 
+### AUD-001 — Preview再生してもスピーカーから音が出ない
+
+**Status:** `PLANNED`
+
+**User feedback:** Timelineを再生しても、スピーカーから音声が正常に出力されない。
+
+**Priority:** 高。通常編集の基本動作なので、次に実装へ進める場合は最優先でroot causeを切り分ける。
+
+**Investigation direction:**
+
+- source media自体にaudio streamが存在するか。
+- Previewで使用している`HTMLMediaElement` / audio elementがmutedになっていないか、volumeが0になっていないか。
+- video/audio clipのlinked状態、track mute/solo、asset mapping、sourceIn/sourceOut後もaudio sourceが正しいか。
+- split / merge / trim後にaudio elementのsource/time mappingが壊れていないか。
+- Electron/Chromiumのaudio output device問題か、Project model / Preview wiringの問題かを切り分ける。
+- Final renderのaudioとは別問題として扱い、まずPreview playback pathだけを調査する。
+
+**Human acceptance:** Timeline再生で、映像と同期した音声が通常のOS出力デバイスから連続再生されること。
+
+### PREV-001 — Fast Preview字幕が現在時刻へ追従せず古い1枚を表示する
+
+**Status:** `PLANNED`
+
+**User feedback:** 高速Previewで字幕が正しく更新されず、数秒前に描画できた1枚の字幕overlayがそのまま残っているように見える。
+
+**Likely investigation boundary:**
+
+- static subtitle authoritative overlayのcache / in-flight request / stale-result guard。
+- active cueが変わったときに旧overlayを即時clearできているか。
+- prefetchした次cue overlayへのboundary swap。
+- Fast Preview再生中のplayhead/currentTimeからactive subtitle visual stateが継続更新されているか。
+- `last successful overlay`を保持する既存UXが、cue変更後にも誤って残っていないか。
+
+**Do not assume root cause yet:** Stage 27.1Bでは字幕表示あり/hiddenでCPU差はなく、overlay自体のCPU高負荷は観測されていない。今回の問題はperformanceではなくstale presentation / synchronization bugとして切り分ける。
+
+**Human acceptance:** 再生中、字幕cue boundaryに合わせて字幕が切替・消失し、過去cueの画像が残留しないこと。
+
 ### PERF-001 — Previewの実ユーザー環境での高CPU・非リアルタイム再生
 
-**Status:** `READY_FOR_HUMAN_REVIEW`
+**Status:** `VERIFY`
 
 **User need:** Preview再生がCPU 100%近くになり、リアルタイムに追いつかないケースを解消したい。
 
@@ -41,17 +78,17 @@
 - Stage 27.1: 自動再現ではTotal CPU約25〜27%。FFmpeg / Accurate Previewは再生中に未稼働。
 - Stage 27.1B: 実字幕68件の表示あり/hiddenをA/B比較してもTotal CPU約17.8〜17.9%で差なし。
 - 字幕overlay自体は主要因ではない可能性が高い。
-- 実ユーザーが遭遇した高負荷条件はまだ自動再現できていない。
 - Stage 27.1C: 低オーバーヘッドのPreview Performance Diagnostic UIをローカル未commit状態で実装。targeted 14 tests、typecheck、build PASS。
 - 診断では再生、rAF、React/store、字幕overlay/cache、waveform、Accurate Preview/FFmpeg、表示条件、JS heapを集計できる。
 - 毎frame大量logは行わず、counter/aggregateのみで停止時にsummaryを出す。
+- 最新の人間確認ではCPU/GPU使用率は問題ない状態だった。
+- ユーザー推測として、clipの結合など複数編集を重ねた後に高負荷化する可能性がある。
 
-**Human gate:**
+**Next reproduction target:**
 
-- 実際に高CPU・非リアルタイムになるユーザープロジェクト/操作条件で診断を開始する。
-- 30秒程度通常どおり再生して診断停止し、summaryをChatGPTへ渡す。
-- その結果をもとにdecode / Renderer / React-store updates / Timeline / GPU process / DPI・解像度条件のどこを次に掘るか決定する。
-- 診断機能自体はまだcommit/pushしない。人間キャプチャで有効性を確認してから扱いを決める。
+- 単純な字幕有無A/Bではなく、split / merge / trim / 結合など編集操作を複数回行ったProjectで再現するか確認する。
+- 高負荷が再発した場合だけStage 27.1C diagnosticを取得する。
+- 問題が出ていない通常状態ではperformance修正を進めない。
 
 ---
 
