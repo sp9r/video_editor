@@ -344,6 +344,21 @@ Direct NVENC probeは既存QAでPASSしているが、実GUI renderではCPU/lib
 - clip_automation: 307 tests + compileall PASS
 - typecheck / build / Electron startup / interaction / accurate-preview / subtitle geometry / parity PASS
 
+### Stage 28 checkpoint — Preview / Timeline UX integration regression
+
+**Status:** `CHECKPOINT COMPLETE — ONE PRE-EXISTING TEST FOLLOW-UP`
+
+- 対象: Stage 28.2〜28.8（Preview audio、PREV-001、Timeline follow scroll、drag edge scroll、ruler scrub、shift-free horizontal scroll、context menu）。
+- `npm.cmd run build`: PASS
+- Electron startup smoke: PASS
+- interaction smoke: PASS
+- accurate-preview smoke: PASS
+- subtitle parity: PASS
+- subtitle geometry: PASS
+- Timeline interaction regression: 13 tests PASS
+- Stage 26 representative regression（Auto Caption / Template / Font dropdown / maxWidth）: 6 files / 49 tests PASS
+- full test suite: 56 files / 325 tests中324 PASS。残る1件は`tests/main/ffmpeg-integration.test.ts`のoverlay cache metadata（初回`cacheHit=false`と2回目`cacheHit=true`を完全一致比較）で、Stage 28変更とは無関係の既存期待値不一致。今回のscope外のため修正していない。
+
 ---
 
 ## Notes for future Luna tasks
