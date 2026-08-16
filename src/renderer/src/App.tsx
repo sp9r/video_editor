@@ -30,6 +30,7 @@ import Timeline from './components/Timeline'
 import ReviewPanel from './components/ReviewPanel'
 import SubtitleTemplateManagerPanel from './components/SubtitleTemplateManagerPanel'
 import SubtitleTemplatePreview from './components/SubtitleTemplatePreview'
+import { previewDiagnosticStore } from './preview-performance-diagnostics'
 import { useEditorStore, type AutoCaptionApplySummary } from './store'
 import { useReviewStore } from './review-store'
 import { autoCaptionControlState } from './action-state'
@@ -81,6 +82,11 @@ export default function App(): React.JSX.Element {
     finishFullCorrection,
     clearFullCorrectionResult
   } = useEditorStore()
+
+  useEffect(() => useEditorStore.subscribe((state, previous) => {
+    previewDiagnosticStore.recordStoreUpdate(state.playheadUs !== previous.playheadUs, state.project !== previous.project, state.playing)
+  }), [])
+
   const [workspace, setWorkspace] = useState<'edit' | 'audio' | 'captions'>('edit')
   const [exportOpen, setExportOpen] = useState(false)
   const [saving, setSaving] = useState(false)

@@ -299,7 +299,7 @@ export class FfmpegService {
     const cached = this.#accurateFrames.get(cacheKey)
     if (cached) {
       const cachedFrame = await cached
-      return { ...cachedFrame, requestedTimeUs }
+      return { ...cachedFrame, requestedTimeUs, cacheHit: true, ffmpegStarted: false }
     }
     const promise = this.#renderAccurateFrame(plan, cacheKey, {
       requestedTimeUs,
@@ -315,7 +315,8 @@ export class FfmpegService {
       this.#accurateFrames.delete(oldest)
     }
     try {
-      return await promise
+      const rendered = await promise
+      return { ...rendered, cacheHit: rendered.ffmpegStarted === false }
     } catch (error) {
       if (this.#accurateFrames.get(cacheKey) === promise) this.#accurateFrames.delete(cacheKey)
       throw error
@@ -347,7 +348,7 @@ export class FfmpegService {
       subtitleStateFingerprint
     })).digest('hex')
     const cached = this.#subtitleOverlays.get(cacheKey)
-    if (cached) return await cached
+    if (cached) return { ...(await cached), cacheHit: true, ffmpegStarted: false }
     const promise = this.#renderSubtitleOverlay(project, cacheKey, {
       frameIndex,
       renderedTimeUs,
@@ -363,7 +364,8 @@ export class FfmpegService {
       void Promise.resolve(value).then((result) => result ? rm(result.framePath, { force: true }) : undefined).catch(() => undefined)
     }
     try {
-      return await promise
+      const rendered = await promise
+      return { ...rendered, cacheHit: rendered.ffmpegStarted === false }
     } catch (error) {
       if (this.#subtitleOverlays.get(cacheKey) === promise) this.#subtitleOverlays.delete(cacheKey)
       throw error
@@ -379,7 +381,7 @@ export class FfmpegService {
     const outputPath = join(directory, `${cacheKey}.png`)
     try {
       const existing = await stat(outputPath)
-      if (existing.isFile() && existing.size > 0) return { framePath: outputPath, ...metadata }
+      if (existing.isFile() && existing.size > 0) return { framePath: outputPath, ...metadata, ffmpegStarted: false }
     } catch {
       // The bounded cache is best effort; render a missing or invalid entry again.
     }
@@ -423,7 +425,7 @@ export class FfmpegService {
       const rendered = await stat(temporaryPath)
       if (!rendered.isFile() || rendered.size === 0) throw new Error('Accurate preview renderer produced an empty frame')
       await moveIntoPlace(temporaryPath, outputPath)
-      return { framePath: outputPath, ...metadata }
+      return { framePath: outputPath, ...metadata, ffmpegStarted: true }
     } finally {
       await Promise.all([
         rm(temporaryPath, { force: true }).catch(() => undefined),
@@ -443,7 +445,7 @@ export class FfmpegService {
     try {
       const existing = await stat(outputPath)
       if (existing.isFile() && existing.size > 0) {
-        return { framePath: outputPath, frameIndex: metadata.frameIndex, subtitleStateFingerprint: metadata.subtitleStateFingerprint }
+        return { framePath: outputPath, frameIndex: metadata.frameIndex, subtitleStateFingerprint: metadata.subtitleStateFingerprint, ffmpegStarted: false }
       }
     } catch {
       // The bounded memory/disk cache is best effort; render a missing entry again.
@@ -498,7 +500,7 @@ export class FfmpegService {
       if (!rendered.isFile() || rendered.size === 0) throw new Error('Subtitle overlay renderer produced an empty frame')
       await moveIntoPlace(temporaryPath, outputPath)
       await trimSubtitleOverlayDiskCache(directory)
-      return { framePath: outputPath, frameIndex: metadata.frameIndex, subtitleStateFingerprint: metadata.subtitleStateFingerprint }
+      return { framePath: outputPath, frameIndex: metadata.frameIndex, subtitleStateFingerprint: metadata.subtitleStateFingerprint, ffmpegStarted: true }
     } finally {
       await Promise.all([
         rm(temporaryPath, { force: true }).catch(() => undefined),

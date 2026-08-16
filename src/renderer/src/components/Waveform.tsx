@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { MediaAsset, TimelineClip } from '../../../shared/types'
+import { previewDiagnosticStore } from '../preview-performance-diagnostics'
 
 const cache = new Map<string, Promise<number[]>>()
 
@@ -13,7 +14,11 @@ const loadPeaks = (asset: MediaAsset, clip: TimelineClip, peakCount: number): Pr
   if (!window.spectra) return Promise.resolve([])
   const key = waveformKey(asset, clip, peakCount)
   const existing = cache.get(key)
-  if (existing) return existing
+  if (existing) {
+    previewDiagnosticStore.recordWaveformRequest(true)
+    return existing
+  }
+  previewDiagnosticStore.recordWaveformRequest(false)
   const request = window.spectra.getWaveformPeaks({
     mediaPath: asset.path,
     sourceInUs: clip.sourceInUs,

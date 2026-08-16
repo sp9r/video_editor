@@ -27,6 +27,7 @@ import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type Su
 import { editorDurationUs, useEditorStore } from '../store'
 import { TIMELINE_ZOOM_MAX, TIMELINE_ZOOM_MIN, timelineZoomControlState, trackControlState } from '../action-state'
 import { useReviewStore } from '../review-store'
+import { previewDiagnosticStore } from '../preview-performance-diagnostics'
 import { Button, IconButton } from './Controls'
 import { peakCountForPixelWidth, Waveform } from './Waveform'
 
@@ -183,6 +184,7 @@ function TrackControls({ track, tracks }: { track: TimelineTrack; tracks: Timeli
 
 export default function Timeline(): React.JSX.Element {
   const state = useEditorStore()
+  previewDiagnosticStore.recordComponentRender('timeline')
   const review = useReviewStore()
   const {
     project,

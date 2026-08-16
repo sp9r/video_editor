@@ -237,12 +237,20 @@ export interface AccuratePreviewFrameResult {
   renderedTimeUs: TimeUs
   frameIndex: number
   projectFingerprint: string
+  /** Diagnostic-only cache metadata; omitted by older providers. */
+  cacheHit?: boolean
+  /** Diagnostic-only indication that the request spawned FFmpeg. */
+  ffmpegStarted?: boolean
 }
 
 export interface SubtitleOverlayResult {
   framePath: string
   frameIndex: number
   subtitleStateFingerprint: string
+  /** Diagnostic-only cache metadata; omitted by older providers. */
+  cacheHit?: boolean
+  /** Diagnostic-only indication that the request spawned FFmpeg. */
+  ffmpegStarted?: boolean
 }
 
 export interface WaveformRequest {

@@ -540,6 +540,14 @@ select {
 .viewer-quality { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--text-dim); font-size: 9px; }
 .viewer-quality i { width: 5px; height: 5px; background: var(--mint); border-radius: 50%; }
 .preview-accurate-error { color: var(--red); font-size: 8px; }
+.preview-diagnostic-controls { position: relative; z-index: 80; display: flex; align-items: center; margin-left: 10px; }
+.preview-diagnostic-button,
+.preview-diagnostic-copy { padding: 3px 7px; color: var(--text-dim); font: inherit; font-size: 9px; background: #20262d; border: 1px solid var(--line); border-radius: 3px; cursor: pointer; }
+.preview-diagnostic-button:hover,
+.preview-diagnostic-copy:hover { color: var(--text); border-color: var(--mint); }
+.preview-diagnostic-result { position: absolute; top: 30px; right: 0; width: min(600px, 80vw); padding: 8px; color: var(--text); background: #171b21; border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 12px 30px rgb(0 0 0 / .45); }
+.preview-diagnostic-result summary { cursor: pointer; font-size: 10px; }
+.preview-diagnostic-result pre { max-height: min(60vh, 520px); margin: 8px 0; overflow: auto; color: #cbd3d7; font: 10px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .viewer-stage { display: flex; align-items: center; justify-content: center; min-height: 0; padding: 12px 24px 8px; background: radial-gradient(ellipse at center, #242a31, #101318 67%); }
 .viewer-canvas { position: relative; height: 100%; max-height: 100%; aspect-ratio: 16 / 9; max-width: 100%; overflow: hidden; box-shadow: 0 8px 25px rgb(0 0 0 / 0.55); }
 .preview-scene { position: absolute; top: 50%; left: 50%; overflow: hidden; transform-origin: center; background: transparent; }

@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-react'
 import { formatTimecode, projectDurationUs } from '../../../shared/project'
 import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
 import { activeSubtitleClips, buildSubtitleRenderSpec, subtitleAnchorTransform, subtitleVisualStateKey } from '../../../shared/subtitle-render'
 import { canonicalShadowBlurRadius } from '../../../shared/subtitle-shadow'
 import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip, SubtitleOverlayResult } from '../../../shared/types'
+import { previewDiagnosticContext, previewDiagnosticStore } from '../preview-performance-diagnostics'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
 import { LatestSubtitleOverlayScheduler } from '../subtitle-overlay-scheduler'
@@ -103,8 +104,43 @@ const nextStaticSubtitleTime = (project: Parameters<typeof activeSubtitleClips>[
   return next?.startUs ?? null
 }
 
+function PreviewDiagnosticControls({ project, playheadUs, playing, viewportSize }: { project: Parameters<typeof previewDiagnosticContext>[0]; playheadUs: number; playing: boolean; viewportSize: { width: number; height: number } }): React.JSX.Element {
+  const state = useSyncExternalStore(previewDiagnosticStore.subscribe, previewDiagnosticStore.getSnapshot, previewDiagnosticStore.getSnapshot)
+  const currentContext = (): ReturnType<typeof previewDiagnosticContext> => previewDiagnosticContext(project, {
+    cssWidth: viewportSize.width,
+    cssHeight: viewportSize.height,
+    viewportWidth: typeof window === 'undefined' ? 0 : window.innerWidth,
+    viewportHeight: typeof window === 'undefined' ? 0 : window.innerHeight
+  }, playheadUs, playing)
+  const copyReport = (): void => {
+    if (!state.report || typeof navigator === 'undefined' || !navigator.clipboard) return
+    void navigator.clipboard.writeText(JSON.stringify(state.report, null, 2)).catch(() => undefined)
+  }
+  const reportText = state.report ? JSON.stringify(state.report, null, 2) : ''
+  return (
+    <div className="preview-diagnostic-controls">
+      <button
+        type="button"
+        className="preview-diagnostic-button"
+        aria-label={state.active ? 'Preview診断を停止' : 'Preview診断を開始'}
+        onClick={() => state.active ? previewDiagnosticStore.stop(currentContext()) : previewDiagnosticStore.start(currentContext())}
+      >
+        {state.active ? 'Preview診断を停止' : 'Preview診断を開始'}
+      </button>
+      {state.report && (
+        <details className="preview-diagnostic-result" open>
+          <summary>診断結果</summary>
+          <pre>{reportText}</pre>
+          <button type="button" className="preview-diagnostic-copy" onClick={copyReport}>診断結果をコピー</button>
+        </details>
+      )}
+    </div>
+  )
+}
+
 export default function Preview(): React.JSX.Element {
   const { project, playheadUs, setPlayhead, playing, setPlaying, selectClip, showNotice } = useEditorStore()
+  previewDiagnosticStore.recordComponentRender('preview')
   const [renderPlan, setRenderPlan] = useState<PreviewPlan | null>(null)
   const [accurateFrame, setAccurateFrame] = useState<AccuratePreviewFrameResult | null>(null)
   const [accurateRendering, setAccurateRendering] = useState(false)
@@ -135,6 +171,10 @@ export default function Preview(): React.JSX.Element {
       cueKey: active.map(({ clip, trackIndex }) => `${trackIndex}:${clip.id}`).join('|')
     }
   }, [playheadUs, project])
+
+  useEffect(() => {
+    previewDiagnosticStore.recordSubtitleVisualState(activeSubtitleState.key)
+  }, [activeSubtitleState.key])
 
   useEffect(() => () => subtitleOverlayScheduler.current.dispose(), [])
 
@@ -181,8 +221,10 @@ export default function Preview(): React.JSX.Element {
     const api = window.spectra
     const timeout = window.setTimeout(() => {
       if (!api) return
+      previewDiagnosticStore.recordAccurateRequest()
       void api.renderAccuratePreviewFrame(project, playheadUs)
         .then((result) => {
+          previewDiagnosticStore.recordAccurateOutcome(result.cacheHit ?? !result.ffmpegStarted, Boolean(result.ffmpegStarted))
           if (sequence !== accurateRequestSequence.current || useEditorStore.getState().playing) return
           setAccurateFrame(result)
           setAccurateRendering(false)
@@ -209,12 +251,19 @@ export default function Preview(): React.JSX.Element {
     if (cueChanged) setSubtitleOverlay(null)
     setSubtitleOverlayRendering(true)
     const api = window.spectra
+    const requestOverlay = (timeUs: number, key: string): Promise<SubtitleOverlayResult> => {
+      previewDiagnosticStore.recordSubtitleOverlayRequest(key)
+      return api.renderSubtitleOverlay(project, timeUs).then((result) => {
+        previewDiagnosticStore.recordSubtitleOverlayOutcome(result.cacheHit ?? !result.ffmpegStarted)
+        return result
+      })
+    }
     const requestedKey = activeSubtitleState.key
     const requestedCueKey = activeSubtitleState.cueKey
     subtitleOverlayScheduler.current.schedule({
       key: requestedKey,
       debounceMs: cueChanged ? 0 : 40,
-      run: () => api.renderSubtitleOverlay(project, playheadRef.current),
+      run: () => requestOverlay(playheadRef.current, requestedKey),
       onCommit: (result, key) => {
         if (sequence !== subtitleOverlayRequestSequence.current || !useEditorStore.getState().playing) return
         setSubtitleOverlay({ result, visualKey: key, cueKey: requestedCueKey })
@@ -225,7 +274,7 @@ export default function Preview(): React.JSX.Element {
         const nextKey = subtitleVisualStateKey(project, nextTimeUs)
         if (subtitlePrefetchKey.current === nextKey) return
         subtitlePrefetchKey.current = nextKey
-        void api.renderSubtitleOverlay(project, nextTimeUs).catch(() => undefined)
+        void requestOverlay(nextTimeUs, nextKey).catch(() => undefined)
       },
       onError: (error) => {
         if (sequence !== subtitleOverlayRequestSequence.current || !useEditorStore.getState().playing) return
@@ -247,6 +296,15 @@ export default function Preview(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    previewDiagnosticStore.updateContext(previewDiagnosticContext(project, {
+      cssWidth: viewportSize.width,
+      cssHeight: viewportSize.height,
+      viewportWidth: typeof window === 'undefined' ? 0 : window.innerWidth,
+      viewportHeight: typeof window === 'undefined' ? 0 : window.innerHeight
+    }, playheadUs, playing))
+  }, [playing, project, viewportSize.height, viewportSize.width])
+
+  useEffect(() => {
     if (!playing) {
       if (requestRef.current !== null) cancelAnimationFrame(requestRef.current)
       lastFrameRef.current = 0
@@ -258,6 +316,17 @@ export default function Preview(): React.JSX.Element {
       lastFrameRef.current = timestamp
       const state = useEditorStore.getState()
       const next = state.playheadUs + elapsedUs
+      previewDiagnosticStore.recordAnimationFrame(timestamp, next)
+      if (previewDiagnosticStore.getSnapshot().active) {
+        const videos = canvasRef.current?.querySelectorAll('video') ?? []
+        for (const video of videos) {
+          const quality = typeof video.getVideoPlaybackQuality === 'function' ? video.getVideoPlaybackQuality() : null
+          previewDiagnosticStore.recordVideoPlaybackQuality(quality ? {
+            droppedVideoFrames: quality.droppedVideoFrames,
+            totalVideoFrames: quality.totalVideoFrames
+          } : null)
+        }
+      }
       if (next >= Math.max(renderPlan?.durationUs ?? projectDurationUs(state.project), 1_000_000)) {
         state.setPlayhead(0)
         state.setPlaying(false)
@@ -324,6 +393,7 @@ export default function Preview(): React.JSX.Element {
           {accurateError && <small className="preview-accurate-error" title={accurateError}>取得失敗</small>}
           {subtitleOverlayError && <small className="preview-accurate-error" title={subtitleOverlayError}>字幕更新失敗</small>}
         </span>
+        <PreviewDiagnosticControls project={project} playheadUs={playheadUs} playing={playing} viewportSize={viewportSize} />
       </header>
       <div className="viewer-stage">
         <div ref={canvasRef} className="viewer-canvas" style={{ background: project.sequence.backgroundColor, aspectRatio: `${project.sequence.width} / ${project.sequence.height}` }}>
