@@ -39,6 +39,19 @@ const parseSession = (input: unknown): FullCorrectionSession => {
   return structuredClone(value as FullCorrectionSession)
 }
 
+const renameAtomicallyWithWindowsRetry = async (temporary: string, target: string): Promise<void> => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(temporary, target)
+      return
+    } catch (error) {
+      const code = (error as { code?: string }).code
+      if (!['EPERM', 'EBUSY'].includes(code ?? '') || attempt >= 4) throw error
+      await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)))
+    }
+  }
+}
+
 const writeSession = async (session: FullCorrectionSession): Promise<void> => {
   const targetDirectory = directory()
   await mkdir(targetDirectory, { recursive: true })
@@ -46,7 +59,7 @@ const writeSession = async (session: FullCorrectionSession): Promise<void> => {
   const temporary = path.join(targetDirectory, `.${session.sessionId}.${process.pid}.${Date.now()}.tmp`)
   try {
     await writeFile(temporary, `${JSON.stringify(session, null, 2)}\n`, 'utf8')
-    await rename(temporary, target)
+    await renameAtomicallyWithWindowsRetry(temporary, target)
   } finally {
     await unlink(temporary).catch(() => undefined)
   }
