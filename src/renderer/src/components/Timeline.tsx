@@ -72,6 +72,34 @@ export const subtitleBoundaryPositionUs = (pair: SubtitleBoundaryPair): number =
   return (leftEndUs + rightStartUs) / 2
 }
 
+export interface SubtitleBoundaryGuide {
+  subtitleId: string
+  side: 'start' | 'end'
+  timeUs: TimeUs
+  leftPercent: number
+}
+
+/** Derives only subtitle cue boundaries that fall inside a video clip. */
+export const subtitleBoundaryGuidesForVideoClip = (
+  videoClip: Pick<TimelineClip, 'kind' | 'startUs' | 'durationUs'>,
+  subtitleClips: readonly Pick<SubtitleClip, 'id' | 'startUs' | 'durationUs'>[]
+): SubtitleBoundaryGuide[] => {
+  if (videoClip.kind !== 'video' || videoClip.durationUs <= 0) return []
+  const videoEndUs = videoClip.startUs + videoClip.durationUs
+  const guides: SubtitleBoundaryGuide[] = []
+  for (const subtitle of subtitleClips) {
+    const boundaries: Array<['start' | 'end', TimeUs]> = [
+      ['start', subtitle.startUs],
+      ['end', subtitle.startUs + subtitle.durationUs]
+    ]
+    for (const [side, timeUs] of boundaries) {
+      if (timeUs < videoClip.startUs || timeUs > videoEndUs) continue
+      guides.push({ subtitleId: subtitle.id, side, timeUs, leftPercent: ((timeUs - videoClip.startUs) / videoClip.durationUs) * 100 })
+    }
+  }
+  return guides
+}
+
 export const timelineSplitMenuState = (clip: TimelineClip | undefined, locked = false): { disabled: boolean; label: string } => {
   if (!clip) return { disabled: true, label: '分割対象がありません' }
   if (locked) return { disabled: true, label: 'ロック中のため分割不可' }
@@ -293,9 +321,14 @@ export default function Timeline(): React.JSX.Element {
   const [razorGhost, setRazorGhost] = useState<RazorGhost | null>(null)
   const [mergeHoverKey, setMergeHoverKey] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; clipId: string } | null>(null)
+  const [viewportWindow, setViewportWindow] = useState({ scrollLeft: 0, clientWidth: 0 })
+  const viewportUpdateRaf = useRef<number | null>(null)
   const durationUs = editorDurationUs(project)
   const timelineWidth = Math.max(900, seconds(durationUs) * zoomPxPerSecond)
   const ticks = useMemo(() => ticksFor(durationUs, zoomPxPerSecond), [durationUs, zoomPxPerSecond])
+  const subtitleClips = useMemo(() => project.tracks
+    .filter((track) => track.kind === 'subtitle' && !track.hidden)
+    .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && clip.enabled)), [project])
   const contextClip = contextMenu ? project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === contextMenu.clipId) : undefined
   const contextTrack = contextClip ? project.tracks.find((track) => track.clips.some((clip) => clip.id === contextClip.id)) : undefined
   const contextSplitMenu = timelineSplitMenuState(contextClip, contextTrack?.locked ?? false)
@@ -303,6 +336,31 @@ export default function Timeline(): React.JSX.Element {
   const canMergePrevious = Boolean(contextSubtitle?.previous && !contextTrack?.locked)
   const canMergeNext = Boolean(contextSubtitle?.next && !contextTrack?.locked)
   const zoomControls = timelineZoomControlState(zoomPxPerSecond)
+
+  const scheduleViewportWindowUpdate = (): void => {
+    const update = (): void => {
+      const viewport = viewportRef.current
+      if (!viewport) return
+      setViewportWindow({ scrollLeft: viewport.scrollLeft, clientWidth: viewport.clientWidth })
+    }
+    if (typeof window.requestAnimationFrame !== 'function') {
+      update()
+      return
+    }
+    if (viewportUpdateRaf.current !== null) return
+    viewportUpdateRaf.current = window.requestAnimationFrame(() => {
+      viewportUpdateRaf.current = null
+      update()
+    })
+  }
+
+  useLayoutEffect(() => {
+    scheduleViewportWindowUpdate()
+  }, [timelineWidth, zoomPxPerSecond, project.tracks.length])
+
+  useEffect(() => () => {
+    if (viewportUpdateRaf.current !== null) window.cancelAnimationFrame(viewportUpdateRaf.current)
+  }, [])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -582,7 +640,7 @@ export default function Timeline(): React.JSX.Element {
         <div
           className="timeline-viewport"
           ref={viewportRef}
-          onScroll={(event) => { if (labelsRef.current) labelsRef.current.scrollTop = event.currentTarget.scrollTop }}
+          onScroll={(event) => { if (labelsRef.current) labelsRef.current.scrollTop = event.currentTarget.scrollTop; scheduleViewportWindowUpdate() }}
           onWheel={(event) => {
             if (event.ctrlKey || event.metaKey) {
               event.preventDefault()
@@ -659,6 +717,11 @@ export default function Timeline(): React.JSX.Element {
                   const visualWidth = clip.durationUs / 1_000_000 * zoomPxPerSecond + (edit?.mode === 'trim-start' ? -deltaPx : edit?.mode === 'trim-end' ? deltaPx : 0)
                   const selected = selectedClipIds.includes(clip.id)
                   const clipKindLabel = clip.kind === 'subtitle' ? '字幕' : clip.kind === 'audio' ? '音声' : '映像'
+                  const viewportWidth = viewportWindow.clientWidth > 0 ? viewportWindow.clientWidth : 900
+                  const clipVisible = visualLeft + visualWidth >= viewportWindow.scrollLeft - 128 && visualLeft <= viewportWindow.scrollLeft + viewportWidth + 128
+                  const subtitleGuides = clip.kind === 'video' && !edit && clipVisible
+                    ? subtitleBoundaryGuidesForVideoClip(clip, subtitleClips)
+                    : []
                   return (
                     <div
                       key={clip.id}
@@ -694,6 +757,14 @@ export default function Timeline(): React.JSX.Element {
                           ))}
                         </div>
                       ) : null}
+                      {subtitleGuides.map((guide) => <span
+                        key={`${guide.subtitleId}:${guide.side}`}
+                        className={`subtitle-boundary-guide is-${guide.side}`}
+                        style={{ left: `${guide.leftPercent}%` }}
+                        data-subtitle-id={guide.subtitleId}
+                        data-boundary-side={guide.side}
+                        aria-hidden="true"
+                      />)}
                       <span className="clip-content">{clipGlyph(clip)}{clip.linkGroupId ? <Link2 className="clip-link-icon" size={12} aria-label="リンクされたクリップ" /> : null}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
                       {razorGhost?.clipId === clip.id ? <span
                         className="subtitle-razor-ghost"

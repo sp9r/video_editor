@@ -168,7 +168,7 @@
 
 ### UX-TL-004 — Video / Subtitle対応関係の可視化
 
-**Status:** `IDEA`
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
 
 **User idea:** video clipとsubtitle clipを密に連携させ、字幕の区切れ位置と映像の編集位置の対応をTimeline上で分かりやすくしたい。字幕を映像clip上へ重ねて見せる案も含む。
 
@@ -178,6 +178,17 @@
 - SubtitleWord / SubtitleClipのsource/timeline mappingを使い、字幕boundaryをvideo clip上へguideとして表示できるか検討する。
 - subtitle track自体を物理的にvideo trackへ統合するかは未決定。既存track modelや編集性を壊さない設計を優先する。
 - linked video/audio/subtitleを選択・split・trimした際の対応関係を視覚的に示す。
+
+**Implemented (Stage 29.3):**
+
+- subtitle trackを正式な編集場所として維持。
+- 現在のsubtitle clipのstart/endが重なるvideo clip内に、派生boundary guideを表示。
+- video clip外のboundaryは表示しない。
+- split / trim後もProject Modelの現在のtimeline timingから再計算。
+- 長尺Timelineではviewport近傍のvideo clipだけguideを生成。
+- data model、`linkGroupId`、永続video/subtitle linkは変更しない。
+
+**Human acceptance:** 実動画で字幕境界guideの位置と、subtitle split / trim後の追従を確認する。
 
 ### UX-TL-005 — Ruler drag scrubbing
 

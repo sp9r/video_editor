@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineScrubTimeUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
+import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryGuidesForVideoClip, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineScrubTimeUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
 import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
 
@@ -108,5 +108,21 @@ describe('timeline interaction guards', () => {
     expect(subtitleBoundaryPairs({ kind: 'subtitle', clips: [left, right] } as never)).toHaveLength(1)
     expect(subtitleBoundaryPositionUs({ left, right } as never)).toBe(1_100)
     expect(subtitleBoundaryPairs({ kind: 'subtitle', clips: [left, invalid] } as never)).toHaveLength(0)
+  })
+
+  it('derives only subtitle cue boundaries inside each video clip', () => {
+    const video = { kind: 'video' as const, startUs: 10_000_000, durationUs: 10_000_000 }
+    const subtitles = [
+      { id: 'before-and-overlap', startUs: 8_000_000, durationUs: 4_000_000 },
+      { id: 'inside', startUs: 14_000_000, durationUs: 2_000_000 },
+      { id: 'overlap-and-after', startUs: 18_000_000, durationUs: 4_000_000 },
+      { id: 'outside', startUs: 1_000_000, durationUs: 2_000_000 }
+    ]
+    expect(subtitleBoundaryGuidesForVideoClip(video, subtitles)).toEqual([
+      { subtitleId: 'before-and-overlap', side: 'end', timeUs: 12_000_000, leftPercent: 20 },
+      { subtitleId: 'inside', side: 'start', timeUs: 14_000_000, leftPercent: 40 },
+      { subtitleId: 'inside', side: 'end', timeUs: 16_000_000, leftPercent: 60 },
+      { subtitleId: 'overlap-and-after', side: 'start', timeUs: 18_000_000, leftPercent: 80 }
+    ])
   })
 })
