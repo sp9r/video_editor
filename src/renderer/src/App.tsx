@@ -9,6 +9,7 @@ import {
   FilePlus2,
   FolderOpen,
   MonitorUp,
+  ClipboardList,
   Redo2,
   Save,
   Scissors,
@@ -30,6 +31,7 @@ import MediaBin from './components/MediaBin'
 import Preview from './components/Preview'
 import Timeline from './components/Timeline'
 import ReviewPanel from './components/ReviewPanel'
+import SubtitleReviewWorkspace from './components/SubtitleReviewWorkspace'
 import SubtitleTemplateManagerPanel from './components/SubtitleTemplateManagerPanel'
 import SubtitleTemplatePreview from './components/SubtitleTemplatePreview'
 import ProjectQaPanel from './components/ProjectQaPanel'
@@ -93,6 +95,7 @@ export default function App(): React.JSX.Element {
   const [workspace, setWorkspace] = useState<'edit' | 'audio' | 'captions'>('edit')
   const [exportOpen, setExportOpen] = useState(false)
   const [qaOpen, setQaOpen] = useState(false)
+  const [subtitleReviewOpen, setSubtitleReviewOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [recoveryStatus, setRecoveryStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [encoderReport, setEncoderReport] = useState<EncoderReport | null>(null)
@@ -531,6 +534,7 @@ export default function App(): React.JSX.Element {
           <Button className="save-button" disabled={saving} title={saving ? '保存中です' : 'プロジェクトを保存'} onClick={() => void save()}><Save size={15} />{saving ? '保存中…' : '保存'}</Button>
           <Button className="subtle-button" onClick={() => setTemplateManagerOpen(true)}>テンプレート</Button>
           <Button className={qaReport.errorCount ? 'qa-button has-errors' : 'qa-button'} onClick={() => setQaOpen(true)} title="Project QAを開く">QA{qaReport.errorCount ? ` (${qaReport.errorCount})` : ''}</Button>
+          <Button className="review-workspace-button" onClick={() => setSubtitleReviewOpen(true)} title="字幕レビューを開く"><ClipboardList size={15} />字幕レビュー</Button>
           <Button className={reviewEnabled ? 'review-toggle is-active' : 'review-toggle'} onClick={() => {
             if (reviewEnabled) useReviewStore.getState().stop()
             else if (!useReviewStore.getState().start(project, useEditorStore.getState().selectedClipIds[0])) showNotice('レビュー対象の字幕がありません。', 'warning')
@@ -554,7 +558,8 @@ export default function App(): React.JSX.Element {
         <Inspector />
         <Timeline />
       </div>
-      <ReviewPanel />
+      {!subtitleReviewOpen && <ReviewPanel />}
+      {subtitleReviewOpen && <SubtitleReviewWorkspace project={project} baselines={autoCaptionBaselines} onClose={() => setSubtitleReviewOpen(false)} />}
       {fullCorrectionResult && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) clearFullCorrectionResult() }}>
           <section className="caption-dialog" role="dialog" aria-modal="true" aria-labelledby="full-correction-title">

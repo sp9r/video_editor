@@ -59,6 +59,7 @@ try {
   assert(states.modalClosed?.dialog === false, 'closing the modal must restore the main UI')
   assert(states.subtitleSelected?.fullCorrection?.disabled === false, 'auto-caption subtitle must enable full correction')
   assert(states.reviewMode?.review?.active === true, 'review mode must activate after click')
+  assert(states.reviewWorkspace?.reviewWorkspace?.title === '字幕レビュー', 'subtitle review workspace must open after click')
   assert(states.offlineMedia?.run?.disabled === true && String(states.offlineMedia.run.title).includes('再リンク'), 'offline media must explain disabled auto processing')
   assert(states.noAudio?.run?.disabled === true && String(states.noAudio.run.title).includes('音声'), 'no-audio media must explain disabled auto processing')
   assert(states.multiSelection?.run?.disabled === true && String(states.multiSelection.run.title).includes('1つだけ'), 'multi-selection must explain the single-clip prerequisite')

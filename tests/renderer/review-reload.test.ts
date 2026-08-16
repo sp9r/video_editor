@@ -36,4 +36,15 @@ describe('review reload hydration', () => {
     expect(useReviewStore.getState().start(project, 'caption-reload')).toBe(true)
     expect(useReviewStore.getState().decisions['caption-reload']?.rating).toBe('good')
   })
+
+  it('does not hydrate a review record into a different project', () => {
+    const project = projectWithCaption()
+    expect(useReviewStore.getState().start(project, 'caption-reload')).toBe(true)
+    const record = useReviewStore.getState().decide(project, 'good')
+    const other = projectWithCaption()
+    other.id = 'different-project'
+    useReviewStore.getState().stop()
+    useReviewStore.getState().hydrate(other, [record as ExperimentalReviewRecord])
+    expect(useReviewStore.getState().decisions).toEqual({})
+  })
 })

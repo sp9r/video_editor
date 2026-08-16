@@ -528,9 +528,10 @@ const runInteractionStateSmoke = async (window: BrowserWindow): Promise<Record<s
     const byText = (value) => buttons.find((button) => text(button).includes(value))
     const auto = byText('自動処理')
     const run = byText('実行')
-    const review = byText('レビュー')
+    const review = document.querySelector('button.review-toggle')
     const correction = byText('全文修正')
     const dialog = document.querySelector('.caption-dialog')
+    const reviewWorkspace = document.querySelector('.subtitle-review-workspace')
     return {
       dialog: Boolean(dialog),
       dialogTitle: dialog?.querySelector('h2')?.textContent ?? '',
@@ -538,6 +539,7 @@ const runInteractionStateSmoke = async (window: BrowserWindow): Promise<Record<s
       run: run ? { disabled: run.disabled, title: run.getAttribute('title') ?? '', text: text(run) } : null,
       review: review ? { disabled: review.disabled, text: text(review), active: review.classList.contains('is-active') } : null,
       fullCorrection: correction ? { disabled: correction.disabled, text: text(correction) } : null,
+      reviewWorkspace: reviewWorkspace ? { title: reviewWorkspace.querySelector('h2')?.textContent ?? '' } : null,
       saved: document.querySelector('.project-menu')?.textContent?.includes('保存済み') ?? false,
       focusedTag: document.activeElement?.tagName ?? '',
       rootChildCount: document.querySelector('#root')?.childElementCount ?? 0
@@ -602,6 +604,9 @@ const runInteractionStateSmoke = async (window: BrowserWindow): Promise<Record<s
   await dispatchProject({ project, selectClipId: 'night07-caption' })
   transitions.fullCorrection = await readDom()
   await clickText('レビューON')
+  await clickText('字幕レビュー')
+  transitions.reviewWorkspace = await readDom()
+  await click('.subtitle-review-workspace button[aria-label^="字幕レビューを閉じる"]')
   await dispatchProject({ project: offline })
   await dispatchProject({ project: offline, selectClipId: 'night07-video' })
   await clickText('自動処理')

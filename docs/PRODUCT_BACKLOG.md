@@ -505,6 +505,15 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 - Inspectorの「無音カットを解除」は、generated familyが未変更で一意に照合できる場合だけ実行する。split／trim／delete／別clipの重なり等でmappingが曖昧ならProjectを変更せずreject。復元は1 history transactionでUndo/Redoできる。
 - metadataはedit_project.v1書き出し時に除外し、`linkGroupId`は既存A/V関係にのみ使用する。実ユーザーcaption E2Eと実動画でのrestore操作感はhuman retest待ち。
 
+### REV-001 / Stage 32.3 — Mass Subtitle Review Workspace v1
+
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
+
+- 既存の`useReviewStore`、`ExperimentalReviewRecord`、`review-service`のatomic review logを再利用した字幕レビューWorkspaceを追加。
+- 一覧、未確認／修正済み／fallbackフィルター、進捗、1〜4評価、J/K・矢印移動、字幕選択からTimeline／Inspectorへの同期を提供する。
+- review状態はProjectFileへ追加せず、既存review logへ保存・再起動時hydrateする。Preview字幕を一覧件数分DOM生成しない。
+- 自動テスト・Electron interaction smokeは完了後に確認する。実字幕1000件での操作感、キーボード、表示密度は人間確認待ち。
+
 ---
 
 ## Notes for future Luna tasks
