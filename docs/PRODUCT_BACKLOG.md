@@ -32,7 +32,7 @@
 
 ### AUD-001 — Preview再生してもスピーカーから音が出ない
 
-**Status:** `PLANNED`
+**Status:** `READY_FOR_HUMAN_REVIEW`
 
 **User feedback:** Timelineを再生しても、スピーカーから音声が正常に出力されない。
 
@@ -47,7 +47,16 @@
 - Electron/Chromiumのaudio output device問題か、Project model / Preview wiringの問題かを切り分ける。
 - Final renderのaudioとは別問題として扱い、まずPreview playback pathだけを調査する。
 
+**Implementation (Stage 28.2):**
+
+- Previewの映像要素はmutedのまま維持し、独立したaudio contributionをOS標準出力へ再生する経路を修正。
+- Timeline play/pause、seek、clip境界、split/trim後のsource time、mute、volumeを共通のPreview audio mapping helperで処理。
+- Timelineのplayhead更新ごとに`audio.play()`を乱発せず、active clipの切替時だけ再生を開始する。
+- targeted 31 tests、typecheck、build、Electron startup smokeをPASS。commit `0a54ce3`を含む通常mergeでorigin/mainへpush済み。
+
 **Human acceptance:** Timeline再生で、映像と同期した音声が通常のOS出力デバイスから連続再生されること。
+
+**Remaining:** 実ユーザーmediaを使ったOS出力の聴感確認と、split/trim/mute/volumeを含むGUI acceptance。
 
 ### PREV-001 — Fast Preview字幕が現在時刻へ追従せず古い1枚を表示する
 

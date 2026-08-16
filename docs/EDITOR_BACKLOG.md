@@ -73,8 +73,6 @@ These are not Phase 5 blockers while the supported P0/P1 subset remains geometri
 
 ## P1 - correctness / performance
 
-- AUD-001 Preview audio: fixed independent audio contribution playback so Timeline playhead, pause/play, seek, split/trim boundaries, mute, and volume use the OS default output. Video elements remain muted to avoid double-mixing contract video/audio semantics. Browser media-load/playback failures still require environment-specific diagnosis if reproduced.
-
 - GPU hardware encode: implementation exists, but actual-machine availability and failure reasons need further probe investigation. CPU fallback works, so this is not a Phase 5 blocker.
 - Long-form Preview performance and viewport-aware media scheduling.
 - Waveform disk cache and chunked multi-resolution storage.
