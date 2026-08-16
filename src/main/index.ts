@@ -22,6 +22,7 @@ import { SubtitleTemplateService } from './subtitle-template-service'
 import { loadAppSettings, setLastUsedSubtitleTemplateId } from './app-settings-service'
 import { SilenceAnalysisService } from './silence-analysis-service'
 import { DEFAULT_SILENCE_REAPPLY_PROFILE, isSilenceReapplyProfile } from '../shared/silence-cut'
+import { runProjectQa } from '../shared/project-qa'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
@@ -312,6 +313,9 @@ const registerIpcHandlers = (): void => {
     assertTrustedSender(event)
     const project = validateProject(projectInput)
     const settings = validateExportSettings(settingsInput)
+    const qaReport = runProjectQa(project, { encoderReport: await requireService().detectEncoders(false), outputSettings: settings })
+    const qaError = qaReport.issues.find((issue) => issue.severity === 'error')
+    if (qaError) throw new Error(`QAエラー [${qaError.code}]: ${qaError.message}`)
     const job = await requireService().startExport(project, settings, {
       onProgress: (progress) => mainWindow?.webContents.send(IPC.exportProgress, progress)
     })

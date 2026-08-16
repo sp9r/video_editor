@@ -16,7 +16,8 @@ import {
   X
 } from 'lucide-react'
 import { createEmptyProject } from '../../shared/project'
-import type { AutoCaptionSettings } from '../../shared/auto-caption-contract'
+import type { AutoCaptionBaseline, AutoCaptionSettings } from '../../shared/auto-caption-contract'
+import { runProjectQa, type ProjectQaIssue } from '../../shared/project-qa'
 import { DEFAULT_SILENCE_REAPPLY_PROFILE, silenceCutProfileSettings } from '../../shared/silence-cut'
 import { autoCaptionDisplayRatio, autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressMode, autoCaptionProgressStage, autoCaptionStageLabel, formatClockDurationUs, formatDurationUs, formatElapsedMs, silenceCutProfileLabel } from '../../shared/auto-caption-ui'
 import { getSubtitleTemplate, getSubtitleTemplateSettings, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../shared/subtitle-templates'
@@ -31,6 +32,7 @@ import Timeline from './components/Timeline'
 import ReviewPanel from './components/ReviewPanel'
 import SubtitleTemplateManagerPanel from './components/SubtitleTemplateManagerPanel'
 import SubtitleTemplatePreview from './components/SubtitleTemplatePreview'
+import ProjectQaPanel from './components/ProjectQaPanel'
 import { previewDiagnosticStore } from './preview-performance-diagnostics'
 import { useEditorStore, type AutoCaptionApplySummary } from './store'
 import { useReviewStore } from './review-store'
@@ -90,6 +92,7 @@ export default function App(): React.JSX.Element {
 
   const [workspace, setWorkspace] = useState<'edit' | 'audio' | 'captions'>('edit')
   const [exportOpen, setExportOpen] = useState(false)
+  const [qaOpen, setQaOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [recoveryStatus, setRecoveryStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [encoderReport, setEncoderReport] = useState<EncoderReport | null>(null)
@@ -106,6 +109,7 @@ export default function App(): React.JSX.Element {
     silenceCut: DEFAULT_SILENCE_REAPPLY_PROFILE, silenceMinUs: silenceCutProfileSettings(DEFAULT_SILENCE_REAPPLY_PROFILE).minSilenceUs, accelerationMode: 'auto', subtitleTemplate: 'default'
   })
   const [captionSummary, setCaptionSummary] = useState<AutoCaptionApplySummary | null>(null)
+  const [autoCaptionBaselines, setAutoCaptionBaselines] = useState<AutoCaptionBaseline[]>([])
   const reviewEnabled = useReviewStore((state) => state.enabled)
 
   useEffect(() => {
@@ -139,7 +143,8 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     if (!window.spectra) return
     const api = window.spectra
-    void Promise.all([api.loadSubtitleTemplates(), api.loadAppSettings()]).then(([catalog, appSettings]) => {
+    void Promise.all([api.loadSubtitleTemplates(), api.loadAppSettings(), api.loadAutoCaptionBaselines()]).then(([catalog, appSettings, baselines]) => {
+      setAutoCaptionBaselines(baselines.records)
       setUserSubtitleTemplates(catalog.userTemplates)
       setStoreUserSubtitleTemplates(catalog.userTemplates)
       setDefaultSubtitleTemplateId(catalog.defaultTemplateId)
@@ -362,6 +367,14 @@ export default function App(): React.JSX.Element {
   }
 
   const hardwareEncoder = encoderReport?.capabilities.find((item) => item.hardware && item.available)
+  const qaReport = runProjectQa(project, { encoderReport, autoCaptionBaselines })
+
+  const navigateToQaIssue = (issue: ProjectQaIssue): void => {
+    if (issue.relatedClipId) selectClip(issue.relatedClipId)
+    if (issue.relatedMediaId) selectAsset(issue.relatedMediaId)
+    if (issue.timelineUs !== undefined) setPlayhead(issue.timelineUs)
+    setQaOpen(false)
+  }
 
   const createNewProject = (): void => {
     if (dirty && !window.confirm('未保存の変更があります。新規プロジェクトへ切り替えますか？')) return
@@ -517,6 +530,7 @@ export default function App(): React.JSX.Element {
           <IconButton label={future.length ? 'やり直す（Ctrl+Shift+Z）' : 'やり直す（やり直せる変更がありません）'} disabled={!future.length} onClick={redo}><Redo2 size={16} /></IconButton>
           <Button className="save-button" disabled={saving} title={saving ? '保存中です' : 'プロジェクトを保存'} onClick={() => void save()}><Save size={15} />{saving ? '保存中…' : '保存'}</Button>
           <Button className="subtle-button" onClick={() => setTemplateManagerOpen(true)}>テンプレート</Button>
+          <Button className={qaReport.errorCount ? 'qa-button has-errors' : 'qa-button'} onClick={() => setQaOpen(true)} title="Project QAを開く">QA{qaReport.errorCount ? ` (${qaReport.errorCount})` : ''}</Button>
           <Button className={reviewEnabled ? 'review-toggle is-active' : 'review-toggle'} onClick={() => {
             if (reviewEnabled) useReviewStore.getState().stop()
             else if (!useReviewStore.getState().start(project, useEditorStore.getState().selectedClipIds[0])) showNotice('レビュー対象の字幕がありません。', 'warning')
@@ -562,6 +576,7 @@ export default function App(): React.JSX.Element {
         </div>
       )}
       {templateManagerOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTemplateManagerOpen(false) }}><SubtitleTemplateManagerPanel userTemplates={userSubtitleTemplates} defaultTemplateId={defaultSubtitleTemplateId} selectedSubtitle={selectedSubtitleClip} onTemplatesChange={(templates) => { setUserSubtitleTemplates(templates); setStoreUserSubtitleTemplates(templates) }} onDefaultChange={setDefaultSubtitleTemplateId} onClose={() => setTemplateManagerOpen(false)} /></div>}
+      {qaOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setQaOpen(false) }}><ProjectQaPanel report={qaReport} onClose={() => setQaOpen(false)} onNavigate={navigateToQaIssue} /></div>}
       {appError && (
         <div className="error-banner" role="alert"><CircleAlert size={18} /><strong>画面でエラーが発生しました</strong><span>{appError}</span><button type="button" onClick={() => setAppError(null)}>閉じる</button></div>
       )}

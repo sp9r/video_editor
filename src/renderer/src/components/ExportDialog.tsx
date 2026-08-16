@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronRight, Cpu, FolderOpen, Gauge, MonitorUp, TriangleAlert, X, Zap } from 'lucide-react'
 import type { EncoderMode, EncoderReport, ExportProgress, ExportSettings } from '../../../shared/types'
+import { runProjectQa } from '../../../shared/project-qa'
 import { useEditorStore } from '../store'
 import { Button, Field, IconButton, NumberField, SelectField } from './Controls'
 
@@ -45,6 +46,8 @@ export default function ExportDialog({ report, onClose, refreshEncoders }: Props
     [encoders, preferredEncoderId]
   )
   const hardwareAvailable = encoders.capabilities.some((item) => item.hardware && item.available)
+  const qaReport = runProjectQa(project, { encoderReport: report, outputSettings: { width, height, frameRate: project.sequence.frameRate } })
+  const qaErrors = qaReport.issues.filter((issue) => issue.severity === 'error')
 
   useEffect(() => {
     if (preferredEncoderManuallySelected.current) return
@@ -81,6 +84,10 @@ export default function ExportDialog({ report, onClose, refreshEncoders }: Props
   }
 
   const start = async (): Promise<void> => {
+    if (qaErrors.length) {
+      showNotice(`QAエラーのため書き出せません: ${qaErrors[0]?.message ?? 'Projectを確認してください。'}`, 'error')
+      return
+    }
     if (!outputPath) return showNotice('出力先を選択してください。', 'warning')
     const settings: ExportSettings = {
       outputPath,
@@ -194,6 +201,11 @@ export default function ExportDialog({ report, onClose, refreshEncoders }: Props
           <aside className="export-summary">
             <div className="summary-preview"><span>{width}×{height}</span><i>MP4</i></div>
             <h3>{project.name}</h3>
+            <div className={`export-qa-summary ${qaErrors.length ? 'has-errors' : 'is-ok'}`} role="status">
+              <strong>{qaErrors.length ? `QA ERROR ${qaErrors.length}件` : 'QA: 書き出し可能'}</strong>
+              <span>warning {qaReport.warningCount} · info {qaReport.infoCount}</span>
+              {qaErrors.length > 0 && <ul>{qaErrors.slice(0, 3).map((issue) => <li key={issue.code}>{issue.code}: {issue.message}</li>)}</ul>}
+            </div>
             <dl><div><dt>形式</dt><dd>H.264 / AAC</dd></div><div><dt>フレームレート</dt><dd>{project.sequence.frameRate.numerator / project.sequence.frameRate.denominator} fps</dd></div><div><dt>処理</dt><dd>{encoderMode === 'software' ? 'CPU' : hardwareAvailable ? 'GPU優先（CPUフォールバック）' : 'CPU'}</dd></div><div><dt>推定サイズ</dt><dd>約 24 MB</dd></div></dl>
             {!window.spectra && <div className="demo-callout"><Gauge size={16} /><span>ブラウザデモでは進捗表示をシミュレーションします。</span></div>}
             {progress && (
@@ -213,7 +225,7 @@ export default function ExportDialog({ report, onClose, refreshEncoders }: Props
           <span>{selectedEncoder?.hardware ? <Zap size={14} /> : <Cpu size={14} />}{selectedEncoder?.name ?? 'CPU / libx264'}</span>
           <div>
             {runningJobId ? <Button className="danger-button" onClick={() => void cancel()}>キャンセル</Button> : <Button className="secondary-button" onClick={onClose}>閉じる</Button>}
-            <Button className="primary-button" disabled={Boolean(runningJobId)} onClick={() => void start()}>書き出しを開始<ChevronRight size={17} /></Button>
+            <Button className="primary-button" disabled={Boolean(runningJobId) || qaErrors.length > 0} title={qaErrors.length ? 'QA ERRORを解消してください' : undefined} onClick={() => void start()}>書き出しを開始<ChevronRight size={17} /></Button>
           </div>
         </footer>
       </section>

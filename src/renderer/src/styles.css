@@ -745,6 +745,7 @@ select {
 .modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 22px; background: rgb(4 6 8 / .75); backdrop-filter: blur(4px); }
 .export-dialog { display: grid; grid-template-rows: 58px minmax(0, 1fr) 60px; width: min(980px, 93vw); max-height: 92vh; overflow: hidden; background: #171b21; border: 1px solid #3a434d; border-radius: 9px; box-shadow: var(--shadow); }
 .caption-dialog { display: grid; grid-template-rows: 58px minmax(0, 1fr) 60px; width: min(520px, 93vw); max-height: 92vh; overflow: hidden; background: #171b21; border: 1px solid #3a434d; border-radius: 9px; box-shadow: var(--shadow); }
+.qa-dialog { display: grid; grid-template-rows: 58px minmax(0, 1fr) 60px; width: min(760px, 93vw); max-height: 88vh; overflow: hidden; background: #171b21; border: 1px solid #3a434d; border-radius: 9px; box-shadow: var(--shadow); }
 .dialog-header { display: grid; grid-template-columns: 36px 1fr 30px; align-items: center; gap: 10px; padding: 0 14px; background: linear-gradient(#20262e, #191e24); border-bottom: 1px solid var(--line); }
 .dialog-title-icon { display: grid; place-items: center; width: 34px; height: 34px; color: var(--mint); background: var(--mint-dark); border: 1px solid #2d695c; border-radius: 7px; }
 .dialog-body { display: grid; grid-template-columns: minmax(0, 1fr) 270px; min-height: 0; }
@@ -758,6 +759,33 @@ select {
 .caption-target span, .caption-dialog-body .field-label { color: var(--text-dim); font-size: 9px; }
 .caption-target strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .caption-dialog-warning { padding: 14px; color: var(--amber); background: #302614; border: 1px solid #5c4828; border-radius: 5px; font-size: 10px; line-height: 1.5; }
+.qa-dialog-body { min-height: 0; overflow: auto; padding: 18px 22px; }
+.qa-summary { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 6px; background: #173027; color: var(--mint); }
+.qa-summary.has-errors { background: #3a2024; color: #ff9c9c; }
+.qa-summary span { margin-left: auto; color: var(--text-dim); font-size: 10px; }
+.qa-empty { display: flex; align-items: center; gap: 8px; padding: 24px 0; color: var(--mint); }
+.qa-issues { display: grid; gap: 7px; margin-top: 12px; }
+.qa-issue { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 8px; align-items: start; width: 100%; padding: 10px; text-align: left; color: var(--text); background: var(--panel-soft); border: 1px solid var(--line); border-radius: 6px; }
+.qa-issue:not(:disabled) { cursor: pointer; }
+.qa-issue:not(:disabled):hover { border-color: var(--mint); background: #26333a; }
+.qa-issue:disabled { opacity: .82; }
+.qa-issue.severity-error { border-left: 3px solid #ff7373; }
+.qa-issue.severity-warning { border-left: 3px solid var(--amber); }
+.qa-issue.severity-info { border-left: 3px solid #76a9d9; }
+.qa-issue-icon { padding-top: 1px; color: var(--amber); }
+.severity-error .qa-issue-icon { color: #ff7373; }
+.severity-info .qa-issue-icon { color: #76a9d9; }
+.qa-issue-content { display: grid; gap: 3px; min-width: 0; }
+.qa-issue-content strong { font: 700 10px ui-monospace, monospace; }
+.qa-issue-content span { font-size: 11px; line-height: 1.4; }
+.qa-issue-content small { color: var(--text-dim); font-size: 9px; }
+.qa-issue-jump { align-self: center; color: var(--mint); font-size: 10px; }
+.qa-button.has-errors { color: #ff9c9c; border-color: #9d4b55; }
+.export-qa-summary { margin: 12px 0; padding: 10px; border-radius: 6px; background: #173027; color: var(--mint); font-size: 10px; }
+.export-qa-summary.has-errors { background: #3a2024; color: #ff9c9c; }
+.export-qa-summary strong, .export-qa-summary span { display: block; }
+.export-qa-summary span { margin-top: 4px; color: var(--text-dim); }
+.export-qa-summary ul { margin: 6px 0 0; padding-left: 18px; }
 .caption-progress { padding: 10px; background: #181e24; border: 1px solid var(--line); border-radius: 5px; }
 .caption-progress .progress-heading { justify-content: space-between; }
 .caption-progress .progress-heading span { color: var(--text-muted); font: 9px ui-monospace, monospace; }

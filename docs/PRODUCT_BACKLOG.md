@@ -266,6 +266,22 @@
 - context menu外のpointerdown、Escape、window blurでmenuを閉じる既存挙動を確認した。
 - 大規模UI変更なし。既存Timeline interaction 13 testsをPASS。
 
+### QA-001 — Project QA Workspace v1
+
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
+
+書き出し前にProjectの素材、Timeline、字幕、自動処理メタデータ、export前提をread-onlyで確認するQA panel。
+
+**Implemented:**
+
+- shared pure `runProjectQa()`がerror / warning / info、code、message、関連clip/media、timeline timeを返す。
+- offline／未解決素材、source range、visual gap、linked A/V、字幕本文・word timing・maxLines/maxWidth・範囲外・fallback診断、silence metadata、encoder／output設定を確認する。
+- QA panelの関連issueクリックでTimeline時刻へjumpし、clipまたはmediaをselectする。
+- 明確なERRORがある場合だけExportDialogとmain export IPCをblockし、warning/infoではblockしない。
+- QAはProject、history、edit_project contractを変更しない。
+
+**Human acceptance:** 実Projectでissueの検出精度、関連位置へのjump、warningを残したexport、ERROR時のblockを確認する。
+
 ---
 
 ## Silence Cut / linked editing
