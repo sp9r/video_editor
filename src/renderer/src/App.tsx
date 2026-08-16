@@ -42,6 +42,7 @@ const isTypingTarget = (target: EventTarget | null): boolean => {
 export default function App(): React.JSX.Element {
   const {
     project,
+    projectLoadVersion,
     selectedClipIds,
     past,
     future,
@@ -117,7 +118,7 @@ export default function App(): React.JSX.Element {
         })
         .catch(() => undefined)
     }
-  }, [hydrateFullCorrectionSessions, project.id])
+  }, [hydrateFullCorrectionSessions, project.id, projectLoadVersion])
 
   useEffect(() => {
     if (!window.spectra) return

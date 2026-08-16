@@ -32,6 +32,7 @@ type Notice = { id: number; tone: 'info' | 'success' | 'warning' | 'error'; mess
 
 interface EditorState {
   project: ProjectFile
+  projectLoadVersion: number
   past: ProjectFile[]
   future: ProjectFile[]
   selectedClipIds: string[]
@@ -142,6 +143,7 @@ const compatibleTrack = (_asset: MediaAsset, track: TimelineTrack): boolean => {
 
 export const useEditorStore = create<EditorState>((set, get) => ({
   project: initialProject,
+  projectLoadVersion: 0,
   past: [],
   future: [],
   selectedClipIds: [],
@@ -178,8 +180,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   loadProject: (project) => {
     const normalized = validateProject(project)
-    set({
+    set((state) => ({
       project: normalized,
+      projectLoadVersion: state.projectLoadVersion + 1,
       past: [],
       future: [],
       selectedClipIds: [],
@@ -194,7 +197,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       autoCaptionJobId: null,
       fullCorrectionSession: null,
       fullCorrectionResult: null
-    })
+    }))
   },
   markSaved: (project) => {
     const saved = project ? cloneProject(project) : get().project
