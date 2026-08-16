@@ -463,6 +463,15 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 
 **自動確認:** video_editor targeted tests 30件、typecheck、build、accurate-preview smoke、clip_automation contract/silence/parallel worker targeted tests 19件、compileall PASS。実動画の聴感・Preview性能・inline strip操作は人間確認待ち。
 
+### Stage 31.2 checkpoint — Caption segmentation fail-safe
+
+**Status:** `IMPLEMENTED — HUMAN RETEST REQUIRED`
+
+- clip_automationのcaption segmentationをLLM → heuristic → deterministic greedy failsafeの3段階へ拡張。raw Whisper wordsが有効な場合、LLM JSON不良・timeout・boundary optimizer/validation例外・品質post-processing例外でAuto Caption全体を失敗させない。
+- Tier 3はraw wordをexactly once、時系列順に消費し、最後のwordまでcoverageする。単一wordが`maxChars`／hard durationを超えても分割・削除しない。
+- `CAPTION_LLM_FALLBACK`、`CAPTION_HEURISTIC_FALLBACK`、`CAPTION_FAILSAFE_FALLBACK`をworker result diagnosticsへ伝播。raw words空、timing不正、source mapping不能、worker fatalはfail closed。
+- video_editorのコード変更なし。実ユーザーfailed jobのraw artifactは取得できず、最小fixtureでfailure holeを再現・回帰化した。実GUIで元ケースを再実行するhuman retestが必要。
+
 ---
 
 ## Notes for future Luna tasks
