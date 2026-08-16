@@ -178,6 +178,39 @@ export interface SequenceSettings {
   backgroundColor: string
 }
 
+/**
+ * Internal .spectra-only metadata.  It is intentionally source/range based
+ * and is removed before an edit_project.v1 document is written.
+ */
+export const SPECTRA_EDITOR_METADATA_VERSION = 1 as const
+
+export interface SilenceCutOperationMetadata {
+  schemaVersion: typeof SPECTRA_EDITOR_METADATA_VERSION
+  operationId: string
+  originalStartUs: TimeUs
+  originalDurationUs: TimeUs
+  keepRanges: Array<{ startUs: TimeUs; endUs: TimeUs }>
+  removedRanges: Array<{ startUs: TimeUs; endUs: TimeUs }>
+  targets: Array<{
+    clipId: string
+    trackId: string
+    kind: 'video' | 'audio'
+    assetId: string
+    name: string
+    sourceInUs: TimeUs
+    durationUs: TimeUs
+    linkGroupId?: string
+    generatedClipIds: string[]
+  }>
+  /** JSON signatures make manual edits and ambiguous mappings fail closed. */
+  generatedClipSignatures: Record<string, string>
+}
+
+export interface SpectraEditorMetadata {
+  schemaVersion: typeof SPECTRA_EDITOR_METADATA_VERSION
+  silenceCutOperations: SilenceCutOperationMetadata[]
+}
+
 export interface ProjectFile {
   schemaVersion: typeof PROJECT_SCHEMA_VERSION
   appVersion: string
@@ -190,6 +223,7 @@ export interface ProjectFile {
   sequence: SequenceSettings
   media: MediaAsset[]
   tracks: TimelineTrack[]
+  editorMetadata?: SpectraEditorMetadata
 }
 
 export interface ProbeResult {

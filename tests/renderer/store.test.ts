@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { addClipToTrack, createClipForAsset, createEmptyProject, createTrack, validateProject } from '../../src/shared/project'
 import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
+import { applySilenceCutToProject } from '../../src/shared/silence-cut'
 import { DEFAULT_SUBTITLE_STYLE, type DesktopApi, type MediaAsset, type ProjectFile, type SubtitleClip, type TimelineClip } from '../../src/shared/types'
 import { useEditorStore } from '../../src/renderer/src/store'
 
@@ -84,6 +85,23 @@ describe('editor history and linked selection', () => {
     expect(await useEditorStore.getState().reapplySilenceCut()).toBe(true)
     expect(useEditorStore.getState().project).toEqual(before)
     expect(useEditorStore.getState().past).toHaveLength(0)
+  })
+
+  it('restores a silence-cut family in one undo/redo transaction', () => {
+    const original = fixture()
+    const cut = applySilenceCutToProject(original, 'video', {
+      keepRanges: [{ startUs: 0, endUs: 1_000_000, durationUs: 1_000_000 }, { startUs: 2_000_000, endUs: 4_000_000, durationUs: 2_000_000 }]
+    }).project
+    useEditorStore.getState().loadProject(cut)
+    useEditorStore.getState().selectClip('video:silence:1')
+    expect(useEditorStore.getState().restoreSilenceCut()).toBe(true)
+    expect(useEditorStore.getState().project.tracks.flatMap((track) => track.clips).some((clip) => clip.id === 'video')).toBe(true)
+    const restored = structuredClone(useEditorStore.getState().project)
+    expect(useEditorStore.getState().past).toHaveLength(1)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().project).toEqual(cut)
+    useEditorStore.getState().redo()
+    expect(useEditorStore.getState().project).toEqual(restored)
   })
 
   it('keeps Project and history unchanged when explicit reapply is cancelled', async () => {

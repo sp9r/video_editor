@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createClipForAsset, createEmptyProject, createTrack, validateProject } from '../../src/shared/project'
-import { applySilenceCutToProject, buildSilenceReapplyTarget, createSilenceCutTimeMapper, SilenceCutError, mapSourceTimeThroughSilenceCut } from '../../src/shared/silence-cut'
+import { applySilenceCutToProject, buildSilenceReapplyTarget, canRestoreSilenceCut, createSilenceCutTimeMapper, restoreSilenceCutToProject, SilenceCutError, mapSourceTimeThroughSilenceCut } from '../../src/shared/silence-cut'
 import { deleteLinkedClips, splitLinkedClip, trimLinkedClip } from '../../src/shared/editing/operations'
 import { DEFAULT_AUDIO, DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile } from '../../src/shared/types'
 
@@ -127,5 +127,38 @@ describe('non-destructive silence cut', () => {
     expect(mapper.mapPoint(10_000_000)).toBe(7_000_000)
     expect(mapper.mapInterval({ id: 'word', startUs: 10_000_000, endUs: 11_000_000 })).toEqual({ id: 'word', startUs: 7_000_000, endUs: 8_000_000 })
     expect(mapper.removedRanges).toEqual([{ startUs: 5_000_000, endUs: 8_000_000 }])
+  })
+
+  it('records source-range metadata and restores an untouched linked cut after JSON reload', () => {
+    const before = fixture()
+    const cut = applySilenceCutToProject(before, 'video', { keepRanges: ranges }).project
+    const reloaded = validateProject(JSON.parse(JSON.stringify(cut)))
+    const generated = reloaded.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'video:silence:1')
+    expect(generated).toBeDefined()
+    expect(canRestoreSilenceCut(reloaded, 'video:silence:1')).toBe(true)
+    expect(reloaded.editorMetadata?.silenceCutOperations).toHaveLength(1)
+
+    const restored = restoreSilenceCutToProject(reloaded, 'video:silence:1')
+    const media = restored.project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'video' || clip.kind === 'audio')
+    expect(media.map((clip) => [clip.id, clip.startUs, clip.sourceInUs, clip.durationUs, clip.linkGroupId])).toEqual([
+      ['video', 1_000_000, 0, 4_000_000, 'av'],
+      ['tail', 5_000_000, 0, 1_000_000, undefined],
+      ['audio', 1_000_000, 0, 4_000_000, 'av']
+    ])
+    expect(restored.restoredDurationUs).toBe(1_000_000)
+    expect(restored.restoredClipId).toBe('video')
+    expect(restored.project.editorMetadata).toBeUndefined()
+  })
+
+  it('fails closed when a generated segment was edited after the cut', () => {
+    const cut = applySilenceCutToProject(fixture(), 'video', { keepRanges: ranges }).project
+    const changed = structuredClone(cut)
+    const generated = changed.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'video:silence:1')
+    if (!generated) throw new Error('generated clip missing')
+    generated.durationUs += 1
+    const snapshot = structuredClone(changed)
+    expect(canRestoreSilenceCut(changed, generated.id)).toBe(false)
+    expect(() => restoreSilenceCutToProject(changed, generated.id)).toThrow(SilenceCutError)
+    expect(changed).toEqual(snapshot)
   })
 })

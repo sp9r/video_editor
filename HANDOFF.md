@@ -463,6 +463,13 @@ Phase Aが完了するまで、multicamや高度なAI機能へ先に進まない
 
 Phase 5、planning、highlight、publishing、mass Human Review、caption algorithm learningは開始しない。ユーザーが実動画を選び、同じvertical sliceでレビューを開始する。
 
+## 2026-08-17 Stage 31.3 Caption reliability + silence restore baseline
+
+- clip_automationの実worker経路（fake transcriberによるbounded input）で、LLM／heuristic failureからdeterministic failsafeへ移行し、result JSONをv1 contract parserで再検証する回帰を追加した。raw wordsの重複・欠落なし、最終word消費、fallback diagnosticsを確認済み。
+- video_editorの`.spectra`専用`editorMetadata`へsource-range silence operationを保存する。generated segmentのidentity／source range／JSON signatureを照合し、未変更の場合のみ「無音カットを解除」を許可する。曖昧なsplit／trim／delete／overlapはfail closedでProject unchanged。
+- restoreはlinked A/Vを元ID・元linkGroupへ戻し、後続clipを復元時間分rippleする。metadataはsave/reloadで保持され、edit_project.v1保存時は除外される。
+- video targeted 37 tests、typecheck PASS。clip targeted 45 tests、compileallは次のcommit前確認で再実行する。実動画・実GUIでのcaption failure元ケース再実行とrestore聴感／操作感はhuman retest待ち。
+
 ---
 
 ## 2026-08-16 Phase 8 Parallel Auto Processing

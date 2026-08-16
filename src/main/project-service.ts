@@ -27,6 +27,7 @@ const projectForDisk = (project: ProjectFile, projectPath: string): ProjectFile 
   const diskProject = structuredClone(project)
   delete diskProject.projectPath
   delete diskProject.projectFormat
+  if (project.projectFormat === 'edit_project_v1') delete diskProject.editorMetadata
   diskProject.updatedAt = new Date().toISOString()
   diskProject.media = diskProject.media.map((asset) => ({
     ...asset,

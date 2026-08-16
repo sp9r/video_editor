@@ -20,7 +20,7 @@ import { linkedClipIds } from '../../shared/editing/links'
 import { isMediaTrack } from '../../shared/types'
 import type { AutoCaptionProgress, AutoCaptionResult, AutoCaptionSettings, AutoCaptionSilenceAnalysis } from '../../shared/auto-caption-contract'
 import { applyAutoCaptionResultToProject } from '../../shared/auto-caption-adapter'
-import { applySilenceCutToProject, DEFAULT_SILENCE_REAPPLY_PROFILE, createSilenceCutTimeMapper, type SilenceReapplyProfile } from '../../shared/silence-cut'
+import { applySilenceCutToProject, canRestoreSilenceCut, DEFAULT_SILENCE_REAPPLY_PROFILE, createSilenceCutTimeMapper, restoreSilenceCutToProject, type SilenceReapplyProfile } from '../../shared/silence-cut'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
 import type { UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { FullCorrectionSession } from '../../shared/full-correction'
@@ -79,6 +79,7 @@ interface EditorState {
   autoCaptionSelected(settings?: AutoCaptionSettings): Promise<AutoCaptionApplySummary | null>
   cancelAutoCaption(): Promise<void>
   reapplySilenceCut(profile?: SilenceReapplyProfile, minSilenceUs?: number): Promise<boolean>
+  restoreSilenceCut(): boolean
   cancelSilenceCutReapply(): Promise<void>
   setUserSubtitleTemplates(templates: UserSubtitleTemplate[]): void
   setDefaultSubtitleTemplateId(id: string): void
@@ -491,6 +492,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set((state) => state.silenceCutReapplyJobId === jobId
         ? { silenceCutReapplyJobId: null, silenceCutReapplyCancelledJobId: null, silenceCutReapplyBusy: false }
         : state)
+    }
+  },
+  restoreSilenceCut: () => {
+    const current = get()
+    const selected = current.project.tracks.flatMap((track) => track.clips).find((clip) => current.selectedClipIds.includes(clip.id) && (clip.kind === 'video' || clip.kind === 'audio'))
+    if (!selected || !canRestoreSilenceCut(current.project, selected.id)) {
+      current.showNotice('無音カット後のclipが変更されているため、安全に解除できません。', 'warning')
+      return false
+    }
+    try {
+      const restored = restoreSilenceCutToProject(current.project, selected.id)
+      get().beginEditTransaction()
+      get().applyProject(restored.project, { selectClipId: restored.restoredClipId })
+      get().commitEditTransaction()
+      get().showNotice(`無音カットを解除しました（${(restored.restoredDurationUs / 1_000_000).toFixed(2)}秒復元）。`, 'success')
+      return true
+    } catch (error) {
+      if (get().transactionBase) get().cancelEditTransaction()
+      get().showNotice(`無音カットを解除できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      return false
     }
   },
   cancelSilenceCutReapply: async () => {

@@ -1,6 +1,6 @@
 import type { AutoCaptionSilenceAnalysis, SilenceCutMode } from './auto-caption-contract.js'
 import { validateProject } from './project.js'
-import type { ProjectFile, TimelineClip, TimeUs } from './types.js'
+import type { ProjectFile, SilenceCutOperationMetadata, TimelineClip, TimeUs } from './types.js'
 
 export type SilenceCutRange = Pick<AutoCaptionSilenceAnalysis['keepRanges'][number], 'startUs' | 'endUs'>
 export type SilenceReapplyProfile = Exclude<SilenceCutMode, 'off'>
@@ -46,6 +46,13 @@ export interface SilenceCutApplyResult {
   summary: SilenceCutSummary
   /** The compacted timeline interval used to map source-absolute captions. */
   sourceClip: { startUs: TimeUs; sourceInUs: TimeUs; durationUs: TimeUs }
+}
+
+export interface SilenceCutRestoreResult {
+  project: ProjectFile
+  operationId: string
+  restoredDurationUs: TimeUs
+  restoredClipId: string
 }
 
 export interface SourceTimeInterval {
@@ -264,10 +271,11 @@ const replaceTargetClips = (
   keepRanges: readonly SilenceCutRange[],
   originalStartUs: number,
   originalEndUs: number
-): void => {
+): Map<string, string[]> => {
   const usedIds = new Set(next.tracks.flatMap((track) => track.clips.map((clip) => clip.id)))
   const targetIds = new Set(targets.map((clip) => clip.id))
   const groupId = targets[0]?.linkGroupId
+  const generatedIdsByTarget = new Map<string, string[]>()
   const removedDurationUs = (originalEndUs - originalStartUs) - keepRanges.reduce((sum, range) => sum + (range.endUs - range.startUs), 0)
   for (const track of next.tracks) {
     const targetIndex = track.clips.findIndex((clip) => targetIds.has(clip.id))
@@ -285,10 +293,12 @@ const replaceTargetClips = (
       durationUs: range.endUs - range.startUs,
       ...(groupId ? { linkGroupId: `${groupId}:silence:${index + 1}` } : {})
     }))
+    generatedIdsByTarget.set(target.id, segments.map((segment) => segment.id))
     track.clips.splice(targetIndex, 1, ...segments)
     track.clips.sort((left, right) => left.startUs - right.startUs || left.id.localeCompare(right.id))
   }
   if (removedDurationUs < 0) throw new SilenceCutError('invalid_ranges', '無音カットのkeep range合計がclip長を超えています。')
+  return generatedIdsByTarget
 }
 
 /**
@@ -348,7 +358,7 @@ export const applySilenceCutToProject = (
     }
   }
   const next = clone(project)
-  replaceTargetClips(next, targets, keepRanges, originalStartUs, originalEndUs)
+  const generatedIdsByTarget = replaceTargetClips(next, targets, keepRanges, originalStartUs, originalEndUs)
   for (const track of next.tracks) {
     const targetIdsInNext = new Set(targets.flatMap((target) => [target.id, ...keepRanges.map((_range, index) => `${target.id}:silence:${index + 1}`)]))
     for (let index = 0; index < track.clips.length; index += 1) {
@@ -362,11 +372,159 @@ export const applySilenceCutToProject = (
   const validated = validateProject(next)
   const firstTarget = validated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === `${selected.id}:silence:1`)
   if (!firstTarget) throw new SilenceCutError('unsafe_ripple', '無音カット後のclipを特定できません。')
+  const existingMetadata = validated.editorMetadata
+  if (existingMetadata && (existingMetadata.schemaVersion !== 1 || !Array.isArray(existingMetadata.silenceCutOperations))) {
+    throw new SilenceCutError('cut_plan_invalid', '無音カットの内部metadataが不正なため、処理を中止しました。')
+  }
+  const usedOperationIds = new Set(existingMetadata?.silenceCutOperations.map((operation) => operation.operationId) ?? [])
+  let operationIndex = (existingMetadata?.silenceCutOperations.length ?? 0) + 1
+  let operationId = `silence-cut:${selected.id}:${operationIndex}`
+  while (usedOperationIds.has(operationId)) operationId = `silence-cut:${selected.id}:${++operationIndex}`
+  const generatedClipSignatures: Record<string, string> = {}
+  for (const clipId of [...generatedIdsByTarget.values()].flat()) {
+    const generated = validated.tracks.flatMap((track) => track.clips).find((clip) => clip.id === clipId)
+    if (!generated) throw new SilenceCutError('unsafe_ripple', '無音カット後の生成clipを記録できません。')
+    generatedClipSignatures[clipId] = JSON.stringify(generated)
+  }
+  const operation: SilenceCutOperationMetadata = {
+    schemaVersion: 1,
+    operationId,
+    originalStartUs,
+    originalDurationUs: selected.durationUs,
+    keepRanges: keepRanges.map(({ startUs, endUs }) => ({ startUs, endUs })),
+    removedRanges: timeMapper.removedRanges.map(({ startUs, endUs }) => ({ startUs, endUs })),
+    targets: targets.map((target) => {
+      const mediaTarget = target as Extract<TimelineClip, { kind: 'video' | 'audio' }>
+      const track = project.tracks.find((candidate) => candidate.clips.some((clip) => clip.id === target.id))
+      const generatedClipIds = generatedIdsByTarget.get(target.id)
+      if (!track || !generatedClipIds) throw new SilenceCutError('unsafe_ripple', '無音カット対象のtrackを記録できません。')
+      return {
+        clipId: target.id,
+        trackId: track.id,
+        kind: mediaTarget.kind,
+        assetId: mediaTarget.assetId,
+        name: mediaTarget.name,
+        sourceInUs: mediaTarget.sourceInUs,
+        durationUs: mediaTarget.durationUs,
+        ...(mediaTarget.linkGroupId ? { linkGroupId: mediaTarget.linkGroupId } : {}),
+        generatedClipIds
+      }
+    }),
+    generatedClipSignatures
+  }
+  validated.editorMetadata = {
+    schemaVersion: 1,
+    silenceCutOperations: [...(existingMetadata?.silenceCutOperations ?? []), operation]
+  }
+  const validatedWithMetadata = validateProject(validated)
   return {
-    project: validated,
+    project: validatedWithMetadata,
     summary: { selectedClipId, affectedClipIds: targets.map((clip) => clip.id), segmentCount: keepRanges.length, removedDurationUs, keepRanges },
     sourceClip: { startUs: firstTarget.startUs, sourceInUs: selected.sourceInUs, durationUs: selected.durationUs }
   }
+}
+
+const metadataOperations = (project: ProjectFile): SilenceCutOperationMetadata[] => {
+  const metadata = project.editorMetadata
+  if (!metadata) return []
+  if (metadata.schemaVersion !== 1 || !Array.isArray(metadata.silenceCutOperations)) {
+    throw new SilenceCutError('cut_plan_invalid', '無音カットの内部metadataが不正です。')
+  }
+  return metadata.silenceCutOperations
+}
+
+const operationForClip = (project: ProjectFile, clipId: string): SilenceCutOperationMetadata => {
+  const matches = metadataOperations(project).filter((operation) => operation.targets.some((target) => target.generatedClipIds.includes(clipId)))
+  if (matches.length !== 1) throw new SilenceCutError('unsafe_ripple', '無音カットの復元対象を一意に特定できません。')
+  return matches[0]!
+}
+
+const findClipWithTrack = (project: ProjectFile, clipId: string): { clip: TimelineClip; trackId: string } | undefined => {
+  for (const track of project.tracks) {
+    const clip = track.clips.find((candidate) => candidate.id === clipId)
+    if (clip) return { clip, trackId: track.id }
+  }
+  return undefined
+}
+
+/** Returns true only while a generated silence-cut family is still untouched. */
+export const canRestoreSilenceCut = (project: ProjectFile, clipId: string): boolean => {
+  try {
+    const operation = operationForClip(project, clipId)
+    return operation.targets.every((target) => target.generatedClipIds.every((generatedId) => {
+      const current = findClipWithTrack(project, generatedId)?.clip
+      return Boolean(current && operation.generatedClipSignatures[generatedId] === JSON.stringify(current))
+    }))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Restores one source-range silence operation.  It is deliberately strict:
+ * any missing, edited, split, trimmed, deleted, or ambiguous generated clip
+ * rejects the whole operation before the input project is mutated.
+ */
+export const restoreSilenceCutToProject = (project: ProjectFile, clipId: string): SilenceCutRestoreResult => {
+  const operation = operationForClip(project, clipId)
+  const generatedIds = new Set(operation.targets.flatMap((target) => target.generatedClipIds))
+  const currentById = new Map<string, { clip: TimelineClip; trackId: string }>()
+  for (const target of operation.targets) {
+    for (const generatedId of target.generatedClipIds) {
+      const found = findClipWithTrack(project, generatedId)
+      if (!found || found.clip.kind !== target.kind || found.trackId !== target.trackId || found.clip.assetId !== target.assetId || operation.generatedClipSignatures[generatedId] !== JSON.stringify(found.clip)) {
+        throw new SilenceCutError('unsafe_ripple', '無音カット後のclipが変更されているため、安全に解除できません。')
+      }
+      currentById.set(generatedId, found)
+    }
+  }
+  const keptDurationUs = operation.keepRanges.reduce((sum, range) => sum + range.endUs - range.startUs, 0)
+  const compactedEndUs = operation.originalStartUs + keptDurationUs
+  for (const track of project.tracks) {
+    for (const clip of track.clips) {
+      if (generatedIds.has(clip.id)) continue
+      if (clip.startUs < compactedEndUs && clipEnd(clip) > operation.originalStartUs) {
+        throw new SilenceCutError('unsafe_ripple', '復元範囲に別clipが重なるため、安全に解除できません。')
+      }
+    }
+  }
+  const next = clone(project)
+  for (const track of next.tracks) {
+    const target = operation.targets.find((candidate) => candidate.trackId === track.id)
+    if (target) {
+      const firstIndex = track.clips.findIndex((candidate) => target.generatedClipIds.includes(candidate.id))
+      if (firstIndex < 0) throw new SilenceCutError('unsafe_ripple', '復元対象trackのclipを特定できません。')
+      const firstGenerated = currentById.get(target.generatedClipIds[0]!)?.clip
+      if (!firstGenerated) throw new SilenceCutError('unsafe_ripple', '復元元clipを特定できません。')
+      const restored = {
+        ...clone(firstGenerated),
+        id: target.clipId,
+        name: target.name,
+        startUs: operation.originalStartUs,
+        sourceInUs: target.sourceInUs,
+        durationUs: target.durationUs,
+        ...(target.linkGroupId ? { linkGroupId: target.linkGroupId } : { linkGroupId: undefined })
+      } as TimelineClip
+      track.clips = track.clips.filter((candidate) => !target.generatedClipIds.includes(candidate.id))
+      track.clips.splice(firstIndex, 0, restored)
+    }
+  }
+  for (const track of next.tracks) {
+    for (let index = 0; index < track.clips.length; index += 1) {
+      const clip = track.clips[index]
+      if (!clip || generatedIds.has(clip.id) || operation.targets.some((target) => target.clipId === clip.id)) continue
+      if (clip.startUs >= compactedEndUs) track.clips[index] = shiftClip(clip, operation.originalDurationUs - keptDurationUs)
+    }
+    track.clips.sort((left, right) => left.startUs - right.startUs || left.id.localeCompare(right.id))
+  }
+  const remaining = metadataOperations(next).filter((candidate) => candidate.operationId !== operation.operationId)
+  if (remaining.length) next.editorMetadata = { schemaVersion: 1, silenceCutOperations: remaining }
+  else delete next.editorMetadata
+  next.updatedAt = new Date().toISOString()
+  const validated = validateProject(next)
+  const restoredTarget = operation.targets.find((target) => target.generatedClipIds.includes(clipId)) ?? operation.targets[0]
+  if (!restoredTarget) throw new SilenceCutError('unsafe_ripple', '復元後のclip identityを特定できません。')
+  return { project: validated, operationId: operation.operationId, restoredDurationUs: operation.originalDurationUs - keptDurationUs, restoredClipId: restoredTarget.clipId }
 }
 
 export const mapSourceTimeThroughSilenceCut = (

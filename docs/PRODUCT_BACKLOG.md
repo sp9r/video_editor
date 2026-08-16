@@ -302,7 +302,7 @@
 - Stage 29.10で再適用profileを「自然 / 強め / YouTubeジャンプカット」から選択可能にし、defaultをYouTubeジャンプカットへ統一。Auto Captionの初期silenceCutも同じdefaultに変更。
 - profile設定（min silence、retain pause、noise threshold、speech protection、filler removal）はshared resolverで一箇所に集約し、IPCでは`off`を受け付けない。
 - 将来のanalysis cache再利用と、subtitleを保持したまま複数media segmentへ再適用する実動画受入は保留。
-- Restore architecture is not implemented in Stage 31.1. A source-range operation metadata artifact (option B) is the current recommendation: store original source identity and removed ranges, then restore only when current clip mapping is unambiguous; otherwise fail closed and leave the Project unchanged. Snapshot-only restore (A) is unsafe after save/reload/manual edits, while identity rebuild (C) needs a larger schema/lineage decision. `RESTORE DECISION REQUIRED` remains YES.
+- Stage 31.3でsource-range operation metadata（Option B）のsafe baselineを実装。元source identity／keep・removed ranges／generated clip signatureを`.spectra`へ保存し、save/reload後も未変更segmentだけ復元する。mappingが曖昧ならfail closedでProject unchanged。edit_project.v1へはmetadataを漏らさない。実GUI受入は未確認のため、`RESTORE HUMAN ACCEPTANCE REQUIRED`を維持する。
 
 ### SIL-002 — YouTubeジャンプカットprofile
 
@@ -471,6 +471,15 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 - Tier 3はraw wordをexactly once、時系列順に消費し、最後のwordまでcoverageする。単一wordが`maxChars`／hard durationを超えても分割・削除しない。
 - `CAPTION_LLM_FALLBACK`、`CAPTION_HEURISTIC_FALLBACK`、`CAPTION_FAILSAFE_FALLBACK`をworker result diagnosticsへ伝播。raw words空、timing不正、source mapping不能、worker fatalはfail closed。
 - video_editorのコード変更なし。実ユーザーfailed jobのraw artifactは取得できず、最小fixtureでfailure holeを再現・回帰化した。実GUIで元ケースを再実行するhuman retestが必要。
+
+### Stage 31.3 checkpoint — Caption reliability + silence restore baseline
+
+**Status:** `IMPLEMENTED — HUMAN RETEST REQUIRED`
+
+- clip_automationで、実worker実行から`result.json`生成、`spectra.auto-caption.result.v1`の再parseまでをfailsafe回帰化した。LLM／heuristic failure時もraw word ownershipをexactly onceで保持し、diagnosticsを失わない。raw input invalidは従来どおりfail closed。
+- video_editorの`.spectra`内部へversionedなsource-range silence operation metadataを追加。初回bulk cutの元source range、keep/removed range、linked A/Vのgenerated clip identity、変更検出signatureを保存し、save/reload後も利用できる。
+- Inspectorの「無音カットを解除」は、generated familyが未変更で一意に照合できる場合だけ実行する。split／trim／delete／別clipの重なり等でmappingが曖昧ならProjectを変更せずreject。復元は1 history transactionでUndo/Redoできる。
+- metadataはedit_project.v1書き出し時に除外し、`linkGroupId`は既存A/V関係にのみ使用する。実ユーザーcaption E2Eと実動画でのrestore操作感はhuman retest待ち。
 
 ---
 

@@ -6,7 +6,7 @@ import { DEFAULT_SUBTITLE_STYLE, type AudioSettings, type SubtitleClip, type Sub
 import { FALLBACK_FONT_FAMILIES } from '../../../shared/font-families'
 import { applySubtitleTemplateToClip, deriveSubtitleTemplateGeneration } from '../../../shared/subtitle-template-seed'
 import type { SubtitleTemplateCaptionGeneration } from '../../../shared/subtitle-templates'
-import { DEFAULT_SILENCE_REAPPLY_PROFILE, silenceCutProfileSettings, type SilenceReapplyProfile } from '../../../shared/silence-cut'
+import { canRestoreSilenceCut, DEFAULT_SILENCE_REAPPLY_PROFILE, silenceCutProfileSettings, type SilenceReapplyProfile } from '../../../shared/silence-cut'
 import { getSubtitleTemplate, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../../shared/subtitle-templates'
 import { findClip, useEditorStore } from '../store'
 import { Button, EmptyState, Field, NumberField, Section, SelectField } from './Controls'
@@ -399,6 +399,7 @@ export default function Inspector(): React.JSX.Element {
   const { project, selectedClipIds } = useEditorStore()
   const silenceCutReapplyBusy = useEditorStore((state) => state.silenceCutReapplyBusy)
   const reapplySilenceCut = useEditorStore((state) => state.reapplySilenceCut)
+  const restoreSilenceCut = useEditorStore((state) => state.restoreSilenceCut)
   const cancelSilenceCutReapply = useEditorStore((state) => state.cancelSilenceCutReapply)
   const [silenceReapplyProfile, setSilenceReapplyProfile] = useState<SilenceReapplyProfile>(DEFAULT_SILENCE_REAPPLY_PROFILE)
   const [silenceReapplyMinUs, setSilenceReapplyMinUs] = useState(silenceCutProfileSettings(DEFAULT_SILENCE_REAPPLY_PROFILE).minSilenceUs)
@@ -433,6 +434,7 @@ export default function Inspector(): React.JSX.Element {
                 title="現在のsourceInUs・durationUsを対象にFFmpegの無音解析を明示的に再実行"
                 onClick={() => void reapplySilenceCut(silenceReapplyProfile, silenceReapplyMinUs)}
               >{silenceCutReapplyBusy ? '無音解析中…' : '無音カットを再適用'}</Button>
+              {canRestoreSilenceCut(project, clip.id) && <Button className="subtle-button" onClick={() => restoreSilenceCut()}>無音カットを解除</Button>}
               {silenceCutReapplyBusy && <Button className="subtle-button" onClick={() => void cancelSilenceCutReapply()}>キャンセル</Button>}
             </div>}
           </Section>
