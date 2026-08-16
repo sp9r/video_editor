@@ -107,7 +107,7 @@ export const timelineCandidateRelationIds = (
   if ((focusedClip.kind !== 'video' && focusedClip.kind !== 'subtitle') || focusedClip.durationUs <= 0) return []
   const focusedEndUs = focusedClip.startUs + focusedClip.durationUs
   return clips
-    .filter((candidate) => candidate.id !== focusedClip.id && (candidate.kind === 'video' || candidate.kind === 'subtitle') && candidate.durationUs > 0)
+    .filter((candidate) => candidate.id !== focusedClip.id && candidate.kind !== focusedClip.kind && (candidate.kind === 'video' || candidate.kind === 'subtitle') && candidate.durationUs > 0)
     .filter((candidate) => candidate.startUs < focusedEndUs && candidate.startUs + candidate.durationUs > focusedClip.startUs)
     .map((candidate) => candidate.id)
 }

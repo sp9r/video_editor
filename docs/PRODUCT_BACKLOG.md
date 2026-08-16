@@ -199,6 +199,8 @@
 
 **Human acceptance:** 複数video候補を含む実動画で、hover/select時の候補highlightが意図どおり表示され、subtitle trackの編集操作を妨げないこと。
 
+**Correction (Stage 29.4.1):** candidateはvideo↔subtitleのcross-type overlapだけを対象とし、video↔videoおよびsubtitle↔subtitleは候補に含めない。
+
 ### UX-TL-005 — Ruler drag scrubbing
 
 **Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`

@@ -130,12 +130,17 @@ describe('timeline interaction guards', () => {
     const videoA = { id: 'video-a', kind: 'video' as const, startUs: 0, durationUs: 10_000_000 }
     const videoB = { id: 'video-b', kind: 'video' as const, startUs: 4_000_000, durationUs: 4_000_000 }
     const subtitle = { id: 'subtitle', kind: 'subtitle' as const, startUs: 2_000_000, durationUs: 3_000_000 }
+    const subtitleOverlap = { id: 'subtitle-overlap', kind: 'subtitle' as const, startUs: 4_000_000, durationUs: 2_000_000 }
     const touching = { id: 'touching', kind: 'subtitle' as const, startUs: 10_000_000, durationUs: 1_000_000 }
+    const zeroDuration = { id: 'zero-duration', kind: 'video' as const, startUs: 3_000_000, durationUs: 0 }
     const unrelated = { id: 'unrelated', kind: 'subtitle' as const, startUs: 20_000_000, durationUs: 1_000_000 }
-    const clips = [videoA, videoB, subtitle, touching, unrelated]
+    const clips = [videoA, videoB, subtitle, subtitleOverlap, touching, zeroDuration, unrelated]
 
     expect(timelineCandidateRelationIds(subtitle, clips)).toEqual(['video-a', 'video-b'])
-    expect(timelineCandidateRelationIds(videoA, clips)).toEqual(['video-b', 'subtitle'])
+    expect(timelineCandidateRelationIds(videoA, clips)).toEqual(['subtitle', 'subtitle-overlap'])
+    expect(timelineCandidateRelationIds(videoB, clips)).toEqual(['subtitle', 'subtitle-overlap'])
+    expect(timelineCandidateRelationIds(subtitleOverlap, clips)).toEqual(['video-a', 'video-b'])
     expect(timelineCandidateRelationIds(touching, clips)).toEqual([])
+    expect(timelineCandidateRelationIds(zeroDuration, clips)).toEqual([])
   })
 })
