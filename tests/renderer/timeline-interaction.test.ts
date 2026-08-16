@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
+import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineScrubTimeUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
 import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
 
@@ -39,6 +39,13 @@ describe('timeline interaction guards', () => {
     expect(timelineEdgeScrollDelta({ pointerX: 24, viewportLeft: 0, viewportRight: 500 })).toBe(-12)
     expect(timelineEdgeScrollDelta({ pointerX: 500, viewportLeft: 0, viewportRight: 500 })).toBe(24)
     expect(timelineEdgeScrollDelta({ pointerX: 476, viewportLeft: 0, viewportRight: 500 })).toBe(12)
+  })
+
+  it('maps ruler pointerdown and pointermove using the current scroll position', () => {
+    expect(timelineScrubTimeUs({ clientX: 100, laneLeft: 0, scrollLeft: 0, zoomPxPerSecond: 100 })).toBe(1_000_000)
+    expect(timelineScrubTimeUs({ clientX: 100, laneLeft: 0, scrollLeft: 500, zoomPxPerSecond: 100 })).toBe(6_000_000)
+    expect(timelineScrubTimeUs({ clientX: -20, laneLeft: 0, scrollLeft: 0, zoomPxPerSecond: 100 })).toBe(0)
+    expect(timelineScrubTimeUs({ clientX: 100, laneLeft: 0, scrollLeft: 0, zoomPxPerSecond: 0 })).toBe(0)
   })
 
   it('does not commit a move for a click or small pointer jitter', () => {

@@ -126,6 +126,20 @@ export const timelineEdgeScrollDelta = (input: TimelineEdgeScrollInput): number 
   return 0
 }
 
+export interface TimelineScrubMappingInput {
+  clientX: number
+  laneLeft: number
+  scrollLeft: number
+  zoomPxPerSecond: number
+}
+
+/** Maps a ruler/pointer position to timeline time using the lane's current horizontal scroll. */
+export const timelineScrubTimeUs = (input: TimelineScrubMappingInput): number => {
+  const { clientX, laneLeft, scrollLeft, zoomPxPerSecond } = input
+  if (![clientX, laneLeft, scrollLeft, zoomPxPerSecond].every(Number.isFinite) || zoomPxPerSecond <= 0) return 0
+  return Math.max(0, ((clientX - laneLeft + scrollLeft) / zoomPxPerSecond) * 1_000_000)
+}
+
 export const isTextEditingTarget = (target: EventTarget | null): boolean => {
   const element = target as HTMLElement | null
   return element?.matches('input, textarea, select, [contenteditable="true"]') ?? false
@@ -325,7 +339,7 @@ export default function Timeline(): React.JSX.Element {
   const timeFromPointer = (clientX: number, lane: HTMLElement): number => {
     const bounds = lane.getBoundingClientRect()
     const scrollOffset = lane.classList.contains('timeline-viewport') ? lane.scrollLeft : 0
-    return Math.max(0, ((clientX - bounds.left + scrollOffset) / zoomPxPerSecond) * 1_000_000)
+    return timelineScrubTimeUs({ clientX, laneLeft: bounds.left, scrollLeft: scrollOffset, zoomPxPerSecond })
   }
 
   const snapTime = (atUs: TimeUs, bypass = false): TimeUs => snapSubtitleTimelinePosition({
@@ -386,6 +400,10 @@ export default function Timeline(): React.JSX.Element {
   const beginPlayheadDrag = (event: React.PointerEvent): void => {
     const viewport = viewportRef.current
     if (viewport) beginTimelineScrub(event, viewport, true)
+  }
+
+  const beginRulerScrub = (event: React.PointerEvent): void => {
+    beginTimelineScrub(event, event.currentTarget as HTMLElement)
   }
 
   const showContextMenu = (event: React.MouseEvent, clip: TimelineClip): void => {
@@ -568,7 +586,7 @@ export default function Timeline(): React.JSX.Element {
           <div className="timeline-content" style={{ width: timelineWidth, '--track-count': project.tracks.length } as React.CSSProperties}>
             <div
               className="time-ruler"
-              onPointerDown={(event) => beginTimelineScrub(event, event.currentTarget)}
+              onPointerDown={beginRulerScrub}
             >
               {ticks.map((tick) => <span key={tick} style={{ left: tick * zoomPxPerSecond }}><i />{formatTimecode(tick * 1_000_000, project).slice(3, 8)}</span>)}
             </div>

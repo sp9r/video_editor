@@ -172,9 +172,17 @@
 
 ### UX-TL-005 — Ruler drag scrubbing
 
-**Status:** `PLANNED`
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
 
 既存`EDITOR_BACKLOG.md`由来。rulerの空白位置からpointerdownして、そのままdragでplayheadを連続scrubできるようにする。
+
+**Implemented:**
+
+- rulerのpointerdownで即時seekし、pointer capture中のpointermoveで連続scrubする。
+- pointerup / pointercancelでlistenerとcaptureを終了する。
+- rulerの現在位置とhorizontal scrollを含むmappingを共通関数で計算し、clip dragのイベント経路には干渉しない。
+
+**Human acceptance:** rulerの空白位置からdragして、pointerを保持したままplayheadが連続移動すること。
 
 ### UX-TL-006 — Timeline zoom range拡張
 
