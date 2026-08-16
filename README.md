@@ -32,6 +32,12 @@
 
 全文修正では`experimental.auto-caption-baseline.v1`をbefore truthとして、修正完了時にwhole-track diffを保存します。既存のA/B/C/D Review Modeとは別workflowです。詳細は[Auto Caption Worker Contract](./docs/AUTO_CAPTION_WORKER_CONTRACT.md)、[Vertical Slice](./docs/AUTO_CAPTION_VERTICAL_SLICE.md)、[Full Correction Review](./docs/FULL_CORRECTION_REVIEW.md)を参照してください。
 
+## 2026-08-16 Night 24 final smoke
+
+実人間の日本語発話 corpus A（188.600秒、repo外QA workspace）で、import → timeline配置 → GPU優先の自動処理 → `large-v3 / CUDA / float16` Whisper → Natural無音解析 → 高品質字幕（LLM timeout時は既存rule fallback） → user subtitle template適用 → timeline配置 → 再生 → Inspector本文編集 → Save/reopen → final renderを確認しました。代表結果はraw words 666件、字幕85件、無音3件、削除候補3.85秒です。
+
+この受入はself-contained portable auto-captionを意味しません。worker discovery、Python依存、faster-whisper、Whisper model、FFmpegが必要です。fine acoustic alignmentは未実装で、SubtitleEditUnitの時刻は編集用derived estimateです。今回のGUI encoder probeはCPU/libx264へfallbackし、出力はH.264/AAC・184.766667秒としてffprobe確認しました。別のdirect NVENC probeは既存QAでPASSしています。
+
 ## 開発環境で起動する
 
 必要環境はNode.js 22.12以上とGitです。FFmpeg / ffprobeはnpm依存として導入され、利用者のPATHへ依存しません。

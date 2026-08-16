@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 2026-08-16 Night 24 verification
+
+- 実人間日本語QA AでAuto Processingから手動字幕編集、Save/reopen、final renderまでの最終GUI smokeを確認した（666 raw words、85 captions、Natural silence 3件）。
+- user subtitle templateのlast-used復元をSave/reopen後に確認した。高品質字幕区切りはLLM timeout時に既存rule fallbackを使用した。
+- GUIの実encoder probeがCPU/libx264を選択したため、今回の最終出力はCPU fallbackとして記録した。NVENC成功とは混同しない。
+
 ### Fixed
 
 - Integrated Auto Editの成功／失敗／キャンセル境界を整理し、worker、無音cut、字幕template、baseline、Project適用を成功時の1 history operationとして扱う回帰を追加した。Full Correction beforeは自動編集後のcompressed timelineを保持する。

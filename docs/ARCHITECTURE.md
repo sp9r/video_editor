@@ -45,6 +45,12 @@ Rendererは40ms latest-only schedulerを使用する。pending requestは常に�
 5. RendererへNode.jsや任意コマンド実行能力を渡さないこと。
 6. Production Electron rendererは`file://`で開くため、Vite outputのasset URLはfile-relativeでなければならない。startup smokeはHTML asset、DOM、preload、renderer diagnosticsを確認する。
 
+## Night 24 acceptance checkpoint (2026-08-16)
+
+実人間の日本語発話A（188.600秒）を使った最終GUI smokeは、worker discovery、source range処理、`large-v3 / cuda / float16` Whisper、signal-authority Natural silence、caption fallback、user template、atomic timeline apply、再生、字幕本文編集、Save/reopen、final renderまで完走した。resultは666 raw words／85 captions／3 silenceで、短縮後の出力は184.766667秒だった。
+
+実際のGUI encoder statusはCPU/libx264 fallbackだった。NVENCを名前だけで成功扱いせず、probe結果を表示する現行設計と一致する。direct `h264_nvenc` renderは別の既存QAで確認済みだが、今回のGUI smokeをNVENC PASSとは扱わない。workerはportable配布物ではなく、fine acoustic alignmentも未実装である。
+
 ## 全体構成
 
 ```mermaid

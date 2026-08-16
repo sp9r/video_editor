@@ -1,5 +1,14 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-16 NIGHT 24 Final acceptance checkpoint
+
+- 実人間日本語QA corpus A（188.600秒）で、import、timeline配置、GPU Auto処理、`large-v3 / CUDA / float16` Whisper、Natural silence、High Quality字幕、user template、timeline apply、再生、字幕本文編集、Save/reopen、final renderを実GUIで完走した。
+- 代表結果は666 raw words、85 captions、3 silence、削除候補3.85秒。字幕区切りはOllama高品質経路がtimeoutしたため既存rule fallbackとなった。無音判定はFFmpeg音声信号authorityで、filler removalは行わない。
+- user template `標準 copy` は自動処理完了後にlast-usedとして保存され、Save/reopen後のdialogで32文字／2行として復元された。templateはuserData管理でProjectFileへmachine pathを保存しない。
+- manual Inspector本文編集後のSave/reopenで編集本文が保持された。final renderはGUIのprobe結果によりCPU/libx264へfallbackし、H.264/AAC・184.766667秒をffprobe確認した。direct NVENCは既存QAで別途PASSしている。
+- self-contained portable auto-captionは未達。worker discovery、Python/faster-whisper、model、FFmpegが必要。fine acoustic alignmentは未実装で、SubtitleEditUnitの時刻はderived estimateとしてのみ扱う。
+- B/Cのreal-video結果、長時間soak、全visible controlの完全な手動受入は今回の最終smoke範囲外として、次の人手確認へ残す。Phase 5、planning、highlight、publish、mass Human Review、learningは開始しない。
+
 ## 2026-08-16 NIGHT 12 Template-Aware Caption Generation Authority
 
 - Auto Caption requestへ選択templateのmaxChars、maxLines、segmentationMode、path-freeなtemplate IDを同じsettingsとして渡す経路を回帰固定した。baselineにも同じsettingsを保存する。
