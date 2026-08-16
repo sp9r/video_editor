@@ -32,6 +32,7 @@ describe('visible action prerequisites', () => {
 
   it('keeps auto-caption run disabled until the selected source is usable', () => {
     expect(autoCaptionControlState({ captioning: false })).toEqual({ disabled: true, label: '対象clipを選択してください' })
+    expect(autoCaptionControlState({ captioning: false, selectionCount: 2 })).toEqual({ disabled: true, label: '自動処理はclipを1つだけ選択してください' })
     expect(autoCaptionControlState({ captioning: false, clipKind: 'subtitle' })).toMatchObject({ disabled: true })
     expect(autoCaptionControlState({ captioning: false, clipKind: 'video', assetOffline: true, assetHasAudio: true })).toEqual({ disabled: true, label: 'オフライン素材は再リンクしてください' })
     expect(autoCaptionControlState({ captioning: false, clipKind: 'video', assetOffline: false, assetHasAudio: false })).toEqual({ disabled: true, label: '音声を含む素材を選択してください' })

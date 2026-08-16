@@ -223,12 +223,13 @@ export default function App(): React.JSX.Element {
     if (!window.spectra) return
     let active = true
     const onPreviewE2eProject = (event: Event): void => {
-      const detail = (event as CustomEvent<{ project?: ProjectFile; timeUs?: number; selectClipId?: string; selectAssetId?: string }>).detail
+      const detail = (event as CustomEvent<{ project?: ProjectFile; timeUs?: number; selectClipId?: string; selectClipIds?: string[]; selectAssetId?: string }>).detail
       if (!detail?.project) return
       try {
         loadProject(detail.project)
-        if (detail.selectClipId || detail.selectAssetId) window.setTimeout(() => {
+        if (detail.selectClipId || detail.selectClipIds?.length || detail.selectAssetId) window.setTimeout(() => {
           if (detail.selectClipId) selectClip(detail.selectClipId)
+          for (const clipId of detail.selectClipIds ?? []) selectClip(clipId, true)
           if (detail.selectAssetId) selectAsset(detail.selectAssetId)
         }, 0)
         if (Number.isFinite(detail.timeUs)) setPlayhead(detail.timeUs ?? 0)
@@ -362,6 +363,7 @@ export default function App(): React.JSX.Element {
   const selectedSubtitleClip = selectedCaptionClip?.kind === 'subtitle' ? selectedCaptionClip : undefined
   const autoCaptionRunState = autoCaptionControlState({
     captioning,
+    selectionCount: selectedClipIds.length,
     clipKind: selectedCaptionClip?.kind,
     assetOffline: selectedCaptionAsset?.offline,
     assetHasAudio: selectedCaptionAsset?.hasAudio
@@ -501,7 +503,7 @@ export default function App(): React.JSX.Element {
             else if (!useReviewStore.getState().start(project, useEditorStore.getState().selectedClipIds[0])) showNotice('レビュー対象の字幕がありません。', 'warning')
           }}>レビュー {reviewEnabled ? 'ON' : 'OFF'}</Button>
           {(fullCorrectionSession || selectedAutoCaptionTrack) && <Button className={fullCorrectionSession ? 'review-toggle is-active' : 'review-toggle'} onClick={() => { void (fullCorrectionSession ? finishFullCorrection() : startFullCorrection()) }}>{fullCorrectionSession ? '修正完了' : '全文修正'}</Button>}
-          <Button disabled={captioning} onClick={() => { setCaptionSummary(null); setCaptionDialogOpen(true) }}><Captions size={15} />自動処理</Button>
+          <Button disabled={captioning} title={captioning ? '自動処理を実行中です' : '自動処理'} onClick={() => { setCaptionSummary(null); setCaptionDialogOpen(true) }}><Captions size={15} />自動処理</Button>
           <Button className="primary-button export-button" onClick={() => setExportOpen(true)}><MonitorUp size={16} />書き出す</Button>
         </div>
       </header>

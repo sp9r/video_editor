@@ -133,7 +133,7 @@ export default function ExportDialog({ report, onClose, refreshEncoders }: Props
         <header className="dialog-header">
           <div className="dialog-title-icon"><MonitorUp size={21} /></div>
           <div><span className="panel-eyebrow">DELIVER</span><h2 id="export-title">動画を書き出す</h2></div>
-          <IconButton label="閉じる" disabled={Boolean(runningJobId)} onClick={onClose}><X size={18} /></IconButton>
+          <IconButton label={runningJobId ? '書き出し中は閉じられません（キャンセルを使用）' : '閉じる'} disabled={Boolean(runningJobId)} onClick={onClose}><X size={18} /></IconButton>
         </header>
         <div className="dialog-body">
           <div className="export-settings">

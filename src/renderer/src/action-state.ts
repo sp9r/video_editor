@@ -54,6 +54,7 @@ export const mediaAddControlState = ({ offline, hasMediaTrack }: { offline: bool
 
 export interface AutoCaptionControlInput {
   captioning: boolean
+  selectionCount?: number
   clipKind?: string
   assetOffline?: boolean
   assetHasAudio?: boolean
@@ -65,8 +66,9 @@ export interface AutoCaptionControlState {
 }
 
 /** Keeps the visible run action aligned with the main-process prerequisites. */
-export const autoCaptionControlState = ({ captioning, clipKind, assetOffline, assetHasAudio }: AutoCaptionControlInput): AutoCaptionControlState => {
+export const autoCaptionControlState = ({ captioning, selectionCount = 0, clipKind, assetOffline, assetHasAudio }: AutoCaptionControlInput): AutoCaptionControlState => {
   if (captioning) return { disabled: true, label: '自動処理を実行中です' }
+  if (selectionCount > 1) return { disabled: true, label: '自動処理はclipを1つだけ選択してください' }
   if (!clipKind) return { disabled: true, label: '対象clipを選択してください' }
   if (clipKind !== 'video' && clipKind !== 'audio') return { disabled: true, label: '動画または音声clipを選択してください' }
   if (assetOffline) return { disabled: true, label: 'オフライン素材は再リンクしてください' }

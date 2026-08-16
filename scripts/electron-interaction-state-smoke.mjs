@@ -52,12 +52,16 @@ try {
   const assert = (condition, message) => { if (!condition) throw new Error(`${message}: ${JSON.stringify(states)}`) }
   assert(states.clipSelected?.run?.disabled === false, 'selected clip must enable auto processing')
   assert(states.processingRunning?.autoProcessing?.disabled === true, 'processing must disable auto processing')
+  assert(String(states.processingRunning?.autoProcessing?.title).includes('実行中'), 'processing must explain why auto processing is disabled')
   assert(states.processingCompleted?.autoProcessing?.disabled === false, 'completed processing must re-enable auto processing')
   assert(states.processingFailed?.autoProcessing?.disabled === false, 'failed processing must leave a retryable action')
+  assert(states.noSelectionDialog?.run?.disabled === true && String(states.noSelectionDialog.run.title).includes('対象clip'), 'no selection must explain the prerequisite')
   assert(states.modalClosed?.dialog === false, 'closing the modal must restore the main UI')
   assert(states.subtitleSelected?.fullCorrection?.disabled === false, 'auto-caption subtitle must enable full correction')
   assert(states.reviewMode?.review?.active === true, 'review mode must activate after click')
   assert(states.offlineMedia?.run?.disabled === true && String(states.offlineMedia.run.title).includes('再リンク'), 'offline media must explain disabled auto processing')
+  assert(states.noAudio?.run?.disabled === true && String(states.noAudio.run.title).includes('音声'), 'no-audio media must explain disabled auto processing')
+  assert(states.multiSelection?.run?.disabled === true && String(states.multiSelection.run.title).includes('1つだけ'), 'multi-selection must explain the single-clip prerequisite')
   console.log(JSON.stringify({ ...report, outputLines: output.length }, null, 2))
 } finally {
   await rm(workspace, { recursive: true, force: true })
