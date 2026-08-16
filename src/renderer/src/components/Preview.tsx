@@ -5,6 +5,7 @@ import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
 import { activeSubtitleClips, buildSubtitleRenderSpec, subtitleAnchorTransform, subtitleVisualStateKey } from '../../../shared/subtitle-render'
 import { canonicalShadowBlurRadius } from '../../../shared/subtitle-shadow'
 import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip, SubtitleOverlayResult } from '../../../shared/types'
+import { PREVIEW_AUDIO_DRIFT_TOLERANCE_SECONDS, previewAudioIsActive, previewAudioSourceTimeUs, previewAudioVolume } from '../preview-audio'
 import { previewDiagnosticContext, previewDiagnosticStore } from '../preview-performance-diagnostics'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
@@ -12,8 +13,6 @@ import { LatestSubtitleOverlayScheduler } from '../subtitle-overlay-scheduler'
 
 const activeAt = (clip: { startUs: number; durationUs: number; enabled: boolean }, timeUs: number): boolean =>
   clip.enabled && clip.startUs <= timeUs && clip.startUs + clip.durationUs > timeUs
-
-const dbToLinear = (value = 0): number => 10 ** (Math.max(-96, Math.min(24, value)) / 20)
 
 function PreviewVisual({
   clip,
@@ -154,6 +153,7 @@ export default function Preview(): React.JSX.Element {
   const lastFrameRef = useRef<number>(0)
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const audioRefs = useRef(new Map<string, HTMLAudioElement>())
+  const audioPlayAttempted = useRef(new Set<string>())
   const accurateRequestSequence = useRef(0)
   const subtitleOverlayRequestSequence = useRef(0)
   const subtitleOverlayScheduler = useRef(new LatestSubtitleOverlayScheduler<SubtitleOverlayResult>(40))
@@ -362,20 +362,29 @@ export default function Preview(): React.JSX.Element {
       if (!audio) continue
       const asset = item.sourceMediaId ? project.media.find((media) => media.id === item.sourceMediaId) : undefined
       if (!asset || asset.offline) continue
-      audio.volume = dbToLinear(item.volumeDb)
-      const active = activeAt(item, playheadUs)
+      audio.volume = previewAudioVolume(item.volumeDb)
+      const active = previewAudioIsActive(item, playheadUs)
       if (!active) {
         audio.pause()
+        audioPlayAttempted.current.delete(item.clipId)
         continue
       }
       activeIds.add(item.clipId)
-      const expectedSeconds = (item.sourceInUs + playheadUs - item.startUs) / 1_000_000
-      if (Math.abs(audio.currentTime - expectedSeconds) > 0.12 || !Number.isFinite(audio.currentTime)) audio.currentTime = Math.max(0, expectedSeconds)
-      if (playing) void audio.play().catch(() => undefined)
-      else audio.pause()
+      const expectedSeconds = previewAudioSourceTimeUs(item, playheadUs) / 1_000_000
+      if (Math.abs(audio.currentTime - expectedSeconds) > PREVIEW_AUDIO_DRIFT_TOLERANCE_SECONDS || !Number.isFinite(audio.currentTime)) audio.currentTime = Math.max(0, expectedSeconds)
+      if (!playing) {
+        audio.pause()
+        audioPlayAttempted.current.delete(item.clipId)
+      } else if (audio.paused && !audioPlayAttempted.current.has(item.clipId)) {
+        audioPlayAttempted.current.add(item.clipId)
+        void audio.play().catch(() => undefined)
+      }
     }
     for (const [clipId, audio] of audioRefs.current) {
-      if (!activeIds.has(clipId)) audio.pause()
+      if (!activeIds.has(clipId)) {
+        audio.pause()
+        audioPlayAttempted.current.delete(clipId)
+      }
     }
   }, [playheadUs, playing, project, renderPlan])
 
