@@ -146,7 +146,7 @@
 
 ### UX-TL-003 — Timeline clip labelの可読性改善
 
-**Status:** `PLANNED`
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
 
 **User feedback:** clip内の文字が小さく、見づらい。
 
@@ -156,6 +156,15 @@
 - 狭いclipでの省略表示を整理。
 - 選択状態、video/audio/subtitle種別、linked状態を視覚的に判別しやすくする。
 - 情報量を増やしすぎてTimelineを窮屈にしない。
+
+**Implemented:**
+
+- labelを10px・weight 700へ調整し、種別ごとの色とコントラストを改善。
+- selected state、linked state、video/audio/subtitle種別を明示。
+- 狭いclipではlabelを隠し、種別iconを優先するresponsive表示を追加。
+- clip DOMの大規模再設計、ResizeObserver、data model変更は行わない。
+
+**Human acceptance:** 実動画・複数zoomでlabel、種別、selected/linked表示の可読性を確認する。
 
 ### UX-TL-004 — Video / Subtitle対応関係の可視化
 
@@ -222,7 +231,7 @@
 
 ### SIL-001 — Timeline編集に追従する動的Silence Cut
 
-**Status:** `IDEA`
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
 
 **User need:** 手動で新しいcut / trim / splitを行ったあと、その現在の編集状態を基準に、残っている無音区間も適切に除去できるようにしたい。
 
@@ -235,10 +244,29 @@
 - subtitle derived timingをspeech protection authorityにはしない。
 - filler removalは行わない。
 
-**Open design question:**
+**Decision (Stage 29.2):**
 
-- 自動再解析するか、既存analysis artifactを現在clipへ再mapするか、ユーザー明示の「無音カット再適用」にするかを比較する。
-- 動的処理がユーザーの手動編集を勝手に破壊しないUndo/transaction設計が必要。
+- ユーザー明示の「無音カットを再適用」を採用する。
+- 編集操作ごとの自動再解析は行わない。
+- 既存analysis cacheは正当性を確認できる場合だけ補助利用し、現在実装では現在clip範囲をFFmpegで再解析する。
+- split / trim / deletion後は現在の`sourceInUs` / `durationUs`を入力とする。
+- linked A/Vは同一cut planで処理し、original mediaは変更しない。
+- FFmpeg audio signalをsilence authority、raw Whisper wordsをspeech protection authorityとする。
+- `SubtitleEditUnit`とsubtitle boundaryはspeech authorityにしない。
+- 成功時は一回のhistory transaction、no-op・failure・cancel時はProject unchangedとする。
+
+**Implemented:**
+
+- Inspectorに「無音カットを再適用」とキャンセル操作を追加。
+- 現在のmedia clip範囲を対象にした独立Silence Analysis serviceとIPCを追加。
+- targeted testsでsplit、trim、deletion、already-cut source gap、linked A/V、speech protection、no-op、Undo/Redo、failure/cancelを確認。
+
+**Human acceptance:** 実動画で再適用を実行し、speechを保護したまま無音だけが短縮されることを確認する。
+
+**Resolved / remaining:**
+
+- Stage 29.2でユーザー明示の再適用を実装済み。
+- 将来のanalysis cache再利用と、subtitleを保持したまま複数media segmentへ再適用する実動画受入は保留。
 
 ### SIL-002 — YouTubeジャンプカットprofile
 
