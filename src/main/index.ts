@@ -408,7 +408,21 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   })()`)
   console.log('SPECTRA_ACCURATE_PREVIEW_STAGE dom-poll-start')
   const wait = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds))
-  const waitForPaint = (): Promise<unknown> => window.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`)
+  const waitForPaint = (): Promise<unknown> => window.webContents.executeJavaScript(`(async () => {
+    const images = Array.from(document.querySelectorAll('.accurate-preview-overlay, .fast-authoritative-subtitle-overlay'))
+      .filter((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0)
+    await Promise.all(images.map((image) => image.decode?.().catch(() => undefined)))
+    await new Promise((resolve) => {
+      let frames = 0
+      const tick = () => {
+        frames += 1
+        if (frames >= 4) resolve(undefined)
+        else requestAnimationFrame(tick)
+      }
+      requestAnimationFrame(tick)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  })()`)
   const until = async (predicate: (dom: Awaited<ReturnType<typeof readDom>>) => boolean, timeoutMs = 10_000): Promise<boolean> => {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {

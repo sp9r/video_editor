@@ -234,7 +234,7 @@ try {
     media: [{ id: 'source', name: 'source.png', path: sourcePath, kind: 'image', durationUs: 0, width: mediaWidth, height: mediaHeight, hasAudio: false, fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false }],
     tracks: [
       { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: 'image', assetId: 'source', startUs: 0, durationUs: 1000000, sourceInUs: 0, enabled: true, transform: fixtureOverrides.transform ?? { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
-      { id: 'subtitle', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: [{ id: 'caption-1', name: 'Caption', kind: 'subtitle', text: subtitleText, startUs: 200000, durationUs: 600000, sourceInUs: 0, enabled: true, ...(Number.isSafeInteger(fixtureOverrides.maxLines) ? { maxLines: fixtureOverrides.maxLines } : {}), style: subtitleStyle }] }
+      { id: 'subtitle', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: [{ id: 'caption-1', name: 'Caption', kind: 'subtitle', text: subtitleText, startUs: 200000, durationUs: 2000000, sourceInUs: 0, enabled: true, ...(Number.isSafeInteger(fixtureOverrides.maxLines) ? { maxLines: fixtureOverrides.maxLines } : {}), style: subtitleStyle }] }
     ]
   }
   await writeFile(projectPath, JSON.stringify(project), 'utf8')
