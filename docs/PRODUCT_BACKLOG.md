@@ -192,9 +192,15 @@
 
 ### UX-TL-007 — Shift不要の横スクロール
 
-**Status:** `VERIFY`
+**Status:** `DONE`
 
 過去のユーザー要望: Timelineを左右移動する際、Shift+wheel必須ではなく通常のpointer/wheel操作で自然に横スクロールできるようにしたい。現在実装状態を再確認する。
+
+**Verified:**
+
+- `.timeline-viewport`の通常wheel handlerが`shiftKey`を要求せず、`deltaX + deltaY`を`scrollLeft`へ反映している。
+- Shiftなしの通常wheelでも横scrollでき、Ctrl/Cmd wheelだけは既存のzoom操作として分岐する。
+- 追加コード変更なし。既存Timeline interaction 13 testsをPASS。
 
 ### UX-TL-008 — 右クリックcontext menu / Split discoverability
 
