@@ -12,6 +12,7 @@ import { generateAss } from './ffmpeg/subtitles'
 import { buildSubtitleRenderSpec } from '../shared/subtitle-render'
 import { createSubtitleParityFixture } from '../shared/subtitle-parity-fixture'
 import { loadExperimentalReviewRecords, saveExperimentalReviewRecord } from './review-service'
+import { exportLearningDataset } from './learning-dataset-service'
 import type { ExperimentalReviewRecord } from '../shared/review/types'
 import { finishFullCorrectionSession, loadFullCorrectionSessions, startFullCorrectionSession } from './full-correction-service'
 import { parseAutoCaptionSettings } from '../shared/auto-caption-contract'
@@ -359,6 +360,11 @@ const registerIpcHandlers = (): void => {
     return saveExperimentalReviewRecord(structuredClone(record))
   })
 
+  ipcMain.handle(IPC.learningDatasetExport, (event) => {
+    assertTrustedSender(event)
+    return exportLearningDataset()
+  })
+
   ipcMain.handle(IPC.fullCorrectionLoad, (event) => {
     assertTrustedSender(event)
     return loadFullCorrectionSessions()
@@ -532,6 +538,7 @@ const runInteractionStateSmoke = async (window: BrowserWindow): Promise<Record<s
     const correction = byText('全文修正')
     const dialog = document.querySelector('.caption-dialog')
     const reviewWorkspace = document.querySelector('.subtitle-review-workspace')
+    const learningDataset = byText('学習データを書き出す')
     return {
       dialog: Boolean(dialog),
       dialogTitle: dialog?.querySelector('h2')?.textContent ?? '',
@@ -540,6 +547,7 @@ const runInteractionStateSmoke = async (window: BrowserWindow): Promise<Record<s
       review: review ? { disabled: review.disabled, text: text(review), active: review.classList.contains('is-active') } : null,
       fullCorrection: correction ? { disabled: correction.disabled, text: text(correction) } : null,
       reviewWorkspace: reviewWorkspace ? { title: reviewWorkspace.querySelector('h2')?.textContent ?? '' } : null,
+      learningDataset: learningDataset ? { disabled: learningDataset.disabled } : null,
       saved: document.querySelector('.project-menu')?.textContent?.includes('保存済み') ?? false,
       focusedTag: document.activeElement?.tagName ?? '',
       rootChildCount: document.querySelector('#root')?.childElementCount ?? 0

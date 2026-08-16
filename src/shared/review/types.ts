@@ -1,4 +1,4 @@
-import type { MediaAsset, ProjectFile, SubtitleClip, TimeUs } from '../types'
+import type { MediaAsset, ProjectFile, SubtitleClip, SubtitleStyle, TimeUs } from '../types'
 
 export type ReviewRating = 'good' | 'acceptable' | 'corrected' | 'skip'
 export type CorrectionType =
@@ -27,6 +27,8 @@ export interface ReviewCaptionSnapshot {
   durationUs: TimeUs
   sourceInUs: TimeUs
   words?: ReviewWordSnapshot[]
+  /** Additive field; old review records may omit style. */
+  style?: SubtitleStyle
   wordsMatchText: boolean
 }
 

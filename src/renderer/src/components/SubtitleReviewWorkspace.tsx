@@ -4,6 +4,8 @@ import { formatTimecode } from '../../../shared/project'
 import type { AutoCaptionBaseline } from '../../../shared/auto-caption-contract'
 import type { ProjectFile, SubtitleClip } from '../../../shared/types'
 import type { ReviewRating } from '../../../shared/review/types'
+import type { ExperimentalReviewRecord } from '../../../shared/review/types'
+import { buildLearningDataset, serializeLearningDatasetJsonl } from '../../../shared/learning-dataset'
 import { subtitleReviewFilterLabel, subtitleReviewRatingForKey, subtitleReviewStatusLabel, filterSubtitleReviewIds, moveSubtitleReviewIndex, subtitleReviewProgress, type SubtitleReviewFilter } from '../subtitle-review-workspace'
 import { useReviewStore } from '../review-store'
 import { useEditorStore } from '../store'
@@ -36,6 +38,8 @@ export default function SubtitleReviewWorkspace({ project, baselines, onClose }:
   const showNotice = useEditorStore((state) => state.showNotice)
   const review = useReviewStore()
   const [filter, setFilter] = useState<SubtitleReviewFilter>('all')
+  const [datasetExporting, setDatasetExporting] = useState(false)
+  const [datasetExportResult, setDatasetExportResult] = useState<{ exported: boolean; eligibleSamples: number; excludedSamples: number; malformedRecords: number } | null>(null)
   const fallbackIds = useMemo(() => new Set(captionsFor(project, review.targetIds).filter((clip) => {
     const job = baselines.find((baseline) => baseline.jobId === clip.sourceJobId)
     return Boolean(job?.fallback.used)
@@ -45,6 +49,7 @@ export default function SubtitleReviewWorkspace({ project, baselines, onClose }:
   const currentId = review.targetIds[review.targetIndex]
   const current = currentId ? captionsFor(project, [currentId])[0] : undefined
   const progress = subtitleReviewProgress(review.targetIds, review.decisions)
+  const dataset = useMemo(() => buildLearningDataset(Object.values(review.decisions)), [review.decisions])
 
   const sync = (id: string | undefined): void => {
     if (!id) return
@@ -57,7 +62,7 @@ export default function SubtitleReviewWorkspace({ project, baselines, onClose }:
 
   const move = (direction: -1 | 1): void => sync(moveSubtitleReviewIndex(visibleIds, currentId, direction))
 
-  const persist = async (record: ReturnType<typeof useReviewStore.getState>['decide'] extends (...args: never[]) => infer R ? R : never): Promise<void> => {
+  const persist = async (record: ExperimentalReviewRecord | null): Promise<void> => {
     if (!record) return
     try {
       if (window.spectra) await window.spectra.upsertExperimentalReviewRecord(record)
@@ -72,6 +77,27 @@ export default function SubtitleReviewWorkspace({ project, baselines, onClose }:
     if (!record) return
     void persist(record)
     move(1)
+  }
+
+  const exportDataset = async (): Promise<void> => {
+    setDatasetExporting(true)
+    try {
+      if (window.spectra) {
+        setDatasetExportResult(await window.spectra.exportLearningDataset())
+      } else {
+        const jsonl = serializeLearningDatasetJsonl(dataset.samples)
+        const link = document.createElement('a')
+        link.href = URL.createObjectURL(new Blob([jsonl], { type: 'application/x-ndjson' }))
+        link.download = 'spectra-learning-dataset.v1.jsonl'
+        link.click()
+        URL.revokeObjectURL(link.href)
+        setDatasetExportResult({ exported: true, eligibleSamples: dataset.samples.length, excludedSamples: dataset.excludedSamples, malformedRecords: dataset.diagnostics.length })
+      }
+    } catch (error) {
+      showNotice(`学習データを書き出せませんでした: ${error instanceof Error ? error.message : '書き出しエラー'}`, 'error')
+    } finally {
+      setDatasetExporting(false)
+    }
   }
 
   useEffect(() => {
@@ -110,6 +136,12 @@ export default function SubtitleReviewWorkspace({ project, baselines, onClose }:
       <div className="subtitle-review-toolbar">
         <label>表示<select aria-label="レビュー表示フィルター" value={filter} onChange={(event) => setFilter(event.target.value as SubtitleReviewFilter)}><option value="all">全件</option><option value="pending">未確認のみ</option><option value="corrected">修正済みのみ</option><option value="fallback">fallback字幕のみ</option></select></label>
         <span className="subtitle-review-hint">1–4 評価 · J/K / ←→ 移動</span>
+      </div>
+      <div className="subtitle-review-dataset" aria-label="学習データ概要">
+        <div><strong>学習データ</strong><span>適格 {dataset.samples.length}件 · 除外 {dataset.excludedSamples}件</span>{dataset.diagnostics.length > 0 && <small>不正record {dataset.diagnostics.length}件を除外</small>}</div>
+        <span className="subtitle-review-dataset-categories">{Object.entries(dataset.correctionCategories).map(([category, count]) => `${category} ${count}`).join(' · ') || 'まだ評価済みrecordがありません'}</span>
+        <Button className="subtle-button" disabled={datasetExporting} onClick={() => void exportDataset()}>{datasetExporting ? '書き出し中…' : '学習データを書き出す'}</Button>
+        {datasetExportResult && <small className="subtitle-review-dataset-result">{datasetExportResult.exported ? `${datasetExportResult.eligibleSamples}件を書き出しました。` : 'ローカル集約datasetへ保存しました。ファイル書き出しはキャンセルされました。'}{datasetExportResult.malformedRecords ? ` 不正record ${datasetExportResult.malformedRecords}件を除外。` : ''}</small>}
       </div>
       <div className="subtitle-review-body">
         <div className="subtitle-review-list" role="list" aria-label="字幕レビュー一覧">

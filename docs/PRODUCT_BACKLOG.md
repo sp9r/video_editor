@@ -514,6 +514,15 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 - review状態はProjectFileへ追加せず、既存review logへ保存・再起動時hydrateする。Preview字幕を一覧件数分DOM生成しない。
 - 自動テスト・Electron interaction smokeは完了後に確認する。実字幕1000件での操作感、キーボード、表示密度は人間確認待ち。
 
+### LEARN-001 / Stage 32.4 — Editing Learning Dataset v1
+
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
+
+- `ExperimentalReviewRecord`から`experimental.learning-dataset.v1`へ変換するshared neutral formatを追加。baseline/final、word ownership、timing、split/merge・text・style correction、rating、eligibilityを含む。
+- project identityは匿名hashへ変換し、media本体、absolute path、credential、review provenanceの不要な個人metadataは出力しない。
+- stable sample keyでdedupeし、malformed recordは個別skipしてdiagnosticへ記録する。eligible sampleだけをuserDataのlocal aggregated JSONLへ保存し、ユーザー操作でJSONL exportできる。
+- model training、network、clip_automationへのdirect importは未実施。dataset formatの実運用・人間受入は保留。
+
 ---
 
 ## Notes for future Luna tasks

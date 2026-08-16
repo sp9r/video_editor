@@ -19,6 +19,7 @@ export const snapshotCaption = (trackId: string, clip: SubtitleClip): ReviewCapt
   durationUs: clip.durationUs,
   sourceInUs: clip.sourceInUs,
   ...(clip.words ? { words: clip.words.map(snapshotWord) } : {}),
+  style: clone(clip.style),
   wordsMatchText: Boolean(clip.words?.length) && clip.words!.map((word) => word.text).join('') === clip.text
 })
 

@@ -51,6 +51,7 @@ const api: DesktopApi = {
   exportSrt: (project: ProjectFile, suggestedName: string) => ipcRenderer.invoke(IPC.exportSrt, project, suggestedName),
   loadExperimentalReviewRecords: () => ipcRenderer.invoke(IPC.reviewLoad),
   upsertExperimentalReviewRecord: (record: ExperimentalReviewRecord) => ipcRenderer.invoke(IPC.reviewUpsert, record),
+  exportLearningDataset: () => ipcRenderer.invoke(IPC.learningDatasetExport),
   loadFullCorrectionSessions: () => ipcRenderer.invoke(IPC.fullCorrectionLoad),
   startFullCorrectionSession: (project: ProjectFile, trackId: string): Promise<FullCorrectionSession> => ipcRenderer.invoke(IPC.fullCorrectionStart, project, trackId),
   finishFullCorrectionSession: (project: ProjectFile, sessionId: string): Promise<FullCorrectionSession> => ipcRenderer.invoke(IPC.fullCorrectionFinish, project, sessionId),
