@@ -51,9 +51,15 @@ describe('bundled FFmpeg integration', () => {
       const service = new FfmpegService(paths, { workspaceRoot: join(root, 'workspace') })
       const first = await service.renderSubtitleOverlay(project, 500_000)
       const second = await service.renderSubtitleOverlay(project, 500_001)
-      expect(second).toEqual(first)
+      expect(second.framePath).toBe(first.framePath)
+      expect(second.frameIndex).toBe(first.frameIndex)
+      expect(second.subtitleStateFingerprint).toBe(first.subtitleStateFingerprint)
       expect(first.frameIndex).toBe(15)
       expect(first.subtitleStateFingerprint).toMatch(/^[0-9a-f]{64}$/u)
+      expect(first.cacheHit).toBe(false)
+      expect(first.ffmpegStarted).toBe(true)
+      expect(second.cacheHit).toBe(true)
+      expect(second.ffmpegStarted).toBe(false)
 
       const rawPath = join(root, 'overlay.rgba')
       await executeProcess({
