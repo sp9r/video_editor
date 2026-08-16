@@ -204,9 +204,17 @@
 
 ### UX-TL-008 — 右クリックcontext menu / Split discoverability
 
-**Status:** `VERIFY`
+**Status:** `DONE`
 
 過去のユーザー要望: clip右クリックからSplit、Delete等の主要編集を呼び出せるようにし、分割方法がUI上で分かりやすい状態にする。現在実装状態を再確認する。
+
+**Verified:**
+
+- clip右クリックで対象clipを選択し、Split、Delete、Ripple Delete、Copy、Paste、Duplicateをcontext menuから実行できる。
+- subtitle clipでは、単語境界情報がある場合に「ここで字幕を分割（単語境界）」、不足時は理由付きdisabled表示になる。
+- locked trackではSplit/Delete/Ripple Deleteをdisabledにし、ロック理由を表示する。
+- context menu外のpointerdown、Escape、window blurでmenuを閉じる既存挙動を確認した。
+- 大規模UI変更なし。既存Timeline interaction 13 testsをPASS。
 
 ---
 
