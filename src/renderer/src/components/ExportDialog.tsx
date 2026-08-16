@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronRight, Cpu, FolderOpen, Gauge, MonitorUp, TriangleAlert, X, Zap } from 'lucide-react'
 import type { EncoderMode, EncoderReport, ExportProgress, ExportSettings } from '../../../shared/types'
 import { useEditorStore } from '../store'
@@ -32,6 +32,7 @@ export default function ExportDialog({ report, onClose, refreshEncoders }: Props
   const [audioBitrateKbps, setAudioBitrateKbps] = useState(320)
   const [encoderMode, setEncoderMode] = useState<EncoderMode>('auto')
   const [preferredEncoderId, setPreferredEncoderId] = useState(encoders.selectedId ?? '')
+  const preferredEncoderManuallySelected = useRef(false)
   const [burnSubtitles, setBurnSubtitles] = useState(true)
   const [exportSrt, setExportSrt] = useState(false)
   const [outputPath, setOutputPath] = useState(`${project.name}.mp4`)
@@ -44,6 +45,11 @@ export default function ExportDialog({ report, onClose, refreshEncoders }: Props
     [encoders, preferredEncoderId]
   )
   const hardwareAvailable = encoders.capabilities.some((item) => item.hardware && item.available)
+
+  useEffect(() => {
+    if (preferredEncoderManuallySelected.current) return
+    setPreferredEncoderId(encoders.selectedId ?? encoders.capabilities.find((item) => item.available)?.id ?? '')
+  }, [encoders])
 
   useEffect(() => {
     if (!window.spectra) return
@@ -170,7 +176,7 @@ export default function ExportDialog({ report, onClose, refreshEncoders }: Props
                   </button>
                 ))}
               </div>
-              <SelectField label="優先エンコーダー" value={preferredEncoderId} onChange={(event) => setPreferredEncoderId(event.target.value)} disabled={encoderMode === 'software'}>
+              <SelectField label="優先エンコーダー" value={preferredEncoderId} onChange={(event) => { preferredEncoderManuallySelected.current = true; setPreferredEncoderId(event.target.value) }} disabled={encoderMode === 'software'}>
                 {encoders.capabilities.map((encoder) => <option key={encoder.id} value={encoder.id} disabled={!encoder.available}>{encoder.name}{!encoder.available ? '（利用不可）' : ''}</option>)}
               </SelectField>
             </div>

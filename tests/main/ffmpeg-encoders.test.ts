@@ -3,6 +3,7 @@ import {
   EncoderDetector,
   buildEncoderOutputArgs,
   parseEncoderNames,
+  probeEncoder,
   selectEncoderCandidates
 } from '../../src/main/ffmpeg/encoders.js'
 import { CommandExecutionError, type CommandRequest, type CommandResult, type ProcessExecutor } from '../../src/main/ffmpeg/process.js'
@@ -26,12 +27,14 @@ describe('encoder detection', () => {
   })
 
   it('requires a real one-frame encode, not only a compiled encoder name', async () => {
+    const probeRequests: CommandRequest[] = []
     const executor: ProcessExecutor = {
       async run(request) {
         if (request.args.includes('-version')) return result(request, 'ffmpeg version 8.0-test\n')
         if (request.args.includes('-encoders')) {
           return result(request, ' V....D h264_nvenc NVIDIA\n V....D h264_qsv Intel\n V....D libx264 CPU\n')
         }
+        probeRequests.push(request)
         const encoderIndex = request.args.indexOf('-c:v')
         const encoder = request.args[encoderIndex + 1]
         if (encoder === 'h264_qsv') {
@@ -54,6 +57,27 @@ describe('encoder detection', () => {
       reason: 'device setup failed'
     })
     expect(report.capabilities.find((capability) => capability.id === 'h264_amf')?.reason).toMatch(/not included/u)
+    const nvencProbe = probeRequests.find((request) => request.args.includes('h264_nvenc'))
+    expect(nvencProbe?.args).toContain('color=c=black:s=256x256:r=30:d=0.1')
+  })
+
+  it('respects explicit probe dimensions and normalizes odd dimensions to even values', async () => {
+    const probeRequests: CommandRequest[] = []
+    const executor: ProcessExecutor = {
+      async run(request) {
+        probeRequests.push(request)
+        return result(request)
+      }
+    }
+
+    await probeEncoder({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, 'h264_nvenc', {
+      executor,
+      width: 641,
+      height: 359
+    })
+
+    expect(probeRequests).toHaveLength(1)
+    expect(probeRequests[0]?.args).toContain('color=c=black:s=642x360:r=30:d=0.1')
   })
 
   it('orders hardware before CPU and honors a preferred available adapter', () => {

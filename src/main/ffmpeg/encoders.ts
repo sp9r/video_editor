@@ -117,8 +117,8 @@ export const probeEncoder = async (
   options: EncoderProbeOptions = {}
 ): Promise<void> => {
   const executor = options.executor ?? defaultProcessExecutor
-  const width = Math.max(16, Math.round((options.width ?? 128) / 2) * 2)
-  const height = Math.max(16, Math.round((options.height ?? 128) / 2) * 2)
+  const width = Math.max(16, Math.round((options.width ?? 256) / 2) * 2)
+  const height = Math.max(16, Math.round((options.height ?? 256) / 2) * 2)
   const vaapiDevice = id === 'h264_vaapi' ? await findVaapiDevice(options.vaapiDevice) : null
   if (id === 'h264_vaapi' && !vaapiDevice) throw new Error('No accessible VAAPI render device was found')
   const filter = id === 'h264_vaapi' ? 'format=nv12,hwupload' : `format=${encoderPixelFormat(id)}`

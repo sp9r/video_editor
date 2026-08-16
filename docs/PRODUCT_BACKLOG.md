@@ -372,15 +372,23 @@ Stage 26で`NO_SPEECH` / `CAPTION_SEGMENTATION_FAILED`等のdiagnostic保持、�
 
 ### ENC-001 — GUI renderでのNVENC利用確認
 
-**Status:** `PLANNED`
+**Status:** `DONE`
 
-Direct NVENC probeは既存QAでPASSしているが、実GUI renderではCPU/libx264 fallback実績あり。GUI encoder probe差異と実機availability reasonを後で整理する。
+Stage 30.1で、RTX 3060 / FFmpeg 6.1.1のdirect NVENCは成功する一方、`probeEncoder()`の既定128x128がNVENC最小寸法を下回るためfalse-negativeになることを確定。Stage 30.2で既定probeを256x256へ修正し、明示サイズと既存偶数化を維持した。
+
+実機force detectionは`h264_nvenc available=true`、`selectedId=h264_nvenc`、reasonなし。Electron preload→main IPCのproduction-like exportで、1920x1080のauto/hardwareはh264_nvenc、softwareはlibx264、4K autoもh264_nvencで完了。全出力はH.264/AAC、3秒、non-zero。`ExportDialog`の再検出時に、ユーザーが明示選択していない場合だけ新しい`selectedId`へ同期する回帰も追加した。
 
 ### PORT-001 — Self-contained portable Auto Caption
 
 **Status:** `PLANNED`
 
 現状はdev/external worker方式で、Python、faster-whisper、Whisper model、FFmpeg等へ依存。将来的にはneutral `spectra_caption_engine`等への分離/配布方法を検討する。
+
+Stage 30.1 decision: Product directionはengine bundled + model first-run download/cache、Developmentはexternal Python workerを維持。Ollamaはoptionalでrule fallbackあり。コード変更は未実施。
+
+### PERF-001 checkpoint — Stage 30.2
+
+`VERIFY`を維持。NVENC detection修正とは分離し、Previewの専用long-run instrumentationは追加しない。2〜3分再生と25/50編集後の高CPU再発runtime evidenceが揃うまで、原因確定・最適化へ進まない。
 
 ---
 
