@@ -157,10 +157,19 @@ const trackLabel = (track: TimelineTrack, tracks: TimelineTrack[]): string => {
 }
 
 const clipGlyph = (clip: TimelineClip): React.JSX.Element => {
-  if (clip.kind === 'subtitle') return <Captions size={13} />
-  if (clip.kind === 'audio') return <Volume2 size={13} />
-  return <span className="film-glyph">▰</span>
+  if (clip.kind === 'subtitle') return <Captions className="clip-type-icon" size={13} aria-hidden="true" />
+  if (clip.kind === 'audio') return <Volume2 className="clip-type-icon" size={13} aria-hidden="true" />
+  return <span className="clip-type-icon film-glyph" aria-hidden="true">▰</span>
 }
+
+/** Keeps clip kind/link/selection styling explicit without changing the clip interaction surface. */
+export const timelineClipClassName = (clip: Pick<TimelineClip, 'kind' | 'linkGroupId' | 'enabled'>, selected: boolean): string => [
+  'timeline-clip',
+  `clip-${clip.kind}`,
+  selected ? 'is-selected' : '',
+  clip.linkGroupId ? 'is-linked' : '',
+  !clip.enabled ? 'is-disabled' : ''
+].filter(Boolean).join(' ')
 
 const ticksFor = (durationUs: number, zoom: number): number[] => {
   const interval = zoom >= 110 ? 1 : zoom >= 55 ? 2 : 5
@@ -648,10 +657,12 @@ export default function Timeline(): React.JSX.Element {
                   const deltaPx = edit?.deltaX ?? 0
                   const visualLeft = clip.startUs / 1_000_000 * zoomPxPerSecond + (edit?.mode === 'move' ? deltaPx : edit?.mode === 'trim-start' ? deltaPx : 0)
                   const visualWidth = clip.durationUs / 1_000_000 * zoomPxPerSecond + (edit?.mode === 'trim-start' ? -deltaPx : edit?.mode === 'trim-end' ? deltaPx : 0)
+                  const selected = selectedClipIds.includes(clip.id)
+                  const clipKindLabel = clip.kind === 'subtitle' ? '字幕' : clip.kind === 'audio' ? '音声' : '映像'
                   return (
                     <div
                       key={clip.id}
-                      className={`timeline-clip clip-${clip.kind} ${selectedClipIds.includes(clip.id) ? 'is-selected' : ''} ${!clip.enabled ? 'is-disabled' : ''} ${edit ? 'is-dragging' : ''}`}
+                      className={`${timelineClipClassName(clip, selected)}${edit ? ' is-dragging' : ''}`}
                       style={{ left: Math.max(0, visualLeft), width: Math.max(8, visualWidth) }}
                       onPointerDown={(event) => beginPointerEdit(event, clip, 'move', track.id)}
                       onPointerMove={(event) => {
@@ -665,6 +676,7 @@ export default function Timeline(): React.JSX.Element {
                       onPointerLeave={() => setRazorGhost((current) => current?.clipId === clip.id ? null : current)}
                       onContextMenu={(event) => showContextMenu(event, clip)}
                       title={`${clip.name}\n${seconds(clip.durationUs).toFixed(2)} 秒\n右クリックで編集操作`}
+                      aria-label={`${clipKindLabel}: ${clip.kind === 'subtitle' ? clip.text : clip.name}${clip.linkGroupId ? '（リンク済み）' : ''}`}
                     >
                       <button type="button" className="trim-handle trim-start" aria-label="開始位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-start', track.id)} />
                       {clip.kind === 'subtitle' && clip.words?.length ? (
@@ -682,7 +694,7 @@ export default function Timeline(): React.JSX.Element {
                           ))}
                         </div>
                       ) : null}
-                      <span className="clip-content">{clipGlyph(clip)}{clip.linkGroupId ? <Link2 size={12} aria-label="リンクされたクリップ" /> : null}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
+                      <span className="clip-content">{clipGlyph(clip)}{clip.linkGroupId ? <Link2 className="clip-link-icon" size={12} aria-label="リンクされたクリップ" /> : null}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
                       {razorGhost?.clipId === clip.id ? <span
                         className="subtitle-razor-ghost"
                         style={{ left: `${((razorGhost.timeUs - clip.startUs) / clip.durationUs) * 100}%` }}

@@ -677,12 +677,15 @@ select {
 .track-lane:nth-child(odd) { background-color: rgb(0 0 0 / .06); }
 .track-lane.is-locked { background-image: repeating-linear-gradient(-45deg, transparent 0 6px, rgb(255 255 255 / .017) 6px 12px); }
 
-.timeline-clip { position: absolute; top: 4px; bottom: 4px; min-width: 8px; overflow: hidden; color: #e8fffa; background: linear-gradient(180deg, #287e6b, #1d6154); border: 1px solid #3da58d; border-radius: 3px; cursor: grab; box-shadow: inset 0 1px rgb(255 255 255 / .07); }
+.timeline-clip { container: timeline-clip / inline-size; position: absolute; top: 4px; bottom: 4px; min-width: 8px; overflow: hidden; color: #effffb; background: linear-gradient(180deg, #2b846f, #1d6154); border: 1px solid #52b79d; border-radius: 3px; cursor: grab; box-shadow: inset 0 1px rgb(255 255 255 / .1); }
 .timeline-clip:active { cursor: grabbing; }
-.timeline-clip.clip-audio { color: #e4edff; background: linear-gradient(180deg, #405f94, #2b4775); border-color: #587bb4; }
-.timeline-clip.clip-subtitle { color: #fff0d8; background: linear-gradient(180deg, #895d2c, #65451f); border-color: #b27a3c; }
+.timeline-clip.clip-video { color: #effffb; }
+.timeline-clip.clip-audio { color: #f2f6ff; background: linear-gradient(180deg, #4569a0, #2b4775); border-color: #7095d2; }
+.timeline-clip.clip-subtitle { color: #fff7e8; background: linear-gradient(180deg, #936735, #65451f); border-color: #d09a56; }
 .timeline-clip.clip-image { color: #efe8ff; background: linear-gradient(180deg, #6c5795, #4d3d70); border-color: #9277c1; }
-.timeline-clip.is-selected { z-index: 3; border-color: #f5fffc; box-shadow: 0 0 0 2px var(--mint), 0 3px 10px rgb(0 0 0 / .45); }
+.timeline-clip.is-selected { z-index: 3; border-color: #ffffff; box-shadow: 0 0 0 2px var(--mint), 0 3px 10px rgb(0 0 0 / .45); }
+.timeline-clip.is-linked { border-style: dashed; }
+.timeline-clip.is-linked .clip-link-icon { color: #ffffff; filter: drop-shadow(0 0 2px rgb(0 0 0 / .6)); }
 .timeline-clip.is-disabled { opacity: .35; filter: grayscale(.65); }
 .timeline-clip.is-dragging { z-index: 8; opacity: .85; box-shadow: 0 6px 16px rgb(0 0 0 / .5); }
 .subtitle-word-layer { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
@@ -694,9 +697,21 @@ select {
 .subtitle-merge-control { position: absolute; top: 4px; left: 18px; padding: 2px 5px; color: #07100d; background: var(--mint); border: 1px solid #d6fff0; border-radius: 4px; font-size: 9px; font-weight: 800; box-shadow: 0 2px 5px rgb(0 0 0 / .35); cursor: pointer; white-space: nowrap; }
 .subtitle-merge-control:disabled { opacity: .45; cursor: not-allowed; }
 .subtitle-razor-ghost { position: absolute; top: 1px; bottom: 1px; z-index: 8; width: 2px; background: #ffdb70; box-shadow: 0 0 0 1px rgb(255 219 112 / .25), 0 0 8px rgb(255 219 112 / .8); transform: translateX(-1px); pointer-events: none; }
-.clip-content { position: relative; z-index: 2; display: flex; align-items: center; gap: 5px; padding: 4px 7px; pointer-events: none; }
-.clip-content strong { overflow: hidden; font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.clip-content { position: relative; z-index: 2; display: flex; align-items: center; gap: 5px; min-width: 0; padding: 4px 7px; pointer-events: none; }
+.clip-type-icon, .clip-link-icon { flex: 0 0 auto; }
+.clip-content strong { min-width: 0; overflow: hidden; color: inherit; font-size: 10px; font-weight: 700; line-height: 1.1; text-overflow: ellipsis; text-shadow: 0 1px 1px rgb(0 0 0 / .3); white-space: nowrap; }
 .film-glyph { font-size: 10px; }
+@container timeline-clip (max-width: 68px) {
+  .clip-content { gap: 3px; padding-inline: 4px; }
+}
+@container timeline-clip (max-width: 42px) {
+  .clip-content { justify-content: center; gap: 3px; padding-inline: 2px; }
+  .clip-content strong { display: none; }
+}
+@container timeline-clip (max-width: 24px) {
+  .clip-link-icon { display: none; }
+  .clip-content { padding-inline: 1px; }
+}
 .waveform { position: absolute; right: 4px; bottom: 3px; left: 4px; display: flex; align-items: center; height: 68%; gap: 1px; opacity: .55; pointer-events: none; }
 .waveform::before { position: absolute; right: 0; left: 0; top: 50%; height: 1px; content: ''; background: currentColor; opacity: .35; }
 .waveform i { flex: 1 1 0; min-width: 1px; background: currentColor; border-radius: 1px; }
