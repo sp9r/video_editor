@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryGuidesForVideoClip, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineCandidateRelationIds, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineScrubTimeUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
+import { inlineSubtitleBlocksForVideoClip, isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryGuidesForVideoClip, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineCandidateRelationIds, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineScrubTimeUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
 import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
 
@@ -142,5 +142,18 @@ describe('timeline interaction guards', () => {
     expect(timelineCandidateRelationIds(subtitleOverlap, clips)).toEqual(['video-a', 'video-b'])
     expect(timelineCandidateRelationIds(touching, clips)).toEqual([])
     expect(timelineCandidateRelationIds(zeroDuration, clips)).toEqual([])
+  })
+
+  it('projects only the visible overlap of enabled subtitle cues into a video clip', () => {
+    const video = { kind: 'video' as const, startUs: 1_000_000, durationUs: 4_000_000 }
+    const subtitles = [
+      { id: 'partial', text: 'partial', startUs: 500_000, durationUs: 1_000_000, enabled: true },
+      { id: 'inside', text: 'inside', startUs: 2_000_000, durationUs: 1_000_000, enabled: true },
+      { id: 'disabled', text: 'disabled', startUs: 2_000_000, durationUs: 1_000_000, enabled: false }
+    ]
+    expect(inlineSubtitleBlocksForVideoClip(video, subtitles)).toEqual([
+      { subtitleId: 'partial', text: 'partial', leftPercent: 0, widthPercent: 12.5, startUs: 1_000_000, endUs: 1_500_000 },
+      { subtitleId: 'inside', text: 'inside', leftPercent: 25, widthPercent: 25, startUs: 2_000_000, endUs: 3_000_000 }
+    ])
   })
 })

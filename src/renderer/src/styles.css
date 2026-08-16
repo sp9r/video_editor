@@ -705,6 +705,9 @@ select {
 .subtitle-boundary-guide::before { position: absolute; top: -1px; left: -2px; width: 5px; height: 5px; content: ''; background: #fff2b2; border-radius: 50%; }
 .subtitle-boundary-guide.is-end { background: rgb(255 196 137 / .9); box-shadow: 0 0 4px rgb(255 164 94 / .7); }
 .subtitle-boundary-guide.is-end::before { background: #ffc489; }
+.timeline-inline-subtitle { position: absolute; top: 5px; bottom: 5px; z-index: 6; min-width: 2px; overflow: hidden; padding: 2px 4px; color: #fff8e8; font-size: 8px; font-weight: 700; line-height: 1.1; text-align: left; text-overflow: ellipsis; white-space: nowrap; background: rgb(118 76 31 / .82); border: 1px solid rgb(255 221 153 / .8); border-radius: 2px; cursor: pointer; }
+.timeline-inline-subtitle:hover, .timeline-inline-subtitle.is-selected { color: #07100d; background: var(--mint); border-color: #e4fff7; }
+.timeline-inline-subtitle.is-selected { box-shadow: 0 0 0 1px #fff; }
 .clip-content { position: relative; z-index: 2; display: flex; align-items: center; gap: 5px; min-width: 0; padding: 4px 7px; pointer-events: none; }
 .clip-type-icon, .clip-link-icon { flex: 0 0 auto; }
 .clip-content strong { min-width: 0; overflow: hidden; color: inherit; font-size: 10px; font-weight: 700; line-height: 1.1; text-overflow: ellipsis; text-shadow: 0 1px 1px rgb(0 0 0 / .3); white-space: nowrap; }

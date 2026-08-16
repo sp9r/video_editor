@@ -100,6 +100,39 @@ export const subtitleBoundaryGuidesForVideoClip = (
   return guides
 }
 
+export interface InlineSubtitleBlock {
+  subtitleId: string
+  text: string
+  leftPercent: number
+  widthPercent: number
+  startUs: TimeUs
+  endUs: TimeUs
+}
+
+/** Derives compact subtitle cues inside a video clip without creating a link. */
+export const inlineSubtitleBlocksForVideoClip = (
+  videoClip: Pick<TimelineClip, 'kind' | 'startUs' | 'durationUs'>,
+  subtitleClips: readonly Pick<SubtitleClip, 'id' | 'text' | 'startUs' | 'durationUs' | 'enabled'>[]
+): InlineSubtitleBlock[] => {
+  if (videoClip.kind !== 'video' || videoClip.durationUs <= 0) return []
+  const videoEndUs = videoClip.startUs + videoClip.durationUs
+  return subtitleClips.flatMap((subtitle) => {
+    if (!subtitle.enabled || subtitle.durationUs <= 0) return []
+    const subtitleEndUs = subtitle.startUs + subtitle.durationUs
+    const startUs = Math.max(videoClip.startUs, subtitle.startUs)
+    const endUs = Math.min(videoEndUs, subtitleEndUs)
+    if (endUs <= startUs) return []
+    return [{
+      subtitleId: subtitle.id,
+      text: subtitle.text,
+      leftPercent: ((startUs - videoClip.startUs) / videoClip.durationUs) * 100,
+      widthPercent: ((endUs - startUs) / videoClip.durationUs) * 100,
+      startUs,
+      endUs
+    }]
+  })
+}
+
 export const timelineCandidateRelationIds = (
   focusedClip: Pick<TimelineClip, 'id' | 'kind' | 'startUs' | 'durationUs'>,
   clips: readonly Pick<TimelineClip, 'id' | 'kind' | 'startUs' | 'durationUs'>[]
@@ -333,6 +366,7 @@ export default function Timeline(): React.JSX.Element {
   const [razorGhost, setRazorGhost] = useState<RazorGhost | null>(null)
   const [mergeHoverKey, setMergeHoverKey] = useState<string | null>(null)
   const [hoveredClipId, setHoveredClipId] = useState<string | null>(null)
+  const [showSubtitleDetails, setShowSubtitleDetails] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; clipId: string } | null>(null)
   const [viewportWindow, setViewportWindow] = useState({ scrollLeft: 0, clientWidth: 0 })
   const viewportUpdateRaf = useRef<number | null>(null)
@@ -340,8 +374,9 @@ export default function Timeline(): React.JSX.Element {
   const timelineWidth = Math.max(900, seconds(durationUs) * zoomPxPerSecond)
   const ticks = useMemo(() => ticksFor(durationUs, zoomPxPerSecond), [durationUs, zoomPxPerSecond])
   const subtitleClips = useMemo(() => project.tracks
-    .filter((track) => track.kind === 'subtitle' && !track.hidden)
+    .filter((track) => track.kind === 'subtitle' && !track.hidden && !track.muted)
     .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && clip.enabled)), [project])
+  const visibleTracks = useMemo(() => showSubtitleDetails ? project.tracks : project.tracks.filter((track) => track.kind !== 'subtitle'), [project.tracks, showSubtitleDetails])
   const candidateRelationClips = useMemo(() => project.tracks
     .filter((track) => !track.hidden)
     .flatMap((track) => track.clips.filter((clip) => (clip.kind === 'video' || clip.kind === 'subtitle') && clip.enabled)), [project])
@@ -640,6 +675,7 @@ export default function Timeline(): React.JSX.Element {
           <span className="toolbar-separator" />
           <IconButton label="スナップ（S）" active={snapping} onClick={() => setSnapping(!snapping)}><Magnet size={16} /></IconButton>
           <button type="button" className={`mode-button ${rippleMode ? 'is-active' : ''}`} onClick={() => setRippleMode(!rippleMode)}>自動詰め</button>
+          <Button className={`subtle-button${showSubtitleDetails ? ' is-active' : ''}`} aria-pressed={showSubtitleDetails} onClick={() => setShowSubtitleDetails((current) => !current)}>{showSubtitleDetails ? '字幕詳細 ON' : '字幕詳細'}</Button>
         </div>
         <div className="timeline-title">
           <span className="status-dot" />
@@ -660,9 +696,9 @@ export default function Timeline(): React.JSX.Element {
         </div>
       </header>
       <div className="timeline-shell">
-        <div className="track-labels" ref={labelsRef} style={{ '--track-count': project.tracks.length } as React.CSSProperties} onScroll={(event) => { if (viewportRef.current) viewportRef.current.scrollTop = event.currentTarget.scrollTop }}>
+        <div className="track-labels" ref={labelsRef} style={{ '--track-count': visibleTracks.length } as React.CSSProperties} onScroll={(event) => { if (viewportRef.current) viewportRef.current.scrollTop = event.currentTarget.scrollTop }}>
           <div className="ruler-corner"><Plus size={14} /><span>トラック</span></div>
-          {project.tracks.map((track) => <TrackControls key={track.id} track={track} tracks={project.tracks} />)}
+          {visibleTracks.map((track) => <TrackControls key={track.id} track={track} tracks={project.tracks} />)}
         </div>
         <div
           className="timeline-viewport"
@@ -677,14 +713,14 @@ export default function Timeline(): React.JSX.Element {
             event.currentTarget.scrollLeft += event.deltaX + event.deltaY
           }}
         >
-          <div className="timeline-content" style={{ width: timelineWidth, '--track-count': project.tracks.length } as React.CSSProperties}>
+          <div className="timeline-content" style={{ width: timelineWidth, '--track-count': visibleTracks.length } as React.CSSProperties}>
             <div
               className="time-ruler"
               onPointerDown={beginRulerScrub}
             >
               {ticks.map((tick) => <span key={tick} style={{ left: tick * zoomPxPerSecond }}><i />{formatTimecode(tick * 1_000_000, project).slice(3, 8)}</span>)}
             </div>
-            {project.tracks.map((track) => (
+            {visibleTracks.map((track) => (
               <div
                 key={track.id}
                 className={`track-lane kind-${track.kind} ${track.locked ? 'is-locked' : ''}`}
@@ -751,6 +787,9 @@ export default function Timeline(): React.JSX.Element {
                   const subtitleGuides = clip.kind === 'video' && !edit && clipVisible
                     ? subtitleBoundaryGuidesForVideoClip(clip, subtitleClips)
                     : []
+                  const inlineSubtitleBlocks = !showSubtitleDetails && clip.kind === 'video' && !edit && clipVisible
+                    ? inlineSubtitleBlocksForVideoClip(clip, subtitleClips)
+                    : []
                   return (
                     <div
                       key={clip.id}
@@ -800,6 +839,16 @@ export default function Timeline(): React.JSX.Element {
                         data-boundary-side={guide.side}
                         aria-hidden="true"
                       />)}
+                      {inlineSubtitleBlocks.map((block) => <button
+                        key={`inline-subtitle:${block.subtitleId}`}
+                        type="button"
+                        className={`timeline-inline-subtitle${selectedClipIds.includes(block.subtitleId) ? ' is-selected' : ''}`}
+                        style={{ left: `${block.leftPercent}%`, width: `${block.widthPercent}%` }}
+                        title={block.text}
+                        aria-label={`字幕: ${block.text}`}
+                        onPointerDown={(event) => { event.preventDefault(); event.stopPropagation() }}
+                        onClick={(event) => { event.preventDefault(); event.stopPropagation(); selectClip(block.subtitleId) }}
+                      >{block.text}</button>)}
                       <span className="clip-content">{clipGlyph(clip)}{clip.linkGroupId ? <Link2 className="clip-link-icon" size={12} aria-label="リンクされたクリップ" /> : null}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
                       {razorGhost?.clipId === clip.id ? <span
                         className="subtitle-razor-ghost"
