@@ -391,7 +391,7 @@ export interface DesktopApi {
   createPreviewPlan(project: ProjectFile): Promise<PreviewPlan>
   renderAccuratePreviewFrame(project: ProjectFile, timeUs: TimeUs): Promise<AccuratePreviewFrameResult>
   renderSubtitleOverlay(project: ProjectFile, timeUs: TimeUs): Promise<SubtitleOverlayResult>
-  startSilenceCutReapply(project: ProjectFile, selectedClipId: string, jobId: string): Promise<{
+  startSilenceCutReapply(project: ProjectFile, selectedClipId: string, jobId: string, profile: import('./silence-cut').SilenceReapplyProfile): Promise<{
     jobId: string
     analysis: AutoCaptionSilenceAnalysis
     protectedIntervals: Array<{ id?: string; startUs: TimeUs; endUs: TimeUs }>

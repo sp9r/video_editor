@@ -5,6 +5,7 @@ import type { SubtitleTemplateDraft } from '../shared/subtitle-templates'
 import type { AutoCaptionProgress } from '../shared/auto-caption-contract'
 import type { ExperimentalReviewRecord } from '../shared/review/types'
 import type { FullCorrectionSession } from '../shared/full-correction'
+import type { SilenceReapplyProfile } from '../shared/silence-cut'
 
 const api: DesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
@@ -25,7 +26,7 @@ const api: DesktopApi = {
   createPreviewPlan: (project: ProjectFile) => ipcRenderer.invoke(IPC.previewPlan, project),
   renderAccuratePreviewFrame: (project: ProjectFile, timeUs: TimeUs) => ipcRenderer.invoke(IPC.previewAccurateFrame, project, timeUs),
   renderSubtitleOverlay: (project: ProjectFile, timeUs: TimeUs) => ipcRenderer.invoke(IPC.previewSubtitleOverlay, project, timeUs),
-  startSilenceCutReapply: (project: ProjectFile, selectedClipId: string, jobId: string) => ipcRenderer.invoke(IPC.silenceCutReapply, project, selectedClipId, jobId),
+  startSilenceCutReapply: (project: ProjectFile, selectedClipId: string, jobId: string, profile: SilenceReapplyProfile) => ipcRenderer.invoke(IPC.silenceCutReapply, project, selectedClipId, jobId, profile),
   cancelSilenceCutReapply: (jobId: string) => ipcRenderer.invoke(IPC.silenceCutCancel, jobId),
   autoCaptionHealth: () => ipcRenderer.invoke(IPC.autoCaptionHealth),
   startAutoCaption: (project: ProjectFile, selectedClipIds: string[], settings) => ipcRenderer.invoke(IPC.autoCaptionStart, project, selectedClipIds, settings),

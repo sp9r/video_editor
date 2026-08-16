@@ -21,6 +21,7 @@ import type { AutoCaptionSettings } from '../shared/auto-caption-contract'
 import { SubtitleTemplateService } from './subtitle-template-service'
 import { loadAppSettings, setLastUsedSubtitleTemplateId } from './app-settings-service'
 import { SilenceAnalysisService } from './silence-analysis-service'
+import { DEFAULT_SILENCE_REAPPLY_PROFILE, isSilenceReapplyProfile } from '../shared/silence-cut'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
@@ -185,12 +186,14 @@ const registerIpcHandlers = (): void => {
     return await requireService().renderSubtitleOverlay(validateProject(projectInput), timeUs)
   })
 
-  ipcMain.handle(IPC.silenceCutReapply, async (event, projectInput: ProjectFile, selectedClipId: unknown, jobId: unknown) => {
+  ipcMain.handle(IPC.silenceCutReapply, async (event, projectInput: ProjectFile, selectedClipId: unknown, jobId: unknown, profileInput: unknown) => {
     assertTrustedSender(event)
     if (typeof selectedClipId !== 'string' || selectedClipId.length > 200 || typeof jobId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/u.test(jobId)) {
       throw new Error('無音再適用の対象またはjob IDが不正です。')
     }
-    return await requireSilenceAnalysisService().start(validateProject(projectInput), selectedClipId, jobId)
+    const profile = profileInput === undefined ? DEFAULT_SILENCE_REAPPLY_PROFILE : profileInput
+    if (!isSilenceReapplyProfile(profile)) throw new Error('無音再適用のprofileが不正です。')
+    return await requireSilenceAnalysisService().start(validateProject(projectInput), selectedClipId, jobId, profile)
   })
 
   ipcMain.handle(IPC.silenceCutCancel, (event, jobId: unknown) => {

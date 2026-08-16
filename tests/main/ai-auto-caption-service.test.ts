@@ -163,7 +163,7 @@ describe('auto-caption worker discovery and service', () => {
     expect(run.started.clipId).toBe('clip-1')
     expect(observed.request).toMatchObject({
       sourceStartUs: 20_000_000, sourceEndUs: 30_000_000, mediaPath: media, maxChars: 32, maxLines: 2,
-      silenceCut: 'natural', accelerationMode: 'auto', subtitleTemplate: 'default'
+      silenceCut: 'youtube', accelerationMode: 'auto', subtitleTemplate: 'default'
     })
     expect(observed.args).toContain('--request')
     expect(observed.args).toEqual(expect.arrayContaining(['--acceleration-mode', 'auto']))

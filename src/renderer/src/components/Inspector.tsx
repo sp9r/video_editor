@@ -6,6 +6,7 @@ import { DEFAULT_SUBTITLE_STYLE, type AudioSettings, type SubtitleClip, type Sub
 import { FALLBACK_FONT_FAMILIES } from '../../../shared/font-families'
 import { applySubtitleTemplateToClip, deriveSubtitleTemplateGeneration } from '../../../shared/subtitle-template-seed'
 import type { SubtitleTemplateCaptionGeneration } from '../../../shared/subtitle-templates'
+import { DEFAULT_SILENCE_REAPPLY_PROFILE, type SilenceReapplyProfile } from '../../../shared/silence-cut'
 import { getSubtitleTemplate, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../../shared/subtitle-templates'
 import { findClip, useEditorStore } from '../store'
 import { Button, EmptyState, Field, NumberField, Section, SelectField } from './Controls'
@@ -399,6 +400,7 @@ export default function Inspector(): React.JSX.Element {
   const silenceCutReapplyBusy = useEditorStore((state) => state.silenceCutReapplyBusy)
   const reapplySilenceCut = useEditorStore((state) => state.reapplySilenceCut)
   const cancelSilenceCutReapply = useEditorStore((state) => state.cancelSilenceCutReapply)
+  const [silenceReapplyProfile, setSilenceReapplyProfile] = useState<SilenceReapplyProfile>(DEFAULT_SILENCE_REAPPLY_PROFILE)
   const transaction = useEditTransaction()
   const clip = findClip(project, selectedClipIds)
   return (
@@ -422,11 +424,12 @@ export default function Inspector(): React.JSX.Element {
               {clip.kind === 'subtitle' && <NumberField {...transaction} label="終了" suffix="秒" min={0.03} step={0.1} value={((clip.startUs + clip.durationUs) / 1_000_000).toFixed(2)} onChange={(event) => useEditorStore.getState().trim(clip.id, 'end', Math.max(clip.startUs + 33_333, numberValue(event.target.value) * 1_000_000))} />}
             </div>
             {(clip.kind === 'video' || clip.kind === 'audio') && <div className="field-grid">
+              <label className="field"><span className="field-label">無音カットprofile</span><select disabled={silenceCutReapplyBusy} value={silenceReapplyProfile} onChange={(event) => setSilenceReapplyProfile(event.target.value as SilenceReapplyProfile)}><option value="natural">自然</option><option value="strong">強め</option><option value="youtube">YouTubeジャンプカット</option></select></label>
               <Button
                 className="subtle-button"
                 disabled={silenceCutReapplyBusy}
                 title="現在のsourceInUs・durationUsを対象にFFmpegの無音解析を明示的に再実行"
-                onClick={() => void reapplySilenceCut()}
+                onClick={() => void reapplySilenceCut(silenceReapplyProfile)}
               >{silenceCutReapplyBusy ? '無音解析中…' : '無音カットを再適用'}</Button>
               {silenceCutReapplyBusy && <Button className="subtle-button" onClick={() => void cancelSilenceCutReapply()}>キャンセル</Button>}
             </div>}

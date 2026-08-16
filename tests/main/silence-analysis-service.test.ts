@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { SilenceAnalysisService, parseSilencedetectOutput } from '../../src/main/silence-analysis-service'
+import { DEFAULT_SILENCE_REAPPLY_PROFILE, isSilenceReapplyProfile, silenceCutProfileSettings, type SilenceReapplyProfile } from '../../src/shared/silence-cut'
 import { createClipForAsset, createEmptyProject, addClipToTrack } from '../../src/shared/project'
 import { DEFAULT_SUBTITLE_STYLE, type MediaAsset } from '../../src/shared/types'
 
@@ -31,11 +32,32 @@ describe('explicit FFmpeg silence reapply analysis', () => {
   it('uses FFmpeg signal output and raw words while keeping edit units out of speech protection', async () => {
     const executor = { run: vi.fn().mockResolvedValue({ command: 'ffmpeg', args: [], exitCode: 0, stdout: '', stderr: 'silence_start: 0.100\nsilence_end: 0.900' }) }
     const service = new SilenceAnalysisService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor })
-    const result = await service.start(projectFixture(), 'analysis-video', 'silence-job')
+    const result = await service.start(projectFixture(), 'analysis-video', 'silence-job', 'natural')
     expect(executor.run).toHaveBeenCalledWith(expect.objectContaining({ args: expect.arrayContaining(['-ss', '2.000000', '-t', '2.000000', '-map', '0:a:0']) }))
     expect(result.analysis.settings).toMatchObject({ profile: 'natural', noiseDb: -35, fillerRemoval: false })
     expect(result.protectedIntervals).toEqual([{ id: 'speech-word', startUs: 2_300_000, endUs: 2_500_000 }])
     expect(result.analysis.removedDurationUs).toBeGreaterThan(0)
+  })
+
+  it.each([
+    ['natural', 600_000, 180_000],
+    ['strong', 400_000, 100_000],
+    ['youtube', 300_000, 80_000]
+  ] as const)('uses the %s profile for FFmpeg and derived silence settings', async (profile, minSilenceUs, retainPauseUs) => {
+    const executor = { run: vi.fn().mockResolvedValue({ command: 'ffmpeg', args: [], exitCode: 0, stdout: '', stderr: 'silence_start: 0.100\nsilence_end: 0.900' }) }
+    const service = new SilenceAnalysisService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor })
+    const result = await service.start(projectFixture(), 'analysis-video', `silence-${profile}`, profile)
+    const settings = silenceCutProfileSettings(profile as SilenceReapplyProfile)
+    expect(executor.run).toHaveBeenCalledWith(expect.objectContaining({ args: expect.arrayContaining([`silencedetect=noise=-35.00dB:d=${(minSilenceUs / 1_000_000).toFixed(6)}`]) }))
+    expect(result.analysis.settings).toEqual(settings)
+    expect(result.analysis.silences[0]?.removedRanges?.[0]?.endUs).toBeGreaterThan(result.analysis.silences[0]?.removedRanges?.[0]?.startUs ?? 0)
+    expect(settings.retainPauseUs).toBe(retainPauseUs)
+  })
+
+  it('uses YouTube jump-cut as the explicit reapply default', () => {
+    expect(DEFAULT_SILENCE_REAPPLY_PROFILE).toBe('youtube')
+    expect(isSilenceReapplyProfile('off')).toBe(false)
+    expect(isSilenceReapplyProfile('youtube')).toBe(true)
   })
 
   it('cancels the FFmpeg request without publishing a result', async () => {

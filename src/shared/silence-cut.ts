@@ -1,8 +1,32 @@
-import type { AutoCaptionSilenceAnalysis } from './auto-caption-contract.js'
+import type { AutoCaptionSilenceAnalysis, SilenceCutMode } from './auto-caption-contract.js'
 import { validateProject } from './project.js'
 import type { ProjectFile, TimelineClip, TimeUs } from './types.js'
 
 export type SilenceCutRange = Pick<AutoCaptionSilenceAnalysis['keepRanges'][number], 'startUs' | 'endUs'>
+export type SilenceReapplyProfile = Exclude<SilenceCutMode, 'off'>
+
+export const SILENCE_REAPPLY_PROFILES: readonly SilenceReapplyProfile[] = ['natural', 'strong', 'youtube']
+export const DEFAULT_SILENCE_REAPPLY_PROFILE: SilenceReapplyProfile = 'youtube'
+
+export interface SilenceCutProfileSettings {
+  profile: SilenceReapplyProfile
+  minSilenceUs: TimeUs
+  retainPauseUs: TimeUs
+  noiseDb: number
+  speechProtectionUs: TimeUs
+  fillerRemoval: false
+}
+
+export const isSilenceReapplyProfile = (value: unknown): value is SilenceReapplyProfile =>
+  typeof value === 'string' && SILENCE_REAPPLY_PROFILES.includes(value as SilenceReapplyProfile)
+
+export const silenceCutProfileSettings = (profile: SilenceReapplyProfile = DEFAULT_SILENCE_REAPPLY_PROFILE): SilenceCutProfileSettings => {
+  switch (profile) {
+    case 'natural': return { profile, minSilenceUs: 600_000, retainPauseUs: 180_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false }
+    case 'strong': return { profile, minSilenceUs: 400_000, retainPauseUs: 100_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false }
+    case 'youtube': return { profile, minSilenceUs: 300_000, retainPauseUs: 80_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false }
+  }
+}
 
 export interface SilenceCutSummary {
   selectedClipId: string

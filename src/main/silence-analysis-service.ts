@@ -3,10 +3,10 @@ import { isAbsolute } from 'node:path'
 import type { AutoCaptionDiagnostic, AutoCaptionSilenceAnalysis } from '../shared/auto-caption-contract.js'
 import { buildSilenceReapplyTarget, type SilenceCutRange, type SilenceReapplyTarget, type SourceTimeInterval } from '../shared/silence-cut.js'
 import type { ProjectFile } from '../shared/types.js'
+import { DEFAULT_SILENCE_REAPPLY_PROFILE, silenceCutProfileSettings, type SilenceCutProfileSettings, type SilenceReapplyProfile } from '../shared/silence-cut.js'
 import type { FfmpegPaths } from './ffmpeg/binaries.js'
 import { defaultProcessExecutor, ProcessCancelledError, type ProcessExecutor } from './ffmpeg/process.js'
 
-const PROFILE = { name: 'natural', minSilenceUs: 600_000, retainPauseUs: 180_000, noiseDb: -35, speechProtectionUs: 80_000 } as const
 const seconds = (value: number): string => (value / 1_000_000).toFixed(6)
 
 export interface SilenceReapplyResult {
@@ -40,7 +40,7 @@ const mergeIntervals = (intervals: readonly SourceTimeInterval[]): SourceTimeInt
   return merged
 }
 
-export const parseSilencedetectOutput = (output: string, durationUs: number, sourceInUs = 0, minSilenceUs = PROFILE.minSilenceUs): SilenceEvent[] => {
+export const parseSilencedetectOutput = (output: string, durationUs: number, sourceInUs = 0, minSilenceUs = silenceCutProfileSettings().minSilenceUs): SilenceEvent[] => {
   const events: SilenceEvent[] = []
   let silenceStartUs: number | undefined
   for (const line of output.split(/\r?\n/u)) {
@@ -95,21 +95,22 @@ const keepRanges = (sourceInUs: number, sourceEndUs: number, removed: readonly S
 const makeAnalysis = (
   events: readonly SilenceEvent[],
   target: SilenceReapplyTarget,
-  output: string
+  output: string,
+  profile: SilenceCutProfileSettings
 ): AutoCaptionSilenceAnalysis => {
   const sourceEndUs = target.sourceInUs + target.durationUs
   const protectedIntervals = [
     ...target.alreadyRemovedSourceRanges,
     ...target.protectedIntervals.map((interval) => ({
-      startUs: Math.max(target.sourceInUs, interval.startUs - PROFILE.speechProtectionUs),
-      endUs: Math.min(sourceEndUs, interval.endUs + PROFILE.speechProtectionUs)
+      startUs: Math.max(target.sourceInUs, interval.startUs - profile.speechProtectionUs),
+      endUs: Math.min(sourceEndUs, interval.endUs + profile.speechProtectionUs)
     }))
   ]
   const removed: SourceTimeInterval[] = []
   const silences = events.map((event) => {
     const candidate = {
-      startUs: Math.max(target.sourceInUs, event.startUs + PROFILE.retainPauseUs / 2),
-      endUs: Math.min(sourceEndUs, event.endUs - (PROFILE.retainPauseUs - PROFILE.retainPauseUs / 2))
+      startUs: Math.max(target.sourceInUs, event.startUs + profile.retainPauseUs / 2),
+      endUs: Math.min(sourceEndUs, event.endUs - (profile.retainPauseUs - profile.retainPauseUs / 2))
     }
     const removable = subtractProtected(candidate, protectedIntervals)
     removed.push(...removable)
@@ -126,7 +127,7 @@ const makeAnalysis = (
     silences,
     keepRanges: keepRanges(target.sourceInUs, sourceEndUs, mergedRemoved),
     removedDurationUs: mergedRemoved.reduce((sum, range) => sum + range.endUs - range.startUs, 0),
-    settings: { profile: PROFILE.name, minSilenceUs: PROFILE.minSilenceUs, retainPauseUs: PROFILE.retainPauseUs, noiseDb: PROFILE.noiseDb, speechProtectionUs: PROFILE.speechProtectionUs, fillerRemoval: false },
+    settings: profile,
     diagnostics: [
       diagnostic('info', 'AUDIO_SIGNAL_AUTHORITY', 'Silences came from FFmpeg silencedetect.'),
       diagnostic('info', 'WHISPER_WORD_PROTECTION', `Protected ${target.protectedIntervals.length} raw Whisper word intervals.`),
@@ -149,13 +150,14 @@ export class SilenceAnalysisService {
     this.timeoutMs = options.timeoutMs ?? 120_000
   }
 
-  async start(project: ProjectFile, selectedClipId: string, requestedJobId?: string): Promise<SilenceReapplyResult> {
+  async start(project: ProjectFile, selectedClipId: string, requestedJobId?: string, requestedProfile: SilenceReapplyProfile = DEFAULT_SILENCE_REAPPLY_PROFILE): Promise<SilenceReapplyResult> {
     const jobId = requestedJobId ?? `silence-reapply-${randomUUID()}`
     if (!/^[A-Za-z0-9_-]{1,160}$/u.test(jobId)) throw new Error('無音再適用のjob IDが不正です。')
     if (this.#jobs.has(jobId)) throw new Error('無音再適用がすでに実行中です。')
     const controller = new AbortController()
     this.#jobs.set(jobId, controller)
     try {
+      const profile = silenceCutProfileSettings(requestedProfile)
       const target = buildSilenceReapplyTarget(project, selectedClipId)
       const asset = project.media.find((candidate) => candidate.id === target.assetId)
       if (!asset || asset.offline || !asset.hasAudio || !isAbsolute(asset.path)) throw new Error('無音再適用の音声素材が利用できません。')
@@ -163,14 +165,14 @@ export class SilenceAnalysisService {
         command: this.paths.ffmpegPath,
         args: [
           '-hide_banner', '-loglevel', 'info', '-ss', seconds(target.sourceInUs), '-t', seconds(target.durationUs),
-          '-i', asset.path, '-map', '0:a:0', '-vn', '-af', `silencedetect=noise=${PROFILE.noiseDb.toFixed(2)}dB:d=${seconds(PROFILE.minSilenceUs)}`,
+          '-i', asset.path, '-map', '0:a:0', '-vn', '-af', `silencedetect=noise=${profile.noiseDb.toFixed(2)}dB:d=${seconds(profile.minSilenceUs)}`,
           '-f', 'null', process.platform === 'win32' ? 'NUL' : '/dev/null'
         ],
         signal: controller.signal,
         timeoutMs: this.timeoutMs,
         maxOutputBytes: 8 * 1024 * 1024
       })
-      const analysis = makeAnalysis(parseSilencedetectOutput(`${result.stdout}\n${result.stderr}`, target.durationUs, target.sourceInUs), target, `${result.stdout}\n${result.stderr}`)
+      const analysis = makeAnalysis(parseSilencedetectOutput(`${result.stdout}\n${result.stderr}`, target.durationUs, target.sourceInUs, profile.minSilenceUs), target, `${result.stdout}\n${result.stderr}`, profile)
       return { jobId, analysis, protectedIntervals: target.protectedIntervals, alreadyRemovedSourceRanges: target.alreadyRemovedSourceRanges, selectedClipId }
     } catch (error) {
       if (error instanceof ProcessCancelledError) throw new Error('無音再適用をキャンセルしました。')

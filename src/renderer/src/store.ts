@@ -20,7 +20,7 @@ import { linkedClipIds } from '../../shared/editing/links'
 import { isMediaTrack } from '../../shared/types'
 import type { AutoCaptionProgress, AutoCaptionResult, AutoCaptionSettings, AutoCaptionSilenceAnalysis } from '../../shared/auto-caption-contract'
 import { applyAutoCaptionResultToProject } from '../../shared/auto-caption-adapter'
-import { applySilenceCutToProject, createSilenceCutTimeMapper } from '../../shared/silence-cut'
+import { applySilenceCutToProject, DEFAULT_SILENCE_REAPPLY_PROFILE, createSilenceCutTimeMapper, type SilenceReapplyProfile } from '../../shared/silence-cut'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
 import type { UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { FullCorrectionSession } from '../../shared/full-correction'
@@ -78,7 +78,7 @@ interface EditorState {
   addAssetClip(assetId: string, trackId: string, atUs: TimeUs): void
   autoCaptionSelected(settings?: AutoCaptionSettings): Promise<AutoCaptionApplySummary | null>
   cancelAutoCaption(): Promise<void>
-  reapplySilenceCut(): Promise<boolean>
+  reapplySilenceCut(profile?: SilenceReapplyProfile): Promise<boolean>
   cancelSilenceCutReapply(): Promise<void>
   setUserSubtitleTemplates(templates: UserSubtitleTemplate[]): void
   setDefaultSubtitleTemplateId(id: string): void
@@ -449,7 +449,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return null
     }
   },
-  reapplySilenceCut: async () => {
+  reapplySilenceCut: async (requestedProfile = DEFAULT_SILENCE_REAPPLY_PROFILE) => {
     const current = get()
     if (current.silenceCutReapplyBusy) return false
     if (!window.spectra) {
@@ -465,7 +465,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const jobId = makeId('silence-reapply')
     set({ silenceCutReapplyJobId: jobId, silenceCutReapplyCancelledJobId: null, silenceCutReapplyBusy: true })
     try {
-      const result = await window.spectra.startSilenceCutReapply(project, selected.id, jobId)
+      const result = await window.spectra.startSilenceCutReapply(project, selected.id, jobId, requestedProfile)
       if (projectFingerprint(get().project) !== projectFingerprint(project)) throw new Error('無音解析中にプロジェクトが変更されました。結果は適用していません。')
       if (result.selectedClipId !== selected.id || result.jobId !== jobId) throw new Error('無音再適用の結果identityが不正です。')
       if (get().silenceCutReapplyCancelledJobId === jobId) throw new Error('無音再適用をキャンセルしました。')

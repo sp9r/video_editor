@@ -35,8 +35,7 @@ describe('editor history and linked selection', () => {
     const before = structuredClone(project)
     useEditorStore.getState().loadProject(project)
     useEditorStore.getState().selectClip('video')
-    window.spectra = {
-      startSilenceCutReapply: vi.fn(async (_project, selectedClipId, jobId) => ({
+    const start = vi.fn(async (_project, selectedClipId, jobId, _profile) => ({
         jobId, selectedClipId,
         analysis: {
           silences: [{ startUs: 1_500_000, endUs: 2_500_000, durationUs: 1_000_000 }],
@@ -46,8 +45,9 @@ describe('editor history and linked selection', () => {
           diagnostics: []
         }, protectedIntervals: [], alreadyRemovedSourceRanges: []
       }))
-    } as unknown as DesktopApi
+    window.spectra = { startSilenceCutReapply: start } as unknown as DesktopApi
     expect(await useEditorStore.getState().reapplySilenceCut()).toBe(true)
+    expect(start).toHaveBeenCalledWith(project, 'video', expect.any(String), 'youtube')
     const after = structuredClone(useEditorStore.getState().project)
     expect(useEditorStore.getState().past).toHaveLength(1)
     useEditorStore.getState().undo()

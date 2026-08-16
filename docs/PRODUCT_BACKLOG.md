@@ -288,6 +288,8 @@
 **Resolved / remaining:**
 
 - Stage 29.2でユーザー明示の再適用を実装済み。
+- Stage 29.10で再適用profileを「自然 / 強め / YouTubeジャンプカット」から選択可能にし、defaultをYouTubeジャンプカットへ統一。Auto Captionの初期silenceCutも同じdefaultに変更。
+- profile設定（min silence、retain pause、noise threshold、speech protection、filler removal）はshared resolverで一箇所に集約し、IPCでは`off`を受け付けない。
 - 将来のanalysis cache再利用と、subtitleを保持したまま複数media segmentへ再適用する実動画受入は保留。
 
 ### SIL-002 — YouTubeジャンプカットprofile
