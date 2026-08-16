@@ -76,6 +76,8 @@
 
 **Human acceptance:** 再生中、字幕cue boundaryに合わせて字幕が切替・消失し、過去cueの画像が残留しないこと。
 
+**Stage 31.1 correction:** 人間確認でFast Previewの字幕追従が再び失敗したため、旧acceptanceをFAILEDとして再オープンした。再生中は全active cueをCSSのcanonical render specから即時描画し、FFmpeg字幕overlayへ依存しない経路へ変更。stale bitmap / in-flight overlayの残留を廃止した。Accuracy/Finalは従来どおりpaused時のauthorityとする。実GUIでの再受入れ待ち。
+
 ### PERF-001 — Previewの実ユーザー環境での高CPU・非リアルタイム再生
 
 **Status:** `VERIFY`
@@ -92,6 +94,7 @@
 - 毎frame大量logは行わず、counter/aggregateのみで停止時にsummaryを出す。
 - 最新の人間確認ではCPU/GPU使用率は問題ない状態だった。
 - ユーザー推測として、clipの結合など複数編集を重ねた後に高負荷化する可能性がある。
+- Stage 31.1では、再生中のFast subtitle FFmpeg overlay requestを停止し、連続silence-cut segment向けaudio preview DOMを「active contribution + source assetごとのnext prefetch」に限定した。これは長尺編集時の要素数・毎frame走査を抑える実装上の対策であり、実ユーザー環境での前後CPU計測はまだ必要。
 
 **Next reproduction target:**
 
@@ -199,6 +202,14 @@
 
 **Human acceptance:** 複数video候補を含む実動画で、hover/select時の候補highlightが意図どおり表示され、subtitle trackの編集操作を妨げないこと。
 
+**Implemented (Stage 31.1 / UX-TL-004C):**
+
+- defaultの詳細OFFではsubtitle trackをTimeline rowから隠し、現在のsubtitle clipの時間的overlapをvideo clip内へ軽量な派生subtitle blockとして表示。
+- blockのclickは実際のSubtitleClipを選択し、text tooltipとselected stateを持つ。詳細ONでは従来のsubtitle track、word editing、split/merge、boundary dragを復元する。
+- data model、schema、`linkGroupId`、永続video/subtitle linkは変更しない。viewport近傍の表示clipだけを計算する。
+
+**Human acceptance:** 実動画で詳細ON/OFF、inline blockの選択、split/trim後の再計算、字幕track編集の切替を確認する。
+
 **Correction (Stage 29.4.1):** candidateはvideo↔subtitleのcross-type overlapだけを対象とし、video↔videoおよびsubtitle↔subtitleは候補に含めない。
 
 ### UX-TL-005 — Ruler drag scrubbing
@@ -291,18 +302,25 @@
 - Stage 29.10で再適用profileを「自然 / 強め / YouTubeジャンプカット」から選択可能にし、defaultをYouTubeジャンプカットへ統一。Auto Captionの初期silenceCutも同じdefaultに変更。
 - profile設定（min silence、retain pause、noise threshold、speech protection、filler removal）はshared resolverで一箇所に集約し、IPCでは`off`を受け付けない。
 - 将来のanalysis cache再利用と、subtitleを保持したまま複数media segmentへ再適用する実動画受入は保留。
+- Restore architecture is not implemented in Stage 31.1. A source-range operation metadata artifact (option B) is the current recommendation: store original source identity and removed ranges, then restore only when current clip mapping is unambiguous; otherwise fail closed and leave the Project unchanged. Snapshot-only restore (A) is unsafe after save/reload/manual edits, while identity rebuild (C) needs a larger schema/lineage decision. `RESTORE DECISION REQUIRED` remains YES.
 
 ### SIL-002 — YouTubeジャンプカットprofile
 
 **Status:** `READY_FOR_HUMAN_REVIEW`
 
-- min silence 300ms
-- retained pause 80ms
+- min silence 150ms
+- retained pause 0ms
 - FFmpeg signal authority + raw Whisper speech protection
 - filler removalなし
 - generated fixtureでは実cut確認済み
 
 **Remaining:** 実人間音声で、詰まり具合・speech clipping・click/popの聴感確認。
+
+### SIL-004 — Silence Cut custom minimum threshold
+
+**Status:** `READY_FOR_HUMAN_REVIEW`
+
+Auto Captionと明示Silence Reapplyで、profileの推奨値を初期値としつつ、最小無音時間を0.05〜2.00秒（0.05秒刻み）で一時指定できる。設定はshared profile semanticsから解決し、Project schemaには保存しない。初回bulk cut、speech protection、Undo/Redo、failure atomicityのtargeted testを追加済み。実人間音声での安全側調整は未確認。
 
 ### SIL-003 — Silence Cut実行結果の可視化
 
@@ -432,6 +450,18 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 - data model、`linkGroupId`、永続video/subtitle linkは変更なし。
 
 **Human acceptance:** 実動画でclip labelの可読性、subtitle boundary guideの位置、cross-type候補highlight、silence reapplyの操作感を確認する。
+
+### Stage 31.1 checkpoint — Human review failure fix batch
+
+**Status:** `READY_FOR_HUMAN_REVIEW`
+
+- PREV-001: 再生中字幕をCSS canonical specへ統一し、FFmpeg Fast overlay依存とstale bitmap残留を除去。paused Accurate Preview / Final authorityは維持。
+- PERF-001: 連続silence-cut segmentのaudio preview要素をbounded pool化し、active mixとnext prefetchだけを保持。実ユーザーでの60秒以上の前後runtime計測は要確認。
+- SIL-002 / SIL-004: YouTube 150ms / retain 0ms、custom minimum thresholdを初回Auto CaptionとReapplyへ伝播。
+- UX-TL-004C: detailed OFF時のinline subtitle strip、detailed ON時の従来subtitle track編集を追加。model/schema/linkGroupId変更なし。
+- clip_automationのworker contractへoptional `silenceMinUs`を追加し、既存v1の省略時互換を維持。
+
+**自動確認:** video_editor targeted tests 30件、typecheck、build、accurate-preview smoke、clip_automation contract/silence/parallel worker targeted tests 19件、compileall PASS。実動画の聴感・Preview性能・inline strip操作は人間確認待ち。
 
 ---
 
