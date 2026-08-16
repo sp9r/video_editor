@@ -532,6 +532,14 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 - rendererはtyped IPC経由でcandidate抽出・exportを依頼し、candidate cacheは`thumbnail-cache`として管理する。ProjectFile、subtitle template、edit_project contractへthumbnail設定を追加していない。
 - AI画像生成、network、repo内への生成物保存は未実施。実動画での視覚品質・候補の意味性・exportファイル選択は人間受入待ち。
 
+### Stage 32.9 checkpoint — Overnight integration regression
+
+**Status:** `AUTOMATED REGRESSION PASS — READY FOR HUMAN REVIEW`
+
+- Caption failsafe E2E、silence restore/reapply、timeline zoom、Project QA、Mass Review Workspace、Learning Dataset、Thumbnail Workspace、Stage 31 Preview、Silence Cut、Auto Caption、NVENC exportの既存実装を統合回帰した。
+- video_editorはfull 374 tests、targeted 129 tests、typecheck、build、Electron startup／interaction／accurate-preview／subtitle geometry／subtitle parity smokeがPASS。clip_automationはfull 320 tests、compileallがPASSした。
+- 自動検証での未解決regressionはない。実動画の見た目・聴感、Review／Thumbnailの操作感、候補フレームの意味性、NVENC実機結果は自動DONEにせずHuman Review Queueへ残す。
+
 ---
 
 ## Notes for future Luna tasks
