@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import type { AutoCaptionDiagnostic, AutoCaptionSilenceAnalysis } from '../shared/auto-caption-contract.js'
-import { buildSilenceReapplyTarget, type SilenceCutRange, type SilenceReapplyTarget, type SourceTimeInterval } from '../shared/silence-cut.js'
+import { buildSilenceReapplyTarget, clampSilenceMinUs, type SilenceCutRange, type SilenceReapplyTarget, type SourceTimeInterval } from '../shared/silence-cut.js'
 import type { ProjectFile } from '../shared/types.js'
 import { DEFAULT_SILENCE_REAPPLY_PROFILE, silenceCutProfileSettings, type SilenceCutProfileSettings, type SilenceReapplyProfile } from '../shared/silence-cut.js'
 import type { FfmpegPaths } from './ffmpeg/binaries.js'
@@ -150,14 +150,14 @@ export class SilenceAnalysisService {
     this.timeoutMs = options.timeoutMs ?? 120_000
   }
 
-  async start(project: ProjectFile, selectedClipId: string, requestedJobId?: string, requestedProfile: SilenceReapplyProfile = DEFAULT_SILENCE_REAPPLY_PROFILE): Promise<SilenceReapplyResult> {
+  async start(project: ProjectFile, selectedClipId: string, requestedJobId?: string, requestedProfile: SilenceReapplyProfile = DEFAULT_SILENCE_REAPPLY_PROFILE, requestedMinSilenceUs?: number): Promise<SilenceReapplyResult> {
     const jobId = requestedJobId ?? `silence-reapply-${randomUUID()}`
     if (!/^[A-Za-z0-9_-]{1,160}$/u.test(jobId)) throw new Error('無音再適用のjob IDが不正です。')
     if (this.#jobs.has(jobId)) throw new Error('無音再適用がすでに実行中です。')
     const controller = new AbortController()
     this.#jobs.set(jobId, controller)
     try {
-      const profile = silenceCutProfileSettings(requestedProfile)
+      const profile = { ...silenceCutProfileSettings(requestedProfile), minSilenceUs: clampSilenceMinUs(requestedMinSilenceUs, silenceCutProfileSettings(requestedProfile).minSilenceUs) }
       const target = buildSilenceReapplyTarget(project, selectedClipId)
       const asset = project.media.find((candidate) => candidate.id === target.assetId)
       if (!asset || asset.offline || !asset.hasAudio || !isAbsolute(asset.path)) throw new Error('無音再適用の音声素材が利用できません。')

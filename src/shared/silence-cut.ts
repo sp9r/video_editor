@@ -24,8 +24,13 @@ export const silenceCutProfileSettings = (profile: SilenceReapplyProfile = DEFAU
   switch (profile) {
     case 'natural': return { profile, minSilenceUs: 600_000, retainPauseUs: 180_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false }
     case 'strong': return { profile, minSilenceUs: 400_000, retainPauseUs: 100_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false }
-    case 'youtube': return { profile, minSilenceUs: 300_000, retainPauseUs: 80_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false }
+    case 'youtube': return { profile, minSilenceUs: 150_000, retainPauseUs: 0, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false }
   }
+}
+
+export const clampSilenceMinUs = (value: number | undefined, fallback: number): number => {
+  if (value === undefined || !Number.isFinite(value)) return fallback
+  return Math.round(Math.max(50_000, Math.min(2_000_000, value)))
 }
 
 export interface SilenceCutSummary {

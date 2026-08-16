@@ -16,11 +16,11 @@ import type { AutoCaptionHealth, AutoCaptionJobStatus, AutoCaptionStartResult, P
 import { defaultProcessExecutor, type ProcessExecutor } from '../ffmpeg/process.js'
 import { discoverAutoCaptionWorker, type AutoCaptionWorkerDiscovery } from './worker-discovery.js'
 import { saveAutoCaptionBaseline } from './auto-caption-baseline.js'
-import { DEFAULT_SILENCE_REAPPLY_PROFILE } from '../../shared/silence-cut.js'
+import { DEFAULT_SILENCE_REAPPLY_PROFILE, silenceCutProfileSettings } from '../../shared/silence-cut.js'
 
 const DEFAULT_SETTINGS: AutoCaptionSettings = {
   language: 'ja', maxChars: 32, maxLines: 2, segmentationMode: 'auto',
-  silenceCut: DEFAULT_SILENCE_REAPPLY_PROFILE, accelerationMode: 'auto', subtitleTemplate: 'default'
+  silenceCut: DEFAULT_SILENCE_REAPPLY_PROFILE, silenceMinUs: silenceCutProfileSettings(DEFAULT_SILENCE_REAPPLY_PROFILE).minSilenceUs, accelerationMode: 'auto', subtitleTemplate: 'default'
 }
 const DEFAULT_TIMEOUT_MS = 6 * 60 * 60 * 1000
 const MAX_PROGRESS_BYTES = 8 * 1024 * 1024

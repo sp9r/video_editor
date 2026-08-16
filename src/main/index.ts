@@ -186,14 +186,15 @@ const registerIpcHandlers = (): void => {
     return await requireService().renderSubtitleOverlay(validateProject(projectInput), timeUs)
   })
 
-  ipcMain.handle(IPC.silenceCutReapply, async (event, projectInput: ProjectFile, selectedClipId: unknown, jobId: unknown, profileInput: unknown) => {
+  ipcMain.handle(IPC.silenceCutReapply, async (event, projectInput: ProjectFile, selectedClipId: unknown, jobId: unknown, profileInput: unknown, minSilenceInput: unknown) => {
     assertTrustedSender(event)
     if (typeof selectedClipId !== 'string' || selectedClipId.length > 200 || typeof jobId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/u.test(jobId)) {
       throw new Error('無音再適用の対象またはjob IDが不正です。')
     }
     const profile = profileInput === undefined ? DEFAULT_SILENCE_REAPPLY_PROFILE : profileInput
     if (!isSilenceReapplyProfile(profile)) throw new Error('無音再適用のprofileが不正です。')
-    return await requireSilenceAnalysisService().start(validateProject(projectInput), selectedClipId, jobId, profile)
+    const minSilenceUs = minSilenceInput === undefined ? undefined : typeof minSilenceInput === 'number' && Number.isSafeInteger(minSilenceInput) ? minSilenceInput : (() => { throw new Error('無音再適用の最小無音時間が不正です。') })()
+    return await requireSilenceAnalysisService().start(validateProject(projectInput), selectedClipId, jobId, profile, minSilenceUs)
   })
 
   ipcMain.handle(IPC.silenceCutCancel, (event, jobId: unknown) => {
@@ -473,7 +474,7 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const cachedSubtitleOverlay = await requireService().renderSubtitleOverlay(project, 500_000)
   const subtitleOverlayCacheHitMs = performance.now() - cacheHitStartedAt
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
-  const fastFixture = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.fastSubtitleOverlay && dom.fastSubtitleOverlayReady)
+  const fastFixture = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.cssFallbackCount > 0 && !dom.fastSubtitleOverlay)
   const fastFixtureDom = await readDom()
   const playbackFrameSample = await window.webContents.executeJavaScript(`new Promise((resolve) => {
     const started = performance.now()
@@ -501,7 +502,7 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const editedFrameReady = await until((dom) => dom.overlay && dom.overlayReady && dom.overlaySrc !== initialOverlaySrc && dom.quality.includes('正確プレビュー'))
   const cueSwitchStartedAt = performance.now()
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
-  const fastDuringPlay = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.fastSubtitleOverlay && dom.fastSubtitleOverlayReady)
+  const fastDuringPlay = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.cssFallbackCount > 0 && !dom.fastSubtitleOverlay)
   const subtitleOverlayCueSwitchMs = performance.now() - cueSwitchStartedAt
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
   const overlayImmediatelyAfterPause = (await readDom()).overlay

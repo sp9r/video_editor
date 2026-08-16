@@ -42,7 +42,7 @@ describe('explicit FFmpeg silence reapply analysis', () => {
   it.each([
     ['natural', 600_000, 180_000],
     ['strong', 400_000, 100_000],
-    ['youtube', 300_000, 80_000]
+    ['youtube', 150_000, 0]
   ] as const)('uses the %s profile for FFmpeg and derived silence settings', async (profile, minSilenceUs, retainPauseUs) => {
     const executor = { run: vi.fn().mockResolvedValue({ command: 'ffmpeg', args: [], exitCode: 0, stdout: '', stderr: 'silence_start: 0.100\nsilence_end: 0.900' }) }
     const service = new SilenceAnalysisService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor })
@@ -58,6 +58,14 @@ describe('explicit FFmpeg silence reapply analysis', () => {
     expect(DEFAULT_SILENCE_REAPPLY_PROFILE).toBe('youtube')
     expect(isSilenceReapplyProfile('off')).toBe(false)
     expect(isSilenceReapplyProfile('youtube')).toBe(true)
+  })
+
+  it('accepts a custom minimum silence threshold without changing profile pause semantics', async () => {
+    const executor = { run: vi.fn().mockResolvedValue({ command: 'ffmpeg', args: [], exitCode: 0, stdout: '', stderr: 'silence_start: 0.100\nsilence_end: 0.900' }) }
+    const service = new SilenceAnalysisService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor })
+    const result = await service.start(projectFixture(), 'analysis-video', 'silence-custom', 'youtube', 50_000)
+    expect(executor.run).toHaveBeenCalledWith(expect.objectContaining({ args: expect.arrayContaining(['silencedetect=noise=-35.00dB:d=0.050000']) }))
+    expect(result.analysis.settings).toMatchObject({ profile: 'youtube', minSilenceUs: 50_000, retainPauseUs: 0 })
   })
 
   it('cancels the FFmpeg request without publishing a result', async () => {

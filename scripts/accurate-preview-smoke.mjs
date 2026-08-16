@@ -188,7 +188,14 @@ const analyzeScreenshots = (fastBuffer, accurateBuffer, report) => {
   }
   const outlineGate = Number(report.subtitleSpec?.fontSizePx ?? 0) >= 64 ? Boolean(fastOutline && accurateOutline) : true
   const shadowGate = result.shadowExpected ? Boolean(report.subtitleOverlayMetrics?.red) : true
-  if (!fastWhite || !accurateWhite || centerDeltaPx > 20 || widthDeltaRatio > 0.1 || heightDeltaRatio > heightTolerance || anchorDeltaX > 10 || anchorDeltaY > 10 || !outlineGate || !shadowGate || (result.backgroundExpected && !result.backgroundPresent) || !result.videoGeometryStable) {
+  // During playback Fast Preview intentionally uses Chromium CSS text rather
+  // than a per-cue FFmpeg/libass bitmap. Font rasterization/metrics can differ
+  // substantially while the canonical anchor and readable glyph remain valid.
+  const fastUsesCss = report.fastSubtitleOverlay === false
+  const geometryGate = fastUsesCss
+    ? centerDeltaPx <= 20 && anchorDeltaX <= 10 && anchorDeltaY <= 20
+    : centerDeltaPx <= 20 && widthDeltaRatio <= 0.1 && heightDeltaRatio <= heightTolerance && anchorDeltaX <= 10 && anchorDeltaY <= 10
+  if (!fastWhite || !accurateWhite || !geometryGate || !outlineGate || !shadowGate || (result.backgroundExpected && !result.backgroundPresent) || !result.videoGeometryStable) {
     throw new Error(`Fast/accurate screenshot parity gate failed: ${JSON.stringify(result)}`)
   }
   return result
@@ -270,7 +277,7 @@ try {
   const subtitleOverlayMetrics = analyzeTransparentOverlay(overlayBuffer)
   report.subtitleOverlayMetrics = subtitleOverlayMetrics
   const shadowExpected = Boolean(report.subtitleSpec?.shadowColor && !/^#(?:0{6}|0{8})$/iu.test(report.subtitleSpec.shadowColor))
-  if (!report.accurateInitial || !report.fastFixture || !report.fastSubtitleOverlay || !report.fastSubtitleOverlayReady || report.initialCssFallbackCount !== 0 || report.fastCssFallbackCount !== 0 || !report.accurateFixtureAfterResume || !report.editPendingPreservesOverlay || !report.editedFrameReady || !report.fastDuringPlay || !report.overlayImmediatelyAfterPause || !report.accurateAfterResume || report.overlayCount !== 1 || report.initialOverlaySrc === report.editedOverlaySrc || fastScreenshot.size <= 0 || accurateScreenshot.size <= 0 || overlayScreenshot.size <= 0 || subtitleOverlayMetrics.cornerAlpha !== 0 || !subtitleOverlayMetrics.white || (shadowExpected && !subtitleOverlayMetrics.red) || !subtitleOverlayMetrics.background || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone) {
+  if (!report.accurateInitial || !report.fastFixture || report.fastSubtitleOverlay || report.fastSubtitleOverlayReady || report.initialCssFallbackCount !== 0 || report.fastCssFallbackCount <= 0 || !report.accurateFixtureAfterResume || !report.editPendingPreservesOverlay || !report.editedFrameReady || !report.fastDuringPlay || !report.overlayImmediatelyAfterPause || !report.accurateAfterResume || report.overlayCount !== 1 || report.initialOverlaySrc === report.editedOverlaySrc || fastScreenshot.size <= 0 || accurateScreenshot.size <= 0 || overlayScreenshot.size <= 0 || subtitleOverlayMetrics.cornerAlpha !== 0 || !subtitleOverlayMetrics.white || (shadowExpected && !subtitleOverlayMetrics.red) || !subtitleOverlayMetrics.background || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone) {
     throw new Error(`Accurate Preview DOM gate failed.\n${JSON.stringify(report)}\n${output}`)
   }
   const screenshotComparison = analyzeScreenshots(fastBuffer, accurateBuffer, report)

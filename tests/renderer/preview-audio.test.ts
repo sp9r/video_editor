@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { previewAudioIsActive, previewAudioSourceTimeUs, previewAudioVolume } from '../../src/renderer/src/preview-audio'
+import { previewAudioClipsForPlayback, previewAudioIsActive, previewAudioSourceTimeUs, previewAudioVolume } from '../../src/renderer/src/preview-audio'
 import type { PreviewPlanClip } from '../../src/shared/types'
 
 const clip = (overrides: Partial<PreviewPlanClip> = {}): PreviewPlanClip => ({
@@ -43,5 +43,20 @@ describe('Preview audio timeline mapping', () => {
 
   it('does not activate disabled clips', () => {
     expect(previewAudioIsActive(clip({ enabled: false }), 12_000_000)).toBe(false)
+  })
+
+  it('keeps active mixes and only one next prefetch per source asset', () => {
+    const clips = [
+      clip({ clipId: 'cut-1', startUs: 0, durationUs: 2_000_000, sourceInUs: 0 }),
+      clip({ clipId: 'cut-2', startUs: 2_000_000, durationUs: 2_000_000, sourceInUs: 2_000_000 }),
+      clip({ clipId: 'cut-3', startUs: 4_000_000, durationUs: 2_000_000, sourceInUs: 4_000_000 }),
+      clip({ clipId: 'other-track', startUs: 1_000_000, durationUs: 5_000_000, sourceMediaId: 'asset-2' })
+    ]
+    expect(previewAudioClipsForPlayback(clips, 2_500_000).map((item) => item.clipId)).toEqual(['other-track', 'cut-2', 'cut-3'])
+  })
+
+  it('does not retain an unbounded list of sequential clips', () => {
+    const clips = Array.from({ length: 100 }, (_, index) => clip({ clipId: `cut-${index}`, startUs: index * 1_000_000, durationUs: 1_000_000, sourceInUs: index * 1_000_000 }))
+    expect(previewAudioClipsForPlayback(clips, 50_500_000)).toHaveLength(2)
   })
 })

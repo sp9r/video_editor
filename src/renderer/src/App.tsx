@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { createEmptyProject } from '../../shared/project'
 import type { AutoCaptionSettings } from '../../shared/auto-caption-contract'
-import { DEFAULT_SILENCE_REAPPLY_PROFILE } from '../../shared/silence-cut'
+import { DEFAULT_SILENCE_REAPPLY_PROFILE, silenceCutProfileSettings } from '../../shared/silence-cut'
 import { autoCaptionDisplayRatio, autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressMode, autoCaptionProgressStage, autoCaptionStageLabel, formatClockDurationUs, formatDurationUs, formatElapsedMs, silenceCutProfileLabel } from '../../shared/auto-caption-ui'
 import { getSubtitleTemplate, getSubtitleTemplateSettings, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { EncoderReport, ProjectFile } from '../../shared/types'
@@ -103,7 +103,7 @@ export default function App(): React.JSX.Element {
   const [lastUsedSubtitleTemplateId, setLastUsedSubtitleTemplateId] = useState('default')
   const [captionSettings, setCaptionSettings] = useState<AutoCaptionSettings>({
     language: 'ja', maxChars: 32, maxLines: 2, segmentationMode: 'auto',
-    silenceCut: DEFAULT_SILENCE_REAPPLY_PROFILE, accelerationMode: 'auto', subtitleTemplate: 'default'
+    silenceCut: DEFAULT_SILENCE_REAPPLY_PROFILE, silenceMinUs: silenceCutProfileSettings(DEFAULT_SILENCE_REAPPLY_PROFILE).minSilenceUs, accelerationMode: 'auto', subtitleTemplate: 'default'
   })
   const [captionSummary, setCaptionSummary] = useState<AutoCaptionApplySummary | null>(null)
   const reviewEnabled = useReviewStore((state) => state.enabled)
@@ -580,7 +580,8 @@ export default function App(): React.JSX.Element {
                 <>
                   {selectedCaptionClip && (selectedCaptionClip.kind === 'video' || selectedCaptionClip.kind === 'audio') && <div className="caption-target"><span>対象clip</span><strong>{selectedCaptionClip.name}</strong></div>}
                   <label className="field"><span className="field-label">自動字幕</span><select disabled={captioning} value={autoCaptionEnabled ? 'on' : 'off'} onChange={(event) => setAutoCaptionEnabled(event.target.value === 'on')}><option value="on">ON</option><option value="off">OFF</option></select></label>
-                  <label className="field"><span className="field-label">無音カット</span><select disabled={captioning} value={captionSettings.silenceCut ?? DEFAULT_SILENCE_REAPPLY_PROFILE} onChange={(event) => setCaptionSettings((current) => ({ ...current, silenceCut: event.target.value as AutoCaptionSettings['silenceCut'] }))}><option value="off">OFF</option><option value="natural">自然</option><option value="strong">強め</option><option value="youtube">YouTubeジャンプカット</option></select></label>
+                  <label className="field"><span className="field-label">無音カット</span><select disabled={captioning} value={captionSettings.silenceCut ?? DEFAULT_SILENCE_REAPPLY_PROFILE} onChange={(event) => { const profile = event.target.value as AutoCaptionSettings['silenceCut']; setCaptionSettings((current) => ({ ...current, silenceCut: profile, silenceMinUs: profile && profile !== 'off' ? silenceCutProfileSettings(profile).minSilenceUs : undefined })) }}><option value="off">OFF</option><option value="natural">自然</option><option value="strong">強め</option><option value="youtube">YouTubeジャンプカット</option></select></label>
+                  <label className="field"><span className="field-label">最小無音時間</span><span className="number-input"><input disabled={captioning || captionSettings.silenceCut === 'off'} type="number" min={0.05} max={2} step={0.05} value={(captionSettings.silenceMinUs ?? silenceCutProfileSettings((captionSettings.silenceCut && captionSettings.silenceCut !== 'off') ? captionSettings.silenceCut : DEFAULT_SILENCE_REAPPLY_PROFILE).minSilenceUs) / 1_000_000} onChange={(event) => setCaptionSettings((current) => ({ ...current, silenceMinUs: Math.round(Math.max(0.05, Math.min(2, Number(event.target.value) || 0.15)) * 1_000_000) }))} /><span>秒</span></span></label>
                   <label className="field"><span className="field-label">処理デバイス</span><select disabled={captioning} value={captionSettings.accelerationMode ?? 'auto'} onChange={(event) => setCaptionSettings((current) => ({ ...current, accelerationMode: event.target.value as AutoCaptionSettings['accelerationMode'] }))}><option value="auto">自動（推奨）</option><option value="gpu">GPU優先</option><option value="cpu">CPU</option></select></label>
                   <label className="field"><span className="field-label">言語</span><select disabled={captioning} value={captionSettings.language} onChange={(event) => setCaptionSettings((current) => ({ ...current, language: event.target.value }))}><option value="ja">日本語</option><option value="auto">自動判定</option></select></label>
                   <label className="field"><span className="field-label">最大文字数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={10000} value={captionSettings.maxChars} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxChars: Math.max(1, Math.min(10000, Number(event.target.value) || 32)) }))} /><span>文字</span></span></label>
