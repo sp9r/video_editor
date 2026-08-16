@@ -123,6 +123,7 @@ export interface AutoCaptionApplySummary {
   removedDurationUs: number
   whisperBackend: string
   templateId: string
+  silenceCutSkipped?: boolean
 }
 
 const HISTORY_LIMIT = 80
@@ -339,13 +340,30 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       let captionClip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'> = selectedClip
       let sourceTimeMapper: ReturnType<typeof createSilenceCutTimeMapper> | undefined
       let silenceSummary: ReturnType<typeof applySilenceCutToProject>['summary'] | undefined
+      let silenceCutSkipped = false
       if (silenceAnalysis) {
-        sourceTimeMapper = createSilenceCutTimeMapper(selectedClip, silenceAnalysis.keepRanges)
-        const isNoOpSilencePlan = silenceAnalysis.removedDurationUs === 0
+        const hasExistingSubtitleClip = project.tracks.some((track) => track.kind === 'subtitle' && track.clips.some((clip) => clip.kind === 'subtitle' && clip.enabled && clip.durationUs > 0))
+        const shouldSkipRepeatSilenceCut = hasExistingSubtitleClip
+        if (shouldSkipRepeatSilenceCut) {
+          // A rerun must not ripple a media clip through existing captions.
+          // Keep the current timeline/source range authoritative and add the
+          // new captions as an independent track instead.
+          silenceCutSkipped = true
+          silenceSummary = {
+            selectedClipId: selectedClip.id,
+            affectedClipIds: [selectedClip.id],
+            segmentCount: 1,
+            removedDurationUs: 0,
+            keepRanges: [{ startUs: selectedClip.sourceInUs, endUs: selectedClip.sourceInUs + selectedClip.durationUs }]
+          }
+        } else {
+          sourceTimeMapper = createSilenceCutTimeMapper(selectedClip, silenceAnalysis.keepRanges)
+        }
+        const isNoOpSilencePlan = !shouldSkipRepeatSilenceCut && silenceAnalysis.removedDurationUs === 0
           && silenceAnalysis.keepRanges.length === 1
           && silenceAnalysis.keepRanges[0]?.startUs === selectedClip.sourceInUs
           && silenceAnalysis.keepRanges[0]?.endUs === selectedClip.sourceInUs + selectedClip.durationUs
-        if (isNoOpSilencePlan) {
+        if (!shouldSkipRepeatSilenceCut && isNoOpSilencePlan) {
           silenceSummary = {
             selectedClipId: selectedClip.id,
             affectedClipIds: [selectedClip.id],
@@ -353,7 +371,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             removedDurationUs: 0,
             keepRanges: silenceAnalysis.keepRanges
           }
-        } else {
+        } else if (!shouldSkipRepeatSilenceCut) {
           const silenceApplied = applySilenceCutToProject(project, selectedClip.id, silenceAnalysis, {
             timeMapper: sourceTimeMapper,
             protectedIntervals: result.rawWords.map((word) => ({ id: word.id, startUs: word.startUs, endUs: word.endUs }))
@@ -380,10 +398,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         silenceCount: silenceAnalysis?.silences.length ?? 0,
         removedDurationUs: silenceSummary?.removedDurationUs ?? silenceAnalysis?.removedDurationUs ?? 0,
         whisperBackend: describeAutoCaptionBackend(result),
-        templateId: settings?.subtitleTemplate ?? 'default'
+        templateId: settings?.subtitleTemplate ?? 'default',
+        silenceCutSkipped
       }
       set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 1, message: '字幕を配置しました。', result }, autoCaptionJobId: null })
-      get().showNotice(`自動字幕を${summary.captionCount}件配置しました（raw word ${summary.rawWordCount}件${summary.fallbackUsed ? '・ルールfallback' : ''}${silenceSummary ? `・無音${(silenceSummary.removedDurationUs / 1_000_000).toFixed(2)}秒を短縮` : ''}）。`, 'success')
+      const silenceNotice = silenceCutSkipped
+        ? '・既存字幕を保持するため無音の再カットなし'
+        : silenceSummary
+          ? `・無音${(silenceSummary.removedDurationUs / 1_000_000).toFixed(2)}秒を短縮`
+          : ''
+      get().showNotice(`自動字幕を${summary.captionCount}件配置しました（raw word ${summary.rawWordCount}件${summary.fallbackUsed ? '・ルールfallback' : ''}${silenceNotice}）。`, 'success')
       return summary
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)

@@ -249,6 +249,51 @@ describe('automatic caption insertion', () => {
     expect(state.past).toHaveLength(1)
   })
 
+  it('does not repeat a silence ripple through existing captions on rerun', async () => {
+    let project = { ...createEmptyProject('auto caption repeat silence'), media: [asset] }
+    const video = { ...createClipForAsset(asset, 0, 4_000_000), id: 'auto-caption-video-repeat-silence' }
+    project = addClipToTrack(project, project.tracks.find((track) => track.kind === 'media')!.id, video)
+    const existingTrack = project.tracks.find((track) => track.kind === 'subtitle')!
+    existingTrack.clips.push({
+      id: 'existing-rerun-caption', name: '既存字幕', kind: 'subtitle', startUs: 0, durationUs: 500_000, sourceInUs: 0,
+      enabled: true, text: '既存字幕', style: structuredClone(DEFAULT_SUBTITLE_STYLE)
+    })
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip(video.id)
+    let progress: ((value: any) => void) | undefined
+    const startAutoCaption = vi.fn(async () => {
+      progress?.({
+        version: 'spectra.auto-caption.progress.v1', jobId: 'caption-job-repeat-silence', state: 'completed', ratio: 1, message: '完了',
+        silenceAnalysis: {
+          silences: [{ startUs: 1_000_000, endUs: 2_000_000, durationUs: 1_000_000 }],
+          keepRanges: [{ startUs: 0, endUs: 1_000_000, durationUs: 1_000_000 }, { startUs: 2_000_000, endUs: 4_000_000, durationUs: 2_000_000 }],
+          removedDurationUs: 1_000_000,
+          settings: { profile: 'natural', minSilenceUs: 600_000, retainPauseUs: 180_000, noiseDb: -35, speechProtectionUs: 120_000, fillerRemoval: false }, diagnostics: []
+        },
+        result: {
+          version: 'spectra.auto-caption.result.v1', jobId: 'caption-job-repeat-silence', sourceStartUs: 0, sourceEndUs: 4_000_000,
+          language: 'ja', provider: 'test', model: 'test', rawWords: [{ id: 'word-repeat-silence', text: '再実行', startUs: 2_000_000, endUs: 2_500_000 }],
+          captions: [{ id: 'caption-repeat-silence', text: '再実行', sourceWordIds: ['word-repeat-silence'], startUs: 2_000_000, endUs: 2_500_000, textStatus: 'as_transcribed', provenance: 'caption_algorithm' }], diagnostics: [], fallback: { used: false }
+        }
+      })
+      return { jobId: 'caption-job-repeat-silence', clipId: video.id }
+    })
+    window.spectra = {
+      autoCaptionHealth: vi.fn().mockResolvedValue({ available: true, checkedAt: new Date().toISOString(), provider: 'clip_automation' }),
+      startAutoCaption, onAutoCaptionProgress: vi.fn((callback) => { progress = callback; return () => { progress = undefined } })
+    } as unknown as DesktopApi
+
+    const summary = await useEditorStore.getState().autoCaptionSelected()
+    expect(summary).toMatchObject({ silenceCutSkipped: true, removedDurationUs: 0, captionCount: 1 })
+    const state = useEditorStore.getState()
+    const mediaClips = state.project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'video')
+    expect(mediaClips.map((clip) => [clip.sourceInUs, clip.durationUs, clip.startUs])).toEqual([[0, 4_000_000, 0]])
+    expect(state.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'existing-rerun-caption')).toBeTruthy()
+    const generated = state.project.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === 'subtitle' && clip.sourceJobId)
+    expect(generated?.kind === 'subtitle' ? [generated.startUs, generated.durationUs] : undefined).toEqual([2_000_000, 500_000])
+    expect(state.past).toHaveLength(1)
+  })
+
   it('keeps the project unchanged when the worker fails before apply', async () => {
     let project = { ...createEmptyProject('auto caption failure'), media: [asset] }
     const video = { ...createClipForAsset(asset, 0, 4_000_000), id: 'auto-caption-video-failure' }

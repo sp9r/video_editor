@@ -552,11 +552,11 @@ export default function App(): React.JSX.Element {
               <IconButton label={captioning ? '生成中は閉じられません（キャンセルを使用）' : '閉じる'} disabled={captioning} onClick={() => setCaptionDialogOpen(false)}><X size={15} /></IconButton>
             </header>
             <div className="caption-dialog-body">
-              {!selectedCaptionClip || (selectedCaptionClip.kind !== 'video' && selectedCaptionClip.kind !== 'audio') ? (
+              {!captionSummary && (!selectedCaptionClip || (selectedCaptionClip.kind !== 'video' && selectedCaptionClip.kind !== 'audio')) ? (
                 <div className="caption-dialog-warning">動画または音声クリップを1つ選択してから生成してください。</div>
               ) : (
                 <>
-                  <div className="caption-target"><span>対象clip</span><strong>{selectedCaptionClip.name}</strong></div>
+                  {selectedCaptionClip && (selectedCaptionClip.kind === 'video' || selectedCaptionClip.kind === 'audio') && <div className="caption-target"><span>対象clip</span><strong>{selectedCaptionClip.name}</strong></div>}
                   <label className="field"><span className="field-label">自動字幕</span><select disabled={captioning} value={autoCaptionEnabled ? 'on' : 'off'} onChange={(event) => setAutoCaptionEnabled(event.target.value === 'on')}><option value="on">ON</option><option value="off">OFF</option></select></label>
                   <label className="field"><span className="field-label">無音カット</span><select disabled={captioning} value={captionSettings.silenceCut ?? 'natural'} onChange={(event) => setCaptionSettings((current) => ({ ...current, silenceCut: event.target.value as AutoCaptionSettings['silenceCut'] }))}><option value="off">OFF</option><option value="natural">自然</option><option value="strong">強め</option></select></label>
                   <label className="field"><span className="field-label">処理デバイス</span><select disabled={captioning} value={captionSettings.accelerationMode ?? 'auto'} onChange={(event) => setCaptionSettings((current) => ({ ...current, accelerationMode: event.target.value as AutoCaptionSettings['accelerationMode'] }))}><option value="auto">自動（推奨）</option><option value="gpu">GPU優先</option><option value="cpu">CPU</option></select></label>
@@ -584,7 +584,7 @@ export default function App(): React.JSX.Element {
                     <strong>自動処理が完了しました</strong>
                     <span>字幕 {captionSummary.captionCount}件・raw word {captionSummary.rawWordCount}件</span>
                     <span>Whisper: {captionSummary.whisperBackend} · template: {captionSummary.templateId}</span>
-                    <span>無音解析: {captionSummary.silenceCount}件・{formatDurationUs(captionSummary.removedDurationUs)}短縮</span>
+                    <span>{captionSummary.silenceCutSkipped ? '無音解析: 既存字幕を保持するため再カットをスキップ' : `無音解析: ${captionSummary.silenceCount}件・${formatDurationUs(captionSummary.removedDurationUs)}短縮`}</span>
                     {captionSummary.fallbackUsed && <span>字幕区切り: ルールfallbackを使用</span>}
                   </div>}
                 </>
