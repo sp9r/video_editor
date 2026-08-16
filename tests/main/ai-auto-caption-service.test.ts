@@ -313,4 +313,47 @@ describe('auto-caption worker discovery and service', () => {
     expect(unsafeTerminal.state).toBe('failed')
     expect(JSON.stringify(unsafeTerminal)).not.toContain('C:\\Users\\secret')
   })
+
+  it('survives a mixed success/cancel/failure soak and accepts the next job', async () => {
+    const root = await makeTemp('reliability-soak')
+    const media = path.join(root, 'source.mp4')
+    await writeFile(media, 'fixture', 'utf8')
+    const fixture = makeProject(media)
+    let invocation = 0
+    const modes = ['success', 'success', 'cancel', 'success', 'malformed', 'success'] as const
+    const service = new AutoCaptionService({
+      appPath: root,
+      userDataPath: root,
+      executor: {
+        run: async (request) => fakeExecutor(modes[invocation++] ?? 'success')(request)
+      },
+      discover: async () => discovery(root)
+    })
+
+    const first = await runUntilTerminal(service, fixture.project, { language: 'ja', maxChars: 32, maxLines: 2, segmentationMode: 'auto', silenceCut: 'natural', accelerationMode: 'auto', subtitleTemplate: 'default' })
+    expect((await first.terminal).state).toBe('completed')
+    expect(service.cancel(first.started.jobId)).toBe(false)
+
+    const second = await runUntilTerminal(service, fixture.project, { language: 'ja', maxChars: 24, maxLines: 1, segmentationMode: 'rule', silenceCut: 'off', accelerationMode: 'cpu', subtitleTemplate: 'user-template-24x1' })
+    expect((await second.terminal).state).toBe('completed')
+    expect(service.cancel(second.started.jobId)).toBe(false)
+
+    const cancelled = await runUntilTerminal(service, fixture.project)
+    expect(service.cancel(cancelled.started.jobId)).toBe(true)
+    expect((await cancelled.terminal).errorCode).toBe('CANCELLED')
+    expect(service.cancel(cancelled.started.jobId)).toBe(false)
+
+    const third = await runUntilTerminal(service, fixture.project)
+    expect((await third.terminal).state).toBe('completed')
+
+    const failed = await runUntilTerminal(service, fixture.project)
+    expect((await failed.terminal).errorCode).toBe('MALFORMED_OUTPUT')
+    expect(service.cancel(failed.started.jobId)).toBe(false)
+
+    const final = await runUntilTerminal(service, fixture.project)
+    const finalTerminal = await final.terminal
+    expect(finalTerminal.state).toBe('completed')
+    expect(finalTerminal.result?.jobId).toBe(final.started.jobId)
+    expect(invocation).toBe(6)
+  })
 })
