@@ -25,6 +25,15 @@ export interface SourceTimeInterval {
   endUs: TimeUs
 }
 
+export interface SilenceReapplyTarget {
+  selectedClipId: string
+  assetId: string
+  sourceInUs: TimeUs
+  durationUs: TimeUs
+  protectedIntervals: SourceTimeInterval[]
+  alreadyRemovedSourceRanges: SilenceCutRange[]
+}
+
 export interface SourceTimeMapper {
   readonly sourceInUs: TimeUs
   readonly sourceEndUs: TimeUs
@@ -65,6 +74,74 @@ const linkedMembers = (project: ProjectFile, selectedClipId: string): TimelineCl
   if (!selected) return []
   if (!selected.linkGroupId) return [selected]
   return project.tracks.flatMap((track) => track.clips.filter((clip) => clip.linkGroupId === selected.linkGroupId))
+}
+
+const isMediaClip = (clip: TimelineClip): clip is Extract<TimelineClip, { kind: 'video' | 'audio' }> =>
+  clip.kind === 'video' || clip.kind === 'audio'
+
+/**
+ * Builds the current-timeline input for an explicit reapply.  Raw Whisper
+ * words are the only speech guard; SubtitleEditUnit is intentionally ignored.
+ */
+export const buildSilenceReapplyTarget = (project: ProjectFile, selectedClipId: string): SilenceReapplyTarget => {
+  const selected = project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === selectedClipId)
+  const targets = linkedMembers(project, selectedClipId)
+  if (!selected || !isMediaClip(selected) || !targets.length || targets.some((clip) => !isMediaClip(clip))) {
+    throw new SilenceCutError('invalid_selection', '無音カット対象の映像clipまたは音声clipが見つかりません。')
+  }
+  if (targets.length > 2 || new Set(targets.map((clip) => clip.kind)).size !== targets.length) {
+    throw new SilenceCutError('invalid_selection', 'linked A/Vが1組として解釈できないため、無音カットを中止しました。')
+  }
+  const selectedMedia = selected as Extract<TimelineClip, { kind: 'video' | 'audio' }>
+  if (targets.some((clip) => !isMediaClip(clip) || clip.startUs !== selectedMedia.startUs || clip.durationUs !== selectedMedia.durationUs || clip.sourceInUs !== selectedMedia.sourceInUs || clip.assetId !== selectedMedia.assetId)) {
+    throw new SilenceCutError('unsafe_ripple', 'linked A/Vの現在のtimeline/source範囲が一致しません。')
+  }
+  const timelineEndUs = selected.startUs + selected.durationUs
+  const protectedIntervals: SourceTimeInterval[] = []
+  for (const track of project.tracks) {
+    for (const clip of track.clips) {
+      if (clip.kind !== 'subtitle' || !clip.sourceJobId || !clip.words?.length) continue
+      for (const word of clip.words) {
+        const overlapStartUs = Math.max(selected.startUs, word.startUs)
+        const overlapEndUs = Math.min(timelineEndUs, word.endUs)
+        if (word.endUs === word.startUs) {
+          if (word.startUs < selected.startUs || word.startUs >= timelineEndUs) continue
+          const sourceUs = selectedMedia.sourceInUs + (word.startUs - selectedMedia.startUs)
+          protectedIntervals.push({ id: word.id, startUs: sourceUs, endUs: sourceUs })
+        } else if (overlapEndUs > overlapStartUs) {
+          protectedIntervals.push({
+            id: word.id,
+            startUs: selectedMedia.sourceInUs + (overlapStartUs - selectedMedia.startUs),
+            endUs: selectedMedia.sourceInUs + (overlapEndUs - selectedMedia.startUs)
+          })
+        }
+      }
+    }
+  }
+
+  // A previous silence apply gives each segment a deterministic `:silence:`
+  // family.  Gaps between surviving family members are already removed source
+  // ranges.  The fresh analysis is still bounded to the selected current clip.
+  const silenceMarker = selected.id.indexOf(':silence:')
+  const familyPrefix = silenceMarker >= 0 ? selected.id.slice(0, silenceMarker + ':silence:'.length) : null
+  const family = familyPrefix
+    ? project.tracks.flatMap((track) => track.clips).filter((clip): clip is Extract<TimelineClip, { kind: 'video' | 'audio' }> => isMediaClip(clip) && clip.assetId === selectedMedia.assetId && clip.id.startsWith(familyPrefix))
+    : []
+  const alreadyRemovedSourceRanges: SilenceCutRange[] = []
+  const sourceIntervals = family.map((clip) => ({ startUs: clip.sourceInUs, endUs: clip.sourceInUs + clip.durationUs })).sort((left, right) => left.startUs - right.startUs)
+  for (let index = 1; index < sourceIntervals.length; index += 1) {
+    const previous = sourceIntervals[index - 1]
+    const current = sourceIntervals[index]
+    if (previous && current && previous.endUs < current.startUs) alreadyRemovedSourceRanges.push({ startUs: previous.endUs, endUs: current.startUs })
+  }
+  return {
+    selectedClipId,
+    assetId: selectedMedia.assetId,
+    sourceInUs: selectedMedia.sourceInUs,
+    durationUs: selectedMedia.durationUs,
+    protectedIntervals,
+    alreadyRemovedSourceRanges
+  }
 }
 
 const validateKeepRanges = (

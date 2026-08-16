@@ -20,6 +20,7 @@ import { loadAutoCaptionBaselines } from './ai/auto-caption-baseline'
 import type { AutoCaptionSettings } from '../shared/auto-caption-contract'
 import { SubtitleTemplateService } from './subtitle-template-service'
 import { loadAppSettings, setLastUsedSubtitleTemplateId } from './app-settings-service'
+import { SilenceAnalysisService } from './silence-analysis-service'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
@@ -39,6 +40,7 @@ const MEDIA_FILTERS = [
 let mainWindow: BrowserWindow | null = null
 let ffmpegService: FfmpegService | null = null
 let autoCaptionService: AutoCaptionService | null = null
+let silenceAnalysisService: SilenceAnalysisService | null = null
 let subtitleTemplateService: SubtitleTemplateService | null = null
 
 const assertTrustedSender = (event: Electron.IpcMainInvokeEvent): void => {
@@ -54,6 +56,11 @@ const requireService = (): FfmpegService => {
 const requireAutoCaptionService = (): AutoCaptionService => {
   if (!autoCaptionService) throw new Error('自動字幕エンジンの初期化が完了していません。')
   return autoCaptionService
+}
+
+const requireSilenceAnalysisService = (): SilenceAnalysisService => {
+  if (!silenceAnalysisService) throw new Error('無音解析エンジンの初期化が完了していません。')
+  return silenceAnalysisService
 }
 
 const requireSubtitleTemplateService = (): SubtitleTemplateService => {
@@ -176,6 +183,20 @@ const registerIpcHandlers = (): void => {
       throw new Error('字幕overlayの時刻が不正です。')
     }
     return await requireService().renderSubtitleOverlay(validateProject(projectInput), timeUs)
+  })
+
+  ipcMain.handle(IPC.silenceCutReapply, async (event, projectInput: ProjectFile, selectedClipId: unknown, jobId: unknown) => {
+    assertTrustedSender(event)
+    if (typeof selectedClipId !== 'string' || selectedClipId.length > 200 || typeof jobId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/u.test(jobId)) {
+      throw new Error('無音再適用の対象またはjob IDが不正です。')
+    }
+    return await requireSilenceAnalysisService().start(validateProject(projectInput), selectedClipId, jobId)
+  })
+
+  ipcMain.handle(IPC.silenceCutCancel, (event, jobId: unknown) => {
+    assertTrustedSender(event)
+    if (typeof jobId !== 'string' || jobId.length > 160) return false
+    return requireSilenceAnalysisService().cancel(jobId)
   })
 
   ipcMain.handle(IPC.autoCaptionHealth, async (event) => {
@@ -592,6 +613,7 @@ const start = async (): Promise<void> => {
   ffmpegService = await createFfmpegService({
     workspaceRoot: path.join(app.getPath('temp'), 'spectra-video-studio')
   })
+  silenceAnalysisService = new SilenceAnalysisService(ffmpegService.paths, { executor: ffmpegService.executor })
   autoCaptionService = new AutoCaptionService({ appPath: app.getAppPath(), userDataPath: app.getPath('userData') })
   subtitleTemplateService = new SubtitleTemplateService(app.getPath('userData'))
   registerIpcHandlers()

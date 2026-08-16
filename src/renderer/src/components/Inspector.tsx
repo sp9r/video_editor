@@ -396,6 +396,9 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
 
 export default function Inspector(): React.JSX.Element {
   const { project, selectedClipIds } = useEditorStore()
+  const silenceCutReapplyBusy = useEditorStore((state) => state.silenceCutReapplyBusy)
+  const reapplySilenceCut = useEditorStore((state) => state.reapplySilenceCut)
+  const cancelSilenceCutReapply = useEditorStore((state) => state.cancelSilenceCutReapply)
   const transaction = useEditTransaction()
   const clip = findClip(project, selectedClipIds)
   return (
@@ -418,6 +421,15 @@ export default function Inspector(): React.JSX.Element {
               <NumberField {...transaction} label="長さ" suffix="秒" min={0.03} step={0.1} value={(clip.durationUs / 1_000_000).toFixed(2)} onChange={(event) => useEditorStore.getState().trim(clip.id, 'end', clip.startUs + Math.max(33_333, numberValue(event.target.value) * 1_000_000))} />
               {clip.kind === 'subtitle' && <NumberField {...transaction} label="終了" suffix="秒" min={0.03} step={0.1} value={((clip.startUs + clip.durationUs) / 1_000_000).toFixed(2)} onChange={(event) => useEditorStore.getState().trim(clip.id, 'end', Math.max(clip.startUs + 33_333, numberValue(event.target.value) * 1_000_000))} />}
             </div>
+            {(clip.kind === 'video' || clip.kind === 'audio') && <div className="field-grid">
+              <Button
+                className="subtle-button"
+                disabled={silenceCutReapplyBusy}
+                title="現在のsourceInUs・durationUsを対象にFFmpegの無音解析を明示的に再実行"
+                onClick={() => void reapplySilenceCut()}
+              >{silenceCutReapplyBusy ? '無音解析中…' : '無音カットを再適用'}</Button>
+              {silenceCutReapplyBusy && <Button className="subtle-button" onClick={() => void cancelSilenceCutReapply()}>キャンセル</Button>}
+            </div>}
           </Section>
           {hasTransform(clip) && <TransformEditor clip={clip} />}
           {hasAudio(clip) && <AudioEditor clip={clip} />}

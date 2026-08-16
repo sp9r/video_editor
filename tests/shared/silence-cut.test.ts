@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createClipForAsset, createEmptyProject, createTrack, validateProject } from '../../src/shared/project'
-import { applySilenceCutToProject, createSilenceCutTimeMapper, SilenceCutError, mapSourceTimeThroughSilenceCut } from '../../src/shared/silence-cut'
+import { applySilenceCutToProject, buildSilenceReapplyTarget, createSilenceCutTimeMapper, SilenceCutError, mapSourceTimeThroughSilenceCut } from '../../src/shared/silence-cut'
+import { deleteLinkedClips, splitLinkedClip, trimLinkedClip } from '../../src/shared/editing/operations'
 import { DEFAULT_AUDIO, DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile } from '../../src/shared/types'
 
 const asset: MediaAsset = {
@@ -26,6 +27,44 @@ const fixture = (): ProjectFile => {
 }
 
 describe('non-destructive silence cut', () => {
+  it('uses current sourceInUs/durationUs and raw Whisper words, never SubtitleEditUnit, as reapply input', () => {
+    const before = fixture()
+    for (const track of before.tracks) for (const clip of track.clips) {
+      if (clip.id === 'video' || clip.id === 'audio') clip.sourceInUs = 1_000_000
+    }
+    const subtitleTrack = before.tracks.find((track) => track.kind === 'subtitle')!
+    subtitleTrack.clips.push({
+      id: 'raw-caption', name: 'raw caption', kind: 'subtitle', startUs: 1_000_000, durationUs: 4_000_000, sourceInUs: 0,
+      enabled: true, text: '発話', sourceJobId: 'whisper-job', style: structuredClone(DEFAULT_SUBTITLE_STYLE),
+      words: [{ id: 'raw-word', text: '発話', startUs: 2_500_000, endUs: 2_700_000 }],
+      editUnits: [{ id: 'derived-unit', text: '発話', parentSourceWordId: 'raw-word', startUs: 1_000_000, endUs: 4_000_000, timingProvenance: 'estimated' }]
+    })
+    const target = buildSilenceReapplyTarget(before, 'video')
+    expect(target.sourceInUs).toBe(1_000_000)
+    expect(target.durationUs).toBe(4_000_000)
+    expect(target.protectedIntervals).toEqual([{ id: 'raw-word', startUs: 2_500_000, endUs: 2_700_000 }])
+  })
+
+  it('uses the right source range after linked split and trim', () => {
+    const split = splitLinkedClip(fixture(), 'video', 3_000_000)
+    const right = split.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'video:right:3000000')
+    expect(right?.kind).toBe('video')
+    expect(right && buildSilenceReapplyTarget(split, right.id)).toMatchObject({ sourceInUs: 2_000_000, durationUs: 2_000_000 })
+
+    const trimmed = trimLinkedClip(fixture(), 'video', 'start', 2_000_000)
+    expect(buildSilenceReapplyTarget(trimmed, 'video')).toMatchObject({ sourceInUs: 1_000_000, durationUs: 3_000_000 })
+  })
+
+  it('rejects a deleted clip and records an already-cut source gap for a prior cut family', () => {
+    const deleted = deleteLinkedClips(fixture(), ['video'])
+    expect(() => buildSilenceReapplyTarget(deleted, 'video')).toThrow(SilenceCutError)
+
+    const cut = applySilenceCutToProject(fixture(), 'video', { keepRanges: ranges }).project
+    const first = cut.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'video:silence:1')
+    expect(first?.kind).toBe('video')
+    expect(first && buildSilenceReapplyTarget(cut, first.id).alreadyRemovedSourceRanges).toEqual([{ startUs: 1_000_000, endUs: 2_000_000 }])
+  })
+
   it('splits linked A/V with one source plan and ripples the timeline gaplessly', () => {
     const before = fixture()
     const result = applySilenceCutToProject(before, 'video', { keepRanges: ranges })

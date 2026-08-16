@@ -1,4 +1,4 @@
-import type { AutoCaptionBaseline, AutoCaptionProgress, AutoCaptionSettings } from './auto-caption-contract'
+import type { AutoCaptionBaseline, AutoCaptionProgress, AutoCaptionSettings, AutoCaptionSilenceAnalysis } from './auto-caption-contract'
 import type { SubtitleTemplateDraft, SubtitleTemplateLoadResult, UserSubtitleTemplate } from './subtitle-templates'
 import type { AppSettings } from './app-settings'
 
@@ -391,6 +391,14 @@ export interface DesktopApi {
   createPreviewPlan(project: ProjectFile): Promise<PreviewPlan>
   renderAccuratePreviewFrame(project: ProjectFile, timeUs: TimeUs): Promise<AccuratePreviewFrameResult>
   renderSubtitleOverlay(project: ProjectFile, timeUs: TimeUs): Promise<SubtitleOverlayResult>
+  startSilenceCutReapply(project: ProjectFile, selectedClipId: string, jobId: string): Promise<{
+    jobId: string
+    analysis: AutoCaptionSilenceAnalysis
+    protectedIntervals: Array<{ id?: string; startUs: TimeUs; endUs: TimeUs }>
+    alreadyRemovedSourceRanges: Array<{ startUs: TimeUs; endUs: TimeUs }>
+    selectedClipId: string
+  }>
+  cancelSilenceCutReapply(jobId: string): Promise<boolean>
   autoCaptionHealth(): Promise<AutoCaptionHealth>
   startAutoCaption(project: ProjectFile, selectedClipIds: string[], settings?: AutoCaptionSettings): Promise<AutoCaptionStartResult>
   cancelAutoCaption(jobId: string): Promise<boolean>

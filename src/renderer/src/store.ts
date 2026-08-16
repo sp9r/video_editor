@@ -48,6 +48,9 @@ interface EditorState {
   notice: Notice | null
   autoCaptionProgress: AutoCaptionProgress | null
   autoCaptionJobId: string | null
+  silenceCutReapplyJobId: string | null
+  silenceCutReapplyCancelledJobId: string | null
+  silenceCutReapplyBusy: boolean
   userSubtitleTemplates: UserSubtitleTemplate[]
   defaultSubtitleTemplateId: string
   autoCaptionSettingsSeed: Pick<AutoCaptionSettings, 'maxChars' | 'maxLines' | 'segmentationMode'>
@@ -75,6 +78,8 @@ interface EditorState {
   addAssetClip(assetId: string, trackId: string, atUs: TimeUs): void
   autoCaptionSelected(settings?: AutoCaptionSettings): Promise<AutoCaptionApplySummary | null>
   cancelAutoCaption(): Promise<void>
+  reapplySilenceCut(): Promise<boolean>
+  cancelSilenceCutReapply(): Promise<void>
   setUserSubtitleTemplates(templates: UserSubtitleTemplate[]): void
   setDefaultSubtitleTemplateId(id: string): void
   setAutoCaptionSettingsSeed(settings: Pick<AutoCaptionSettings, 'maxChars' | 'maxLines' | 'segmentationMode'>): void
@@ -170,6 +175,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   notice: null,
   autoCaptionProgress: null,
   autoCaptionJobId: null,
+  silenceCutReapplyJobId: null,
+  silenceCutReapplyCancelledJobId: null,
+  silenceCutReapplyBusy: false,
   userSubtitleTemplates: [],
   defaultSubtitleTemplateId: 'default',
   autoCaptionSettingsSeed: { maxChars: 32, maxLines: 2, segmentationMode: 'auto' },
@@ -201,6 +209,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       transactionBase: null,
       autoCaptionProgress: null,
       autoCaptionJobId: null,
+      silenceCutReapplyJobId: null,
+      silenceCutReapplyCancelledJobId: null,
+      silenceCutReapplyBusy: false,
       fullCorrectionSession: null,
       fullCorrectionResult: null
     }))
@@ -437,6 +448,54 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       get().showNotice(`自動字幕を生成できませんでした: ${errorMessage}`, 'error')
       return null
     }
+  },
+  reapplySilenceCut: async () => {
+    const current = get()
+    if (current.silenceCutReapplyBusy) return false
+    if (!window.spectra) {
+      current.showNotice('無音カットの再適用はElectron環境で利用できます。', 'warning')
+      return false
+    }
+    const selected = current.project.tracks.flatMap((track) => track.clips).find((clip) => current.selectedClipIds.includes(clip.id) && (clip.kind === 'video' || clip.kind === 'audio'))
+    if (!selected || (selected.kind !== 'video' && selected.kind !== 'audio')) {
+      current.showNotice('映像または音声クリップを1つ選択してください。', 'warning')
+      return false
+    }
+    const project = current.project
+    const jobId = makeId('silence-reapply')
+    set({ silenceCutReapplyJobId: jobId, silenceCutReapplyCancelledJobId: null, silenceCutReapplyBusy: true })
+    try {
+      const result = await window.spectra.startSilenceCutReapply(project, selected.id, jobId)
+      if (projectFingerprint(get().project) !== projectFingerprint(project)) throw new Error('無音解析中にプロジェクトが変更されました。結果は適用していません。')
+      if (result.selectedClipId !== selected.id || result.jobId !== jobId) throw new Error('無音再適用の結果identityが不正です。')
+      if (get().silenceCutReapplyCancelledJobId === jobId) throw new Error('無音再適用をキャンセルしました。')
+      if (result.analysis.removedDurationUs === 0) {
+        get().showNotice('現在のクリップに再適用できる無音区間はありません。', 'info')
+        return true
+      }
+      const applied = applySilenceCutToProject(project, selected.id, result.analysis, { protectedIntervals: result.protectedIntervals })
+      if (applied.summary.removedDurationUs === 0 || applied.project === project) {
+        get().showNotice('現在のクリップに再適用できる無音区間はありません。', 'info')
+        return true
+      }
+      const firstTarget = applied.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === `${selected.id}:silence:1`)
+      get().applyProject(applied.project, firstTarget ? { selectClipId: firstTarget.id } : undefined)
+      get().showNotice(`無音カットを再適用しました（${(applied.summary.removedDurationUs / 1_000_000).toFixed(2)}秒短縮）。`, 'success')
+      return true
+    } catch (error) {
+      get().showNotice(`無音カットを再適用できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      return false
+    } finally {
+      set((state) => state.silenceCutReapplyJobId === jobId
+        ? { silenceCutReapplyJobId: null, silenceCutReapplyCancelledJobId: null, silenceCutReapplyBusy: false }
+        : state)
+    }
+  },
+  cancelSilenceCutReapply: async () => {
+    const jobId = get().silenceCutReapplyJobId
+    if (!jobId || !window.spectra) return
+    set({ silenceCutReapplyCancelledJobId: jobId })
+    await window.spectra.cancelSilenceCutReapply(jobId)
   },
   cancelAutoCaption: async () => {
     const jobId = get().autoCaptionJobId

@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { addClipToTrack, createClipForAsset, createEmptyProject, createTrack, validateProject } from '../../src/shared/project'
 import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
-import { DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile, type SubtitleClip, type TimelineClip } from '../../src/shared/types'
+import { DEFAULT_SUBTITLE_STYLE, type DesktopApi, type MediaAsset, type ProjectFile, type SubtitleClip, type TimelineClip } from '../../src/shared/types'
 import { useEditorStore } from '../../src/renderer/src/store'
 
 const asset: MediaAsset = {
@@ -30,6 +30,117 @@ const collisionFixture = (): ProjectFile => {
 }
 
 describe('editor history and linked selection', () => {
+  it('applies explicit silence reapply as one undo/redo transaction', async () => {
+    const project = fixture()
+    const before = structuredClone(project)
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('video')
+    window.spectra = {
+      startSilenceCutReapply: vi.fn(async (_project, selectedClipId, jobId) => ({
+        jobId, selectedClipId,
+        analysis: {
+          silences: [{ startUs: 1_500_000, endUs: 2_500_000, durationUs: 1_000_000 }],
+          keepRanges: [{ startUs: 0, endUs: 1_400_000, durationUs: 1_400_000 }, { startUs: 1_600_000, endUs: 4_000_000, durationUs: 2_400_000 }],
+          removedDurationUs: 200_000,
+          settings: { profile: 'natural', minSilenceUs: 600_000, retainPauseUs: 180_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false },
+          diagnostics: []
+        }, protectedIntervals: [], alreadyRemovedSourceRanges: []
+      }))
+    } as unknown as DesktopApi
+    expect(await useEditorStore.getState().reapplySilenceCut()).toBe(true)
+    const after = structuredClone(useEditorStore.getState().project)
+    expect(useEditorStore.getState().past).toHaveLength(1)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().project).toEqual(before)
+    useEditorStore.getState().redo()
+    expect(useEditorStore.getState().project).toEqual(after)
+  })
+
+  it('keeps Project and history unchanged on silence reapply failure', async () => {
+    const project = fixture()
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('video')
+    window.spectra = { startSilenceCutReapply: vi.fn().mockRejectedValue(new Error('FFmpeg failed')) } as unknown as DesktopApi
+    const before = structuredClone(useEditorStore.getState().project)
+    expect(await useEditorStore.getState().reapplySilenceCut()).toBe(false)
+    expect(useEditorStore.getState().project).toEqual(before)
+    expect(useEditorStore.getState().past).toHaveLength(0)
+  })
+
+  it('treats a full keep analysis as a no-op without creating history', async () => {
+    const project = fixture()
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('video')
+    const before = structuredClone(useEditorStore.getState().project)
+    window.spectra = {
+      startSilenceCutReapply: vi.fn(async (_project, selectedClipId, jobId) => ({
+        jobId, selectedClipId,
+        analysis: {
+          silences: [], keepRanges: [{ startUs: 0, endUs: 4_000_000, durationUs: 4_000_000 }], removedDurationUs: 0,
+          settings: { profile: 'natural', minSilenceUs: 600_000, retainPauseUs: 180_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false }, diagnostics: []
+        }, protectedIntervals: [], alreadyRemovedSourceRanges: []
+      }))
+    } as unknown as DesktopApi
+    expect(await useEditorStore.getState().reapplySilenceCut()).toBe(true)
+    expect(useEditorStore.getState().project).toEqual(before)
+    expect(useEditorStore.getState().past).toHaveLength(0)
+  })
+
+  it('keeps Project and history unchanged when explicit reapply is cancelled', async () => {
+    const project = fixture()
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('video')
+    const before = structuredClone(useEditorStore.getState().project)
+    let rejectStart: ((reason?: unknown) => void) | undefined
+    const cancel = vi.fn(async () => {
+      rejectStart?.(new Error('無音再適用をキャンセルしました。'))
+      return true
+    })
+    window.spectra = {
+      startSilenceCutReapply: vi.fn((_project, _selectedClipId, _jobId) => new Promise((_resolve, reject) => { rejectStart = reject })),
+      cancelSilenceCutReapply: cancel
+    } as unknown as DesktopApi
+    const pending = useEditorStore.getState().reapplySilenceCut()
+    await Promise.resolve()
+    await useEditorStore.getState().cancelSilenceCutReapply()
+    expect(await pending).toBe(false)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(useEditorStore.getState().project).toEqual(before)
+    expect(useEditorStore.getState().past).toHaveLength(0)
+  })
+
+  it('does not apply a late reapply result after cancellation', async () => {
+    const project = fixture()
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('video')
+    const before = structuredClone(useEditorStore.getState().project)
+    let resolveStart: ((value: Awaited<ReturnType<NonNullable<DesktopApi['startSilenceCutReapply']>>>) => void) | undefined
+    const start = vi.fn(() => new Promise<Awaited<ReturnType<NonNullable<DesktopApi['startSilenceCutReapply']>>>>((resolve) => { resolveStart = resolve }))
+    const cancel = vi.fn(async () => true)
+    window.spectra = { startSilenceCutReapply: start, cancelSilenceCutReapply: cancel } as unknown as DesktopApi
+    const pending = useEditorStore.getState().reapplySilenceCut()
+    await Promise.resolve()
+    const jobId = useEditorStore.getState().silenceCutReapplyJobId
+    await useEditorStore.getState().cancelSilenceCutReapply()
+    resolveStart?.({
+      jobId: jobId ?? 'silence-reapply-late',
+      selectedClipId: 'video',
+      analysis: {
+        silences: [{ startUs: 1_500_000, endUs: 2_500_000, durationUs: 1_000_000 }],
+        keepRanges: [{ startUs: 0, endUs: 1_400_000, durationUs: 1_400_000 }, { startUs: 1_600_000, endUs: 4_000_000, durationUs: 2_400_000 }],
+        removedDurationUs: 200_000,
+        settings: { profile: 'natural', minSilenceUs: 600_000, retainPauseUs: 180_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false },
+        diagnostics: []
+      },
+      protectedIntervals: [],
+      alreadyRemovedSourceRanges: []
+    })
+    expect(await pending).toBe(false)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(useEditorStore.getState().project).toEqual(before)
+    expect(useEditorStore.getState().past).toHaveLength(0)
+  })
+
   it('turns an intentional subtitle collision into a warning without mutating editor state', () => {
     useEditorStore.getState().loadProject(collisionFixture())
     useEditorStore.getState().clearNotice()

@@ -16,6 +16,8 @@ export const IPC = {
   previewPlan: 'preview:plan',
   previewAccurateFrame: 'preview:accurate-frame',
   previewSubtitleOverlay: 'preview:subtitle-overlay',
+  silenceCutReapply: 'silence-cut:reapply',
+  silenceCutCancel: 'silence-cut:cancel',
   autoCaptionHealth: 'auto-caption:health',
   autoCaptionStart: 'auto-caption:start',
   autoCaptionCancel: 'auto-caption:cancel',
