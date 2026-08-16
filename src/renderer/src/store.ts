@@ -341,13 +341,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       let silenceSummary: ReturnType<typeof applySilenceCutToProject>['summary'] | undefined
       if (silenceAnalysis) {
         sourceTimeMapper = createSilenceCutTimeMapper(selectedClip, silenceAnalysis.keepRanges)
-        const silenceApplied = applySilenceCutToProject(project, selectedClip.id, silenceAnalysis, {
-          timeMapper: sourceTimeMapper,
-          protectedIntervals: result.rawWords.map((word) => ({ id: word.id, startUs: word.startUs, endUs: word.endUs }))
-        })
-        applyProject = silenceApplied.project
-        captionClip = silenceApplied.sourceClip
-        silenceSummary = silenceApplied.summary
+        const isNoOpSilencePlan = silenceAnalysis.removedDurationUs === 0
+          && silenceAnalysis.keepRanges.length === 1
+          && silenceAnalysis.keepRanges[0]?.startUs === selectedClip.sourceInUs
+          && silenceAnalysis.keepRanges[0]?.endUs === selectedClip.sourceInUs + selectedClip.durationUs
+        if (isNoOpSilencePlan) {
+          silenceSummary = {
+            selectedClipId: selectedClip.id,
+            affectedClipIds: [selectedClip.id],
+            segmentCount: 1,
+            removedDurationUs: 0,
+            keepRanges: silenceAnalysis.keepRanges
+          }
+        } else {
+          const silenceApplied = applySilenceCutToProject(project, selectedClip.id, silenceAnalysis, {
+            timeMapper: sourceTimeMapper,
+            protectedIntervals: result.rawWords.map((word) => ({ id: word.id, startUs: word.startUs, endUs: word.endUs }))
+          })
+          applyProject = silenceApplied.project
+          captionClip = silenceApplied.sourceClip
+          silenceSummary = silenceApplied.summary
+        }
       }
       const userSubtitleTemplates = get().userSubtitleTemplates
       const applied = applyAutoCaptionResultToProject(applyProject, captionClip, result, {
