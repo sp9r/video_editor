@@ -59,6 +59,10 @@ describe('auto-caption worker contract draft', () => {
     expect(() => parseAutoCaptionRequest({ ...request(), subtitleTemplate: '../unknown' })).toThrow()
   })
 
+  it('accepts the YouTube jump-cut silence profile', () => {
+    expect(parseAutoCaptionRequest({ ...request(), silenceCut: 'youtube' })).toMatchObject({ silenceCut: 'youtube' })
+  })
+
   it('validates word ownership, provenance, diagnostics, and fallback', () => {
     expect(parseAutoCaptionResult(result()).captions[0]?.sourceWordIds).toEqual(['word-1', 'word-2'])
     expect(() => parseAutoCaptionResult({ ...result(), captions: [{ ...result().captions[0], sourceWordIds: ['missing'] }] })).toThrow()

@@ -195,7 +195,7 @@ describe('automatic caption insertion', () => {
     } as unknown as DesktopApi
 
     const summary = await useEditorStore.getState().autoCaptionSelected()
-    expect(summary).toMatchObject({ silenceCount: 0, removedDurationUs: 1_000_000, templateId: 'default' })
+    expect(summary).toMatchObject({ silenceCount: 0, removedDurationUs: 1_000_000, templateId: 'default', silenceStatus: 'executed', originalDurationUs: 4_000_000, editedDurationUs: 3_000_000 })
     const state = useEditorStore.getState()
     const mediaClips = state.project.tracks.flatMap((track) => track.clips).filter((clip) => clip.kind === 'video')
     expect(mediaClips.map((clip) => [clip.sourceInUs, clip.durationUs, clip.startUs])).toEqual([[0, 1_000_000, 0], [2_000_000, 2_000_000, 1_000_000]])
@@ -242,7 +242,7 @@ describe('automatic caption insertion', () => {
     } as unknown as DesktopApi
 
     const summary = await useEditorStore.getState().autoCaptionSelected()
-    expect(summary).toMatchObject({ removedDurationUs: 0, captionCount: 1 })
+    expect(summary).toMatchObject({ removedDurationUs: 0, captionCount: 1, silenceStatus: 'skipped', silenceProfile: 'natural' })
     const state = useEditorStore.getState()
     expect(state.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'existing-caption-no-op')).toBeTruthy()
     expect(state.project.tracks.filter((track) => track.kind === 'subtitle')).toHaveLength(2)

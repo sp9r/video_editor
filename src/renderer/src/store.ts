@@ -125,6 +125,12 @@ export interface AutoCaptionApplySummary {
   whisperBackend: string
   templateId: string
   silenceCutSkipped?: boolean
+  silenceStatus: 'executed' | 'off' | 'no-op' | 'skipped'
+  silenceProfile: string
+  silenceCandidateCount: number
+  actualCutCount: number
+  originalDurationUs: number
+  editedDurationUs: number
 }
 
 const HISTORY_LIMIT = 80
@@ -402,7 +408,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         removedDurationUs: silenceSummary?.removedDurationUs ?? silenceAnalysis?.removedDurationUs ?? 0,
         whisperBackend: describeAutoCaptionBackend(result),
         templateId: settings?.subtitleTemplate ?? 'default',
-        silenceCutSkipped
+        silenceCutSkipped,
+        silenceStatus: silenceCutSkipped ? 'skipped' : !silenceAnalysis ? 'off' : (silenceSummary?.removedDurationUs ?? silenceAnalysis.removedDurationUs) > 0 ? 'executed' : 'no-op',
+        silenceProfile: silenceAnalysis?.settings.profile ?? settings?.silenceCut ?? 'off',
+        silenceCandidateCount: silenceAnalysis?.silences.length ?? 0,
+        actualCutCount: silenceAnalysis?.silences.reduce((count, silence) => count + (silence.removedRanges?.filter((range) => range.endUs > range.startUs).length ?? ((silenceSummary?.removedDurationUs ?? 0) > 0 ? 1 : 0)), 0) ?? 0,
+        originalDurationUs: projectDurationUs(project),
+        editedDurationUs: projectDurationUs(applied.project)
       }
       set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 1, message: '字幕を配置しました。', result }, autoCaptionJobId: null })
       const silenceNotice = silenceCutSkipped

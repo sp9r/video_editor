@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { createEmptyProject } from '../../shared/project'
 import type { AutoCaptionSettings } from '../../shared/auto-caption-contract'
-import { autoCaptionFailureStage, autoCaptionProgressStage, autoCaptionStageLabel, formatDurationUs } from '../../shared/auto-caption-ui'
+import { autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressStage, autoCaptionStageLabel, formatClockDurationUs, formatDurationUs, silenceCutProfileLabel } from '../../shared/auto-caption-ui'
 import { getSubtitleTemplate, getSubtitleTemplateSettings, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { EncoderReport, ProjectFile } from '../../shared/types'
 import { BrandMark } from './components/Brand'
@@ -561,7 +561,7 @@ export default function App(): React.JSX.Element {
                 <>
                   {selectedCaptionClip && (selectedCaptionClip.kind === 'video' || selectedCaptionClip.kind === 'audio') && <div className="caption-target"><span>対象clip</span><strong>{selectedCaptionClip.name}</strong></div>}
                   <label className="field"><span className="field-label">自動字幕</span><select disabled={captioning} value={autoCaptionEnabled ? 'on' : 'off'} onChange={(event) => setAutoCaptionEnabled(event.target.value === 'on')}><option value="on">ON</option><option value="off">OFF</option></select></label>
-                  <label className="field"><span className="field-label">無音カット</span><select disabled={captioning} value={captionSettings.silenceCut ?? 'natural'} onChange={(event) => setCaptionSettings((current) => ({ ...current, silenceCut: event.target.value as AutoCaptionSettings['silenceCut'] }))}><option value="off">OFF</option><option value="natural">自然</option><option value="strong">強め</option></select></label>
+                  <label className="field"><span className="field-label">無音カット</span><select disabled={captioning} value={captionSettings.silenceCut ?? 'natural'} onChange={(event) => setCaptionSettings((current) => ({ ...current, silenceCut: event.target.value as AutoCaptionSettings['silenceCut'] }))}><option value="off">OFF</option><option value="natural">自然</option><option value="strong">強め</option><option value="youtube">YouTubeジャンプカット</option></select></label>
                   <label className="field"><span className="field-label">処理デバイス</span><select disabled={captioning} value={captionSettings.accelerationMode ?? 'auto'} onChange={(event) => setCaptionSettings((current) => ({ ...current, accelerationMode: event.target.value as AutoCaptionSettings['accelerationMode'] }))}><option value="auto">自動（推奨）</option><option value="gpu">GPU優先</option><option value="cpu">CPU</option></select></label>
                   <label className="field"><span className="field-label">言語</span><select disabled={captioning} value={captionSettings.language} onChange={(event) => setCaptionSettings((current) => ({ ...current, language: event.target.value }))}><option value="ja">日本語</option><option value="auto">自動判定</option></select></label>
                   <label className="field"><span className="field-label">最大文字数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={10000} value={captionSettings.maxChars} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxChars: Math.max(1, Math.min(10000, Number(event.target.value) || 32)) }))} /><span>文字</span></span></label>
@@ -575,19 +575,21 @@ export default function App(): React.JSX.Element {
                     <div className={`caption-progress ${autoCaptionProgress.state === 'failed' ? 'stage-failed' : ''}`} aria-live="polite">
                       <div className="progress-heading"><strong>{captionProgressStageLabel}</strong><span>{Math.round(autoCaptionProgress.ratio * 100)}%</span></div>
                       <div className="progress-track"><i style={{ width: `${Math.max(0, Math.min(100, autoCaptionProgress.ratio * 100))}%` }} /></div>
-                      <small>{autoCaptionProgress.message}</small>
+                      <small>{autoCaptionProgressMessage(autoCaptionProgress)}</small>
                     </div>
                   )}
                   {autoCaptionProgress?.state === 'failed' && !captionSummary && <div className="caption-failure" role="alert">
                     <strong>{captionProgressStageLabel}で失敗しました</strong>
-                    <span>{autoCaptionProgress.message}</span>
+                    <span>{autoCaptionProgressMessage(autoCaptionProgress)}</span>
                     {autoCaptionProgress.errorCode && <small>診断コード: {autoCaptionProgress.errorCode}</small>}
                   </div>}
                   {captionSummary && <div className="caption-success" role="status">
                     <strong>自動処理が完了しました</strong>
                     <span>字幕 {captionSummary.captionCount}件・raw word {captionSummary.rawWordCount}件</span>
                     <span>Whisper: {captionSummary.whisperBackend} · template: {captionSummary.templateId}</span>
-                    <span>{captionSummary.silenceCutSkipped ? '無音解析: 既存字幕を保持するため再カットをスキップ' : `無音解析: ${captionSummary.silenceCount}件・${formatDurationUs(captionSummary.removedDurationUs)}短縮`}</span>
+                    <span>無音カット: {captionSummary.silenceStatus === 'executed' ? '実行済み' : captionSummary.silenceStatus === 'no-op' ? 'no-op（条件を満たす区間なし）' : captionSummary.silenceStatus === 'skipped' ? '既存字幕保護のためスキップ' : 'OFF'} · {silenceCutProfileLabel(captionSummary.silenceProfile)}</span>
+                    <span>検出候補 {captionSummary.silenceCandidateCount}箇所・実際のカット {captionSummary.actualCutCount}箇所・削除 {formatDurationUs(captionSummary.removedDurationUs)}</span>
+                    <span>元の長さ {formatClockDurationUs(captionSummary.originalDurationUs)} → 編集後 {formatClockDurationUs(captionSummary.editedDurationUs)}</span>
                     {captionSummary.fallbackUsed && <span>字幕区切り: ルールfallbackを使用</span>}
                   </div>}
                 </>

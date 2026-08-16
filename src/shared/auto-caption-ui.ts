@@ -13,6 +13,35 @@ export const autoCaptionStageLabel = (stage: AutoCaptionUiStage): string => {
   }
 }
 
+export const autoCaptionProgressMessage = (progress: Pick<AutoCaptionProgress, 'state' | 'errorCode'>): string => {
+  switch (progress.state) {
+    case 'preparing': return '音声を準備しています…'
+    case 'transcribing': return 'Whisperで文字起こししています…'
+    case 'silence_analyzing': return '無音区間を検出しています…'
+    case 'segmenting': return '字幕を区切っています…'
+    case 'completed': return '字幕をTimelineへ配置しています…'
+    case 'failed': return progress.errorCode === 'CANCELLED' ? '自動処理をキャンセルしました。' : '自動処理に失敗しました。詳細は失敗ステージを確認してください。'
+  }
+}
+
+export const silenceCutProfileLabel = (profile: string | undefined): string => {
+  switch (profile) {
+    case 'natural': return 'Natural（自然）'
+    case 'strong': return 'Strong（強め）'
+    case 'youtube': return 'YouTubeジャンプカット'
+    case 'off': return 'OFF'
+    default: return profile ?? '未実行'
+  }
+}
+
+export const formatClockDurationUs = (durationUs: number): string => {
+  const totalSeconds = Math.max(0, Math.round(durationUs / 1_000_000))
+  const hours = Math.floor(totalSeconds / 3_600)
+  const minutes = Math.floor((totalSeconds % 3_600) / 60)
+  const seconds = totalSeconds % 60
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
 export const autoCaptionProgressStage = (progress: Pick<AutoCaptionProgress, 'state'>): AutoCaptionUiStage => {
   switch (progress.state) {
     case 'preparing': return 'preparing'

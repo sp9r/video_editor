@@ -829,6 +829,10 @@ select {
 .template-readonly-name { display: grid; gap: 3px; margin-bottom: 12px; color: var(--text-muted); font-size: 10px; }
 .template-readonly-name strong { color: var(--text); font-size: 13px; }
 .template-detail-section { display: grid; gap: 8px; margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line); }
+.template-style-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.template-style-editor .checkbox-field { display: flex; align-items: center; gap: 7px; min-height: 31px; color: var(--text-muted); font-size: 10px; }
+.template-style-editor .checkbox-field input { accent-color: var(--accent); }
+.template-detail-section textarea { width: 100%; resize: vertical; }
 .template-detail-section > strong { color: var(--text-muted); font-size: 11px; }
 .template-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .template-detail-grid > div { display: grid; gap: 3px; min-width: 0; padding: 7px; background: #12161b; border: 1px solid var(--line-soft); border-radius: 4px; }

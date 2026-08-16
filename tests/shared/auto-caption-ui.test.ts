@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { autoCaptionFailureStage, autoCaptionProgressStage, autoCaptionStageLabel, describeAutoCaptionBackend, formatDurationUs } from '../../src/shared/auto-caption-ui'
+import { autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressStage, autoCaptionStageLabel, describeAutoCaptionBackend, formatClockDurationUs, formatDurationUs, silenceCutProfileLabel } from '../../src/shared/auto-caption-ui'
 import type { AutoCaptionProgress, AutoCaptionResult } from '../../src/shared/auto-caption-contract'
 
 const result = (diagnostics: AutoCaptionResult['diagnostics']): AutoCaptionResult => ({
@@ -32,5 +32,8 @@ describe('auto-caption product status helpers', () => {
     ]))).toBe('CUDA / float16')
     expect(describeAutoCaptionBackend(result([]))).toBe('Whisper（backend情報なし）')
     expect(formatDurationUs(1_250_000)).toBe('1.25秒')
+    expect(formatClockDurationUs(65_000_000)).toBe('1:05')
+    expect(silenceCutProfileLabel('youtube')).toBe('YouTubeジャンプカット')
+    expect(autoCaptionProgressMessage({ state: 'silence_analyzing' })).toBe('無音区間を検出しています…')
   })
 })
