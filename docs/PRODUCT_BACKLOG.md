@@ -190,6 +190,15 @@
 
 **Human acceptance:** 実動画で字幕境界guideの位置と、subtitle split / trim後の追従を確認する。
 
+**Implemented (Stage 29.4 / UX-TL-004B):**
+
+- hoverまたはselectしたvideo/subtitle clipを起点に、現在のTimeline上で正の時間的overlapを持つ相手候補を相互highlight。
+- 複数のvideo候補がある場合はすべて表示し、単一の正解linkを推定しない。
+- 通常時に追加DOMを生成せず、hover/select中だけ候補表示。
+- candidate relationは表示時の派生情報であり、data model、`linkGroupId`、永続video/subtitle linkは変更しない。
+
+**Human acceptance:** 複数video候補を含む実動画で、hover/select時の候補highlightが意図どおり表示され、subtitle trackの編集操作を妨げないこと。
+
 ### UX-TL-005 — Ruler drag scrubbing
 
 **Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`

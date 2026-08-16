@@ -684,6 +684,10 @@ select {
 .timeline-clip.clip-subtitle { color: #fff7e8; background: linear-gradient(180deg, #936735, #65451f); border-color: #d09a56; }
 .timeline-clip.clip-image { color: #efe8ff; background: linear-gradient(180deg, #6c5795, #4d3d70); border-color: #9277c1; }
 .timeline-clip.is-selected { z-index: 3; border-color: #ffffff; box-shadow: 0 0 0 2px var(--mint), 0 3px 10px rgb(0 0 0 / .45); }
+.timeline-clip.is-candidate-source { z-index: 4; border-color: #fff2b2; box-shadow: 0 0 0 2px rgb(255 242 178 / .72), 0 3px 10px rgb(0 0 0 / .4); }
+.timeline-clip.is-candidate-related { z-index: 3; border-color: #ffe18c; box-shadow: 0 0 0 2px rgb(255 225 140 / .62), 0 3px 10px rgb(0 0 0 / .35); }
+.timeline-clip.is-selected.is-candidate-source { border-color: #ffffff; box-shadow: 0 0 0 2px var(--mint), 0 0 0 4px rgb(255 242 178 / .55), 0 3px 10px rgb(0 0 0 / .45); }
+.timeline-clip.is-selected.is-candidate-related { border-color: #ffffff; box-shadow: 0 0 0 2px var(--mint), 0 0 0 4px rgb(255 225 140 / .45), 0 3px 10px rgb(0 0 0 / .45); }
 .timeline-clip.is-linked { border-style: dashed; }
 .timeline-clip.is-linked .clip-link-icon { color: #ffffff; filter: drop-shadow(0 0 2px rgb(0 0 0 / .6)); }
 .timeline-clip.is-disabled { opacity: .35; filter: grayscale(.65); }

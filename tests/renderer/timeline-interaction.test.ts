@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryGuidesForVideoClip, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineScrubTimeUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
+import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryGuidesForVideoClip, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineCandidateRelationIds, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineScrubTimeUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
 import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
 
@@ -124,5 +124,18 @@ describe('timeline interaction guards', () => {
       { subtitleId: 'inside', side: 'end', timeUs: 16_000_000, leftPercent: 60 },
       { subtitleId: 'overlap-and-after', side: 'start', timeUs: 18_000_000, leftPercent: 80 }
     ])
+  })
+
+  it('derives reciprocal video/subtitle candidates from positive timeline overlap', () => {
+    const videoA = { id: 'video-a', kind: 'video' as const, startUs: 0, durationUs: 10_000_000 }
+    const videoB = { id: 'video-b', kind: 'video' as const, startUs: 4_000_000, durationUs: 4_000_000 }
+    const subtitle = { id: 'subtitle', kind: 'subtitle' as const, startUs: 2_000_000, durationUs: 3_000_000 }
+    const touching = { id: 'touching', kind: 'subtitle' as const, startUs: 10_000_000, durationUs: 1_000_000 }
+    const unrelated = { id: 'unrelated', kind: 'subtitle' as const, startUs: 20_000_000, durationUs: 1_000_000 }
+    const clips = [videoA, videoB, subtitle, touching, unrelated]
+
+    expect(timelineCandidateRelationIds(subtitle, clips)).toEqual(['video-a', 'video-b'])
+    expect(timelineCandidateRelationIds(videoA, clips)).toEqual(['video-b', 'subtitle'])
+    expect(timelineCandidateRelationIds(touching, clips)).toEqual([])
   })
 })

@@ -100,6 +100,18 @@ export const subtitleBoundaryGuidesForVideoClip = (
   return guides
 }
 
+export const timelineCandidateRelationIds = (
+  focusedClip: Pick<TimelineClip, 'id' | 'kind' | 'startUs' | 'durationUs'>,
+  clips: readonly Pick<TimelineClip, 'id' | 'kind' | 'startUs' | 'durationUs'>[]
+): string[] => {
+  if ((focusedClip.kind !== 'video' && focusedClip.kind !== 'subtitle') || focusedClip.durationUs <= 0) return []
+  const focusedEndUs = focusedClip.startUs + focusedClip.durationUs
+  return clips
+    .filter((candidate) => candidate.id !== focusedClip.id && (candidate.kind === 'video' || candidate.kind === 'subtitle') && candidate.durationUs > 0)
+    .filter((candidate) => candidate.startUs < focusedEndUs && candidate.startUs + candidate.durationUs > focusedClip.startUs)
+    .map((candidate) => candidate.id)
+}
+
 export const timelineSplitMenuState = (clip: TimelineClip | undefined, locked = false): { disabled: boolean; label: string } => {
   if (!clip) return { disabled: true, label: '分割対象がありません' }
   if (locked) return { disabled: true, label: 'ロック中のため分割不可' }
@@ -320,6 +332,7 @@ export default function Timeline(): React.JSX.Element {
   const [subtitleBoundaryDrag, setSubtitleBoundaryDrag] = useState<SubtitleBoundaryDrag | null>(null)
   const [razorGhost, setRazorGhost] = useState<RazorGhost | null>(null)
   const [mergeHoverKey, setMergeHoverKey] = useState<string | null>(null)
+  const [hoveredClipId, setHoveredClipId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; clipId: string } | null>(null)
   const [viewportWindow, setViewportWindow] = useState({ scrollLeft: 0, clientWidth: 0 })
   const viewportUpdateRaf = useRef<number | null>(null)
@@ -329,6 +342,20 @@ export default function Timeline(): React.JSX.Element {
   const subtitleClips = useMemo(() => project.tracks
     .filter((track) => track.kind === 'subtitle' && !track.hidden)
     .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && clip.enabled)), [project])
+  const candidateRelationClips = useMemo(() => project.tracks
+    .filter((track) => !track.hidden)
+    .flatMap((track) => track.clips.filter((clip) => (clip.kind === 'video' || clip.kind === 'subtitle') && clip.enabled)), [project])
+  const candidateFocusIds = hoveredClipId ? [hoveredClipId] : selectedClipIds
+  const candidateRelationIds = useMemo(() => {
+    const related = new Set<string>()
+    for (const focusId of candidateFocusIds) {
+      const focus = candidateRelationClips.find((clip) => clip.id === focusId)
+      if (!focus) continue
+      related.add(focus.id)
+      for (const id of timelineCandidateRelationIds(focus, candidateRelationClips)) related.add(id)
+    }
+    return related
+  }, [candidateFocusIds, candidateRelationClips])
   const contextClip = contextMenu ? project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === contextMenu.clipId) : undefined
   const contextTrack = contextClip ? project.tracks.find((track) => track.clips.some((clip) => clip.id === contextClip.id)) : undefined
   const contextSplitMenu = timelineSplitMenuState(contextClip, contextTrack?.locked ?? false)
@@ -716,6 +743,8 @@ export default function Timeline(): React.JSX.Element {
                   const visualLeft = clip.startUs / 1_000_000 * zoomPxPerSecond + (edit?.mode === 'move' ? deltaPx : edit?.mode === 'trim-start' ? deltaPx : 0)
                   const visualWidth = clip.durationUs / 1_000_000 * zoomPxPerSecond + (edit?.mode === 'trim-start' ? -deltaPx : edit?.mode === 'trim-end' ? deltaPx : 0)
                   const selected = selectedClipIds.includes(clip.id)
+                  const candidateSource = candidateRelationIds.has(clip.id) && candidateFocusIds.includes(clip.id)
+                  const candidateRelated = candidateRelationIds.has(clip.id) && !candidateSource
                   const clipKindLabel = clip.kind === 'subtitle' ? '字幕' : clip.kind === 'audio' ? '音声' : '映像'
                   const viewportWidth = viewportWindow.clientWidth > 0 ? viewportWindow.clientWidth : 900
                   const clipVisible = visualLeft + visualWidth >= viewportWindow.scrollLeft - 128 && visualLeft <= viewportWindow.scrollLeft + viewportWidth + 128
@@ -725,7 +754,7 @@ export default function Timeline(): React.JSX.Element {
                   return (
                     <div
                       key={clip.id}
-                      className={`${timelineClipClassName(clip, selected)}${edit ? ' is-dragging' : ''}`}
+                      className={`${timelineClipClassName(clip, selected)}${edit ? ' is-dragging' : ''}${candidateSource ? ' is-candidate-source' : ''}${candidateRelated ? ' is-candidate-related' : ''}`}
                       style={{ left: Math.max(0, visualLeft), width: Math.max(8, visualWidth) }}
                       onPointerDown={(event) => beginPointerEdit(event, clip, 'move', track.id)}
                       onPointerMove={(event) => {
@@ -736,7 +765,13 @@ export default function Timeline(): React.JSX.Element {
                         const timeUs = index === null || !units?.[index + 1] ? null : units[index + 1]!.startUs
                         setRazorGhost(timeUs === null || index === null ? null : { clipId: clip.id, timeUs, boundaryIndex: index })
                       }}
-                      onPointerLeave={() => setRazorGhost((current) => current?.clipId === clip.id ? null : current)}
+                      onPointerEnter={() => {
+                        if (clip.kind === 'video' || clip.kind === 'subtitle') setHoveredClipId(clip.id)
+                      }}
+                      onPointerLeave={() => {
+                        setHoveredClipId((current) => current === clip.id ? null : current)
+                        setRazorGhost((current) => current?.clipId === clip.id ? null : current)
+                      }}
                       onContextMenu={(event) => showContextMenu(event, clip)}
                       title={`${clip.name}\n${seconds(clip.durationUs).toFixed(2)} 秒\n右クリックで編集操作`}
                       aria-label={`${clipKindLabel}: ${clip.kind === 'subtitle' ? clip.text : clip.name}${clip.linkGroupId ? '（リンク済み）' : ''}`}
