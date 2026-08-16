@@ -34,7 +34,7 @@
 
 ## 2026-08-16 Night 24 final smoke
 
-実人間の日本語発話 corpus A（188.600秒、repo外QA workspace）で、import → timeline配置 → GPU優先の自動処理 → `large-v3 / CUDA / float16` Whisper → Natural無音解析 → 高品質字幕（LLM timeout時は既存rule fallback） → user subtitle template適用 → timeline配置 → 再生 → Inspector本文編集 → Save/reopen → final renderを確認しました。代表結果はraw words 666件、字幕85件、無音3件、削除候補3.85秒です。
+実人間の日本語発話 corpus A（188.600秒、repo外QA workspace）で、import → timeline配置 → GPU優先の自動処理 → `large-v3 / CUDA / float16` Whisper → Natural無音解析 → 高品質字幕（LLM timeout時は既存rule fallback） → user subtitle template適用 → timeline配置 → 再生 → Inspector本文編集 → Save/reopen → final renderを確認しました。代表結果はraw words 666件、字幕85件、無音3件、削除候補3.85秒です。Auto ProcessingにはNatural/Strongに加えて、最小無音0.30秒・保持余白0.08秒のYouTubeジャンプカットprofileがあります。
 
 この受入はself-contained portable auto-captionを意味しません。worker discovery、Python依存、faster-whisper、Whisper model、FFmpegが必要です。fine acoustic alignmentは未実装で、SubtitleEditUnitの時刻は編集用derived estimateです。今回のGUI encoder probeはCPU/libx264へfallbackし、出力はH.264/AAC・184.766667秒としてffprobe確認しました。別のdirect NVENC probeは既存QAでPASSしています。
 

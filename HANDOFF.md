@@ -1,5 +1,13 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-08-16 Stage 25 Lunch Run
+
+- Subtitle Template Managerのuser templateへ、SubtitleStyle全項目（font、色、outline、shadow、background、bold/italic、spacing、line height、alignment、position、max width、animation）を直接編集できるTemplate Editorを追加した。built-inは従来どおりimmutableである。
+- Template Editorに保存対象外の複数行preview text入力を追加し、編集内容は共有`SubtitleStyle`／versioned template serviceへ保存する。previewは`SubtitleTemplatePreview`とcanonical render specを使う。
+- Auto Processingの通常progressではworker/FFmpegのraw messageを表示せず、stageに対応した日本語表示へ固定した。失敗時もpath-freeな要約だけを表示する。
+- Auto Processing summaryへsilence status、profile、候補数、実カット数、削除時間、元／編集後の長さを追加した。YouTubeジャンプカットprofileの契約値を受け取れるようにした。
+- Previewは既に再生中のAccurate Previewを停止し、subtitle overlay schedulerとmain cacheを共有している。今回の実測ではこの既存ガードを維持し、renderer全面rewriteは行っていない。
+
 ## 2026-08-16 NIGHT 24 Final acceptance checkpoint
 
 - 実人間日本語QA corpus A（188.600秒）で、import、timeline配置、GPU Auto処理、`large-v3 / CUDA / float16` Whisper、Natural silence、High Quality字幕、user template、timeline apply、再生、字幕本文編集、Save/reopen、final renderを実GUIで完走した。
