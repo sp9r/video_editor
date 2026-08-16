@@ -105,7 +105,7 @@
 
 ### UX-TL-001 — 再生ヘッド追従の自動スクロール
 
-**Status:** `PLANNED`
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
 
 再生中、再生ヘッドがTimeline viewport右端へ達したら、再生を止めずに次の領域へ自動スクロールする。
 
@@ -114,6 +114,14 @@
 - playheadが画面外へ消えない。
 - 自動追従で再生位置がジャンプしない。
 - ユーザーが手動でTimelineを操作している最中の挙動は干渉しすぎないよう設計する。
+
+**Implemented:**
+
+- 再生中にplayheadがviewport右端へ到達した場合だけ、Timeline viewportを次の領域へ進める。
+- scroll位置だけを変更し、playhead timeは変更しない。
+- 右端到達前・overflowなし・Timeline末尾ではscrollせず、同じ位置での更新によるjitterを抑止する。
+
+**Human acceptance:** 実動画の連続再生でplayhead追従が自然に見え、再生が停止・ジャンプしないこと。
 
 ### UX-TL-002 — 再生ヘッドdrag時のedge auto-scroll
 

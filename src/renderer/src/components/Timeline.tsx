@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Captions,
   ChevronDown,
@@ -81,6 +81,27 @@ export const timelineSplitMenuState = (clip: TimelineClip | undefined, locked = 
       : { disabled: true, label: '単語境界情報がないため分割不可' }
   }
   return { disabled: false, label: '再生位置で分割' }
+}
+
+export interface TimelineFollowScrollInput {
+  scrollLeft: number
+  clientWidth: number
+  scrollWidth: number
+  playheadPx: number
+  edgeTolerancePx?: number
+}
+
+/** Returns the next horizontal scroll position when playback reaches the viewport's right edge. */
+export const timelineFollowScrollLeft = (input: TimelineFollowScrollInput): number | null => {
+  const { scrollLeft, clientWidth, scrollWidth, playheadPx } = input
+  const edgeTolerancePx = input.edgeTolerancePx ?? 1
+  if (![scrollLeft, clientWidth, scrollWidth, playheadPx, edgeTolerancePx].every(Number.isFinite)) return null
+  if (clientWidth <= 0 || scrollWidth <= clientWidth || edgeTolerancePx < 0) return null
+  const maxScrollLeft = Math.max(0, scrollWidth - clientWidth)
+  const currentScrollLeft = Math.min(maxScrollLeft, Math.max(0, scrollLeft))
+  if (playheadPx < currentScrollLeft + clientWidth - edgeTolerancePx) return null
+  const targetScrollLeft = Math.min(maxScrollLeft, Math.max(currentScrollLeft, playheadPx - clientWidth * 0.25))
+  return targetScrollLeft > currentScrollLeft + 0.5 ? targetScrollLeft : null
 }
 
 export const isTextEditingTarget = (target: EventTarget | null): boolean => {
@@ -190,6 +211,7 @@ export default function Timeline(): React.JSX.Element {
     project,
     selectedClipIds,
     playheadUs,
+    playing,
     zoomPxPerSecond,
     tool,
     snapping,
@@ -264,6 +286,19 @@ export default function Timeline(): React.JSX.Element {
   }, [copySelected, duplicateSelected, pasteClipboard])
 
   useEffect(() => setContextMenu(null), [project.id])
+
+  useLayoutEffect(() => {
+    if (!playing) return
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const nextScrollLeft = timelineFollowScrollLeft({
+      scrollLeft: viewport.scrollLeft,
+      clientWidth: viewport.clientWidth,
+      scrollWidth: viewport.scrollWidth,
+      playheadPx: (playheadUs / 1_000_000) * zoomPxPerSecond
+    })
+    if (nextScrollLeft !== null) viewport.scrollLeft = nextScrollLeft
+  }, [playing, playheadUs, timelineWidth, zoomPxPerSecond])
 
   const timeFromPointer = (clientX: number, lane: HTMLElement): number => {
     const bounds = lane.getBoundingClientRect()

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
+import { isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, timelineFollowScrollLeft, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
 import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
 
@@ -19,6 +19,18 @@ describe('timeline interaction guards', () => {
     menu.append(child)
     expect(isOutsideContextMenu(menu, child)).toBe(false)
     expect(isOutsideContextMenu(menu, outside)).toBe(true)
+  })
+
+  it('advances the viewport when playback reaches the right edge without changing playhead time', () => {
+    expect(timelineFollowScrollLeft({ scrollLeft: 0, clientWidth: 500, scrollWidth: 2_000, playheadPx: 498 })).toBeNull()
+    expect(timelineFollowScrollLeft({ scrollLeft: 0, clientWidth: 500, scrollWidth: 2_000, playheadPx: 500 })).toBe(375)
+    expect(timelineFollowScrollLeft({ scrollLeft: 375, clientWidth: 500, scrollWidth: 2_000, playheadPx: 873 })).toBeNull()
+    expect(timelineFollowScrollLeft({ scrollLeft: 375, clientWidth: 500, scrollWidth: 2_000, playheadPx: 875 })).toBe(750)
+  })
+
+  it('does not jitter at the end or scroll when there is no overflow', () => {
+    expect(timelineFollowScrollLeft({ scrollLeft: 1_500, clientWidth: 500, scrollWidth: 2_000, playheadPx: 2_000 })).toBeNull()
+    expect(timelineFollowScrollLeft({ scrollLeft: 0, clientWidth: 500, scrollWidth: 500, playheadPx: 500 })).toBeNull()
   })
 
   it('does not commit a move for a click or small pointer jitter', () => {
