@@ -126,7 +126,10 @@ export const installMediaProtocol = (): void => {
       }
       const info = await stat(filePath)
       if (!info.isFile()) return new Response('Not a regular file', { status: 404 })
-      return net.fetch(pathToFileURL(filePath).toString(), { headers: request.headers })
+      const response = await net.fetch(pathToFileURL(filePath).toString(), { headers: request.headers })
+      const headers = new Headers(response.headers)
+      headers.set('Access-Control-Allow-Origin', '*')
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
     } catch {
       return new Response('Media not found', { status: 404 })
     }

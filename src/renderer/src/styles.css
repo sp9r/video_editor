@@ -958,6 +958,26 @@ select {
 .subtitle-review-nav .button { display: inline-flex; align-items: center; gap: 4px; }
 .subtitle-review-empty { display: grid; place-items: center; min-height: 120px; color: var(--text-muted); font-size: 11px; }
 .subtitle-review-workspace > .dialog-footer { border-top: 1px solid var(--line); }
+.thumbnail-backdrop { z-index: 92; }
+.thumbnail-workspace { display: grid; grid-template-rows: 58px minmax(0, 1fr) 32px 50px; width: min(1240px, 96vw); height: min(820px, 94vh); overflow: hidden; color: var(--text); background: #171b21; border: 1px solid #3a434d; border-radius: 9px; box-shadow: var(--shadow); }
+.thumbnail-workspace-body { display: grid; grid-template-columns: 330px minmax(0, 1fr); min-height: 0; }
+.thumbnail-candidates { min-width: 0; padding: 14px; overflow: auto; background: #12161b; border-right: 1px solid var(--line); }
+.thumbnail-candidates > strong { display: block; margin-bottom: 10px; color: var(--text-muted); font-size: 11px; }
+.thumbnail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.thumbnail-grid button { position: relative; display: block; min-width: 0; padding: 3px; overflow: hidden; color: var(--text-dim); text-align: left; background: #0d1014; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; }
+.thumbnail-grid button:hover, .thumbnail-grid button.is-selected { border-color: var(--mint); box-shadow: 0 0 0 1px var(--mint-soft); }
+.thumbnail-grid img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+.thumbnail-grid small { display: block; padding: 4px 3px 2px; font-size: 9px; }
+.thumbnail-preview-panel { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 12px; min-width: 0; min-height: 0; padding: 14px; overflow: auto; }
+.thumbnail-canvas { display: block; width: 100%; max-height: 100%; object-fit: contain; background: #090b0e; border: 1px solid var(--line); }
+.thumbnail-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.thumbnail-fields label { display: grid; gap: 4px; min-width: 0; }
+.thumbnail-fields label span { color: var(--text-dim); font-size: 9px; }
+.thumbnail-fields input, .thumbnail-fields select { min-width: 0; }
+.thumbnail-loading, .thumbnail-error { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 100px; color: var(--text-muted); font-size: 11px; }
+.thumbnail-error, .thumbnail-inline-error { color: var(--amber); }
+.thumbnail-inline-error { padding: 6px 14px; background: #332919; font-size: 10px; }
+.thumbnail-workspace > .dialog-footer { border-top: 1px solid var(--line); }
 
 @media (max-width: 1280px) {
   .app-header { gap: 3px; }

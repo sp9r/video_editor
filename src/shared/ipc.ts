@@ -39,6 +39,8 @@ export const IPC = {
   reviewLoad: 'review:load',
   reviewUpsert: 'review:upsert',
   learningDatasetExport: 'learning-dataset:export',
+  thumbnailCandidates: 'thumbnail:candidates',
+  thumbnailExport: 'thumbnail:export',
   fullCorrectionLoad: 'full-correction:load',
   fullCorrectionStart: 'full-correction:start',
   fullCorrectionFinish: 'full-correction:finish',

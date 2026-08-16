@@ -24,6 +24,7 @@ import { loadAppSettings, setLastUsedSubtitleTemplateId } from './app-settings-s
 import { SilenceAnalysisService } from './silence-analysis-service'
 import { DEFAULT_SILENCE_REAPPLY_PROFILE, isSilenceReapplyProfile } from '../shared/silence-cut'
 import { runProjectQa } from '../shared/project-qa'
+import { ThumbnailService } from './thumbnail-service'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
@@ -365,6 +366,32 @@ const registerIpcHandlers = (): void => {
     return exportLearningDataset()
   })
 
+  ipcMain.handle(IPC.thumbnailCandidates, async (event, projectInput: ProjectFile, selectedClipId: unknown) => {
+    assertTrustedSender(event)
+    if (typeof selectedClipId !== 'string' || selectedClipId.length > 200) throw new Error('サムネイル対象clipが不正です。')
+    const project = validateProject(projectInput)
+    const selected = project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === selectedClipId)
+    if (!selected || selected.kind !== 'video' || !selected.assetId) throw new Error('映像clipを1つ選択してください。')
+    const asset = project.media.find((item) => item.id === selected.assetId)
+    if (!asset || asset.offline || !path.isAbsolute(asset.path)) throw new Error('サムネイル用の映像素材を解決できません。')
+    const service = requireService()
+    return new ThumbnailService(service.paths, { executor: service.executor, cacheRoot: path.join(app.getPath('userData'), 'thumbnail-cache') }).extractCandidates({ mediaPath: asset.path, sourceInUs: selected.sourceInUs, durationUs: selected.durationUs })
+  })
+
+  ipcMain.handle(IPC.thumbnailExport, async (event, bytes: unknown, format: unknown) => {
+    assertTrustedSender(event)
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0 || bytes.byteLength > 25 * 1024 * 1024 || (format !== 'png' && format !== 'jpeg')) throw new Error('サムネイル画像データが不正です。')
+    const response = await dialog.showSaveDialog({
+      title: 'サムネイルを書き出す',
+      defaultPath: `spectra-thumbnail.${format === 'png' ? 'png' : 'jpg'}`,
+      filters: [{ name: format === 'png' ? 'PNG image' : 'JPEG image', extensions: [format === 'png' ? 'png' : 'jpg'] }]
+    })
+    if (response.canceled || !response.filePath) return null
+    const outputPath = response.filePath.toLowerCase().endsWith(format === 'png' ? '.png' : '.jpg') ? response.filePath : `${response.filePath}.${format === 'png' ? 'png' : 'jpg'}`
+    await writeFile(outputPath, bytes)
+    return outputPath
+  })
+
   ipcMain.handle(IPC.fullCorrectionLoad, (event) => {
     assertTrustedSender(event)
     return loadFullCorrectionSessions()
@@ -539,6 +566,7 @@ const runInteractionStateSmoke = async (window: BrowserWindow): Promise<Record<s
     const dialog = document.querySelector('.caption-dialog')
     const reviewWorkspace = document.querySelector('.subtitle-review-workspace')
     const learningDataset = byText('学習データを書き出す')
+    const thumbnailWorkspace = document.querySelector('.thumbnail-workspace')
     return {
       dialog: Boolean(dialog),
       dialogTitle: dialog?.querySelector('h2')?.textContent ?? '',
@@ -548,6 +576,7 @@ const runInteractionStateSmoke = async (window: BrowserWindow): Promise<Record<s
       fullCorrection: correction ? { disabled: correction.disabled, text: text(correction) } : null,
       reviewWorkspace: reviewWorkspace ? { title: reviewWorkspace.querySelector('h2')?.textContent ?? '' } : null,
       learningDataset: learningDataset ? { disabled: learningDataset.disabled } : null,
+      thumbnailWorkspace: thumbnailWorkspace ? { title: thumbnailWorkspace.querySelector('h2')?.textContent ?? '' } : null,
       saved: document.querySelector('.project-menu')?.textContent?.includes('保存済み') ?? false,
       focusedTag: document.activeElement?.tagName ?? '',
       rootChildCount: document.querySelector('#root')?.childElementCount ?? 0
@@ -615,6 +644,9 @@ const runInteractionStateSmoke = async (window: BrowserWindow): Promise<Record<s
   await clickText('字幕レビュー')
   transitions.reviewWorkspace = await readDom()
   await click('.subtitle-review-workspace button[aria-label^="字幕レビューを閉じる"]')
+  await clickText('サムネイル')
+  transitions.thumbnailWorkspace = await readDom()
+  await click('.thumbnail-workspace button[aria-label^="サムネイルを閉じる"]')
   await dispatchProject({ project: offline })
   await dispatchProject({ project: offline, selectClipId: 'night07-video' })
   await clickText('自動処理')

@@ -453,6 +453,8 @@ export interface DesktopApi {
   loadExperimentalReviewRecords(): Promise<import('./review/types').ExperimentalReviewRecord[]>
   upsertExperimentalReviewRecord(record: import('./review/types').ExperimentalReviewRecord): Promise<{ path: string; records: import('./review/types').ExperimentalReviewRecord[] }>
   exportLearningDataset(): Promise<import('./learning-dataset').LearningDatasetExportResult>
+  extractThumbnailCandidates(project: ProjectFile, selectedClipId: string): Promise<import('./thumbnail').ThumbnailFrameCandidate[]>
+  exportThumbnail(bytes: Uint8Array, format: 'png' | 'jpeg'): Promise<string | null>
   loadFullCorrectionSessions(): Promise<import('./full-correction').FullCorrectionSession[]>
   startFullCorrectionSession(project: ProjectFile, trackId: string): Promise<import('./full-correction').FullCorrectionSession>
   finishFullCorrectionSession(project: ProjectFile, sessionId: string): Promise<import('./full-correction').FullCorrectionSession>

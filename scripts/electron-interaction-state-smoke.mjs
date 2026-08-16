@@ -61,6 +61,7 @@ try {
   assert(states.reviewMode?.review?.active === true, 'review mode must activate after click')
   assert(states.reviewWorkspace?.reviewWorkspace?.title === '字幕レビュー', 'subtitle review workspace must open after click')
   assert(states.reviewWorkspace?.learningDataset?.disabled === false, 'learning dataset export action must be available in review workspace')
+  assert(states.thumbnailWorkspace?.thumbnailWorkspace?.title === 'サムネイル', 'thumbnail workspace must open after click')
   assert(states.offlineMedia?.run?.disabled === true && String(states.offlineMedia.run.title).includes('再リンク'), 'offline media must explain disabled auto processing')
   assert(states.noAudio?.run?.disabled === true && String(states.noAudio.run.title).includes('音声'), 'no-audio media must explain disabled auto processing')
   assert(states.multiSelection?.run?.disabled === true && String(states.multiSelection.run.title).includes('1つだけ'), 'multi-selection must explain the single-clip prerequisite')

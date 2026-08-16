@@ -523,6 +523,15 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 - stable sample keyでdedupeし、malformed recordは個別skipしてdiagnosticへ記録する。eligible sampleだけをuserDataのlocal aggregated JSONLへ保存し、ユーザー操作でJSONL exportできる。
 - model training、network、clip_automationへのdirect importは未実施。dataset formatの実運用・人間受入は保留。
 
+### THUMB-001 / Stage 32.5 — Thumbnail Workspace v1
+
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
+
+- 選択したvideo clipのsource rangeから、FFmpegで6候補フレームをuserData配下のcacheへ抽出する。near-black判定で明らかな黒フレームを候補から除外し、元mediaは変更しない。
+- 1280x720 canvasでframe、title、任意subtitle、font、size、position、outline、background opacity、shadowを編集・プレビューできる。PNG/JPEGを同じ1280x720でexportする。
+- rendererはtyped IPC経由でcandidate抽出・exportを依頼し、candidate cacheは`thumbnail-cache`として管理する。ProjectFile、subtitle template、edit_project contractへthumbnail設定を追加していない。
+- AI画像生成、network、repo内への生成物保存は未実施。実動画での視覚品質・候補の意味性・exportファイル選択は人間受入待ち。
+
 ---
 
 ## Notes for future Luna tasks
