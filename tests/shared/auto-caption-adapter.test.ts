@@ -96,6 +96,27 @@ describe('auto-caption timeline adapter', () => {
     expect(generated?.kind === 'subtitle' ? generated.editUnits?.[0] : undefined).toMatchObject({ timingProvenance: 'point', startUs: 15_000_000, endUs: 15_000_000 })
   })
 
+  it('normalizes a point word just before its caption start without changing source truth', () => {
+    const result = {
+      version: 'spectra.auto-caption.result.v1' as const,
+      jobId: 'job-point-before-caption',
+      sourceStartUs: 20_000_000,
+      sourceEndUs: 30_000_000,
+      language: 'ja',
+      provider: 'test',
+      model: 'test',
+      rawWords: [{ id: 'source-word:point', text: '字幕', startUs: 25_000_000, endUs: 25_000_000 }],
+      captions: [{ id: 'caption:point-before', text: '字幕', sourceWordIds: ['source-word:point'], startUs: 25_010_000, endUs: 25_500_000, textStatus: 'as_transcribed' as const, provenance: 'caption_algorithm' as const }],
+      diagnostics: [],
+      fallback: { used: false }
+    }
+    const clip = { id: 'clip-point-before', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }
+    const applied = applyAutoCaptionResultToProject(createEmptyProject('point before caption'), clip, result)
+    const generated = applied.project.tracks.flatMap((track) => track.clips).find((candidate) => candidate.kind === 'subtitle')
+    expect(result.rawWords[0]).toMatchObject({ startUs: 25_000_000, endUs: 25_000_000 })
+    expect(generated?.kind === 'subtitle' ? generated.words?.[0] : undefined).toMatchObject({ startUs: 15_010_000, endUs: 15_010_000 })
+  })
+
   it('creates a fresh named track with edit units and keeps previous tracks untouched', () => {
     const project = createEmptyProject('fresh track')
     const clip = { id: 'clip-1', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }

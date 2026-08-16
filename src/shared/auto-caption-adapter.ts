@@ -22,6 +22,30 @@ const DISPLAY_PUNCTUATION = /[、。！？!?…・〜～]+/gu
 
 const normalizeCaptionOwnershipText = (text: string): string => text.replace(DISPLAY_PUNCTUATION, '')
 
+/**
+ * Keep derived timeline word timing inside its owning caption.
+ *
+ * Whisper may emit point words (or a point a few milliseconds before the
+ * display caption start). Their source timestamps remain authoritative in the
+ * worker result; this only makes the Project Model's derived SubtitleWord
+ * timing safe for editing and validation.
+ */
+const normalizeDerivedWordsToCaption = (
+  words: Array<{ id: string; text: string; startUs: number; endUs: number }>,
+  captionStartUs: number,
+  captionEndUs: number
+) => {
+  let previousEndUs = captionStartUs
+  return words.map((word) => {
+    let startUs = Math.min(captionEndUs, Math.max(captionStartUs, word.startUs))
+    let endUs = Math.min(captionEndUs, Math.max(captionStartUs, word.endUs))
+    if (startUs < previousEndUs) startUs = previousEndUs
+    if (endUs < startUs) endUs = startUs
+    previousEndUs = endUs
+    return { ...word, startUs, endUs }
+  })
+}
+
 /** Convert source-absolute worker timing to one project timeline. */
 export const autoCaptionResultToTranscript = (
   clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
@@ -34,6 +58,8 @@ export const autoCaptionResultToTranscript = (
   const wordsById = new Map(result.rawWords.map((word) => [word.id, word]))
   const mapSourceTime = options.sourceTimeMapper?.mapPoint ?? ((sourceUs: number) => mapAutoCaptionSourceTimeToTimelineUs(clip, sourceUs))
   const segments = result.captions.map((caption) => {
+    const mappedStartUs = mapSourceTime(caption.startUs)
+    const mappedEndUs = mapSourceTime(caption.endUs)
     const words = caption.sourceWordIds.map((wordId) => {
       const word = wordsById.get(wordId)
       if (!word) throw new Error('自動字幕結果のword ownershipが不正です。')
@@ -44,18 +70,19 @@ export const autoCaptionResultToTranscript = (
         endUs: mapSourceTime(word.endUs)
       }
     })
-    const sourceWordText = words.map((word) => word.text).join('')
+    const derivedWords = normalizeDerivedWordsToCaption(words, mappedStartUs, mappedEndUs)
+    const sourceWordText = derivedWords.map((word) => word.text).join('')
     const exactWordTextMatch = sourceWordText === caption.text
     const displayNormalizedWordTextMatch = caption.textStatus === 'display_normalized'
       && normalizeCaptionOwnershipText(sourceWordText) === caption.text
     const wordTruth = words.length > 0
-      && words.every((word) => word.endUs >= word.startUs)
+      && derivedWords.every((word) => word.endUs >= word.startUs)
       && (exactWordTextMatch || displayNormalizedWordTextMatch)
     return {
-      startUs: mapSourceTime(caption.startUs),
-      endUs: mapSourceTime(caption.endUs),
+      startUs: mappedStartUs,
+      endUs: mappedEndUs,
       text: caption.text,
-      ...(wordTruth ? { words } : {})
+      ...(wordTruth ? { words: derivedWords } : {})
     }
   }).filter((segment) => segment.endUs > segment.startUs)
   if (segments.length === 0) throw new Error('自動字幕結果に字幕がありません。')
