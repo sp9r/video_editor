@@ -409,6 +409,20 @@ Direct NVENC probeは既存QAでPASSしているが、実GUI renderではCPU/lib
 - Stage 26 representative regression（Auto Caption / Template / Font dropdown / maxWidth）: 6 files / 49 tests PASS
 - full test suite: 56 files / 325 tests中324 PASS。残る1件は`tests/main/ffmpeg-integration.test.ts`のoverlay cache metadata（初回`cacheHit=false`と2回目`cacheHit=true`を完全一致比較）で、Stage 28変更とは無関係の既存期待値不一致。今回のscope外のため修正していない。
 
+### Stage 29 checkpoint — Timeline readability / subtitle candidates / silence reapply
+
+**Status:** `CHECKPOINT COMPLETE — HUMAN ACCEPTANCE PENDING`
+
+- UX-TL-003 clip label readability、UX-TL-004A subtitle boundary guides、UX-TL-004B cross-type candidate highlightを統合回帰。
+- SIL-001 explicit silence reapply（split / trim / deletion / already-removed range / speech protection / linked A/V / no-op / cancel-failure atomicity / Undo-Redo）を確認。
+- Stage 29.2のFFmpeg overlay cache semantic assertion（cold `cacheHit=false`、warm `cacheHit=true`）を含む回帰を確認。
+- `npm.cmd run check`: 58 test files / 340 tests PASS。
+- targeted regression: 10 test files / 90 tests PASS。
+- typecheck / build / Electron startup / interaction / accurate-preview / subtitle geometry / subtitle parity smoke PASS。
+- data model、`linkGroupId`、永続video/subtitle linkは変更なし。
+
+**Human acceptance:** 実動画でclip labelの可読性、subtitle boundary guideの位置、cross-type候補highlight、silence reapplyの操作感を確認する。
+
 ---
 
 ## Notes for future Luna tasks
