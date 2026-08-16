@@ -32,7 +32,7 @@
 
 ### PERF-001 — Previewの実ユーザー環境での高CPU・非リアルタイム再生
 
-**Status:** `PLANNED`
+**Status:** `READY_FOR_HUMAN_REVIEW`
 
 **User need:** Preview再生がCPU 100%近くになり、リアルタイムに追いつかないケースを解消したい。
 
@@ -42,12 +42,16 @@
 - Stage 27.1B: 実字幕68件の表示あり/hiddenをA/B比較してもTotal CPU約17.8〜17.9%で差なし。
 - 字幕overlay自体は主要因ではない可能性が高い。
 - 実ユーザーが遭遇した高負荷条件はまだ自動再現できていない。
+- Stage 27.1C: 低オーバーヘッドのPreview Performance Diagnostic UIをローカル未commit状態で実装。targeted 14 tests、typecheck、build PASS。
+- 診断では再生、rAF、React/store、字幕overlay/cache、waveform、Accurate Preview/FFmpeg、表示条件、JS heapを集計できる。
+- 毎frame大量logは行わず、counter/aggregateのみで停止時にsummaryを出す。
 
-**Next candidate action:**
+**Human gate:**
 
-- ユーザー実操作時だけ有効にできる、低オーバーヘッドのPreview performance diagnostic capture。
-- ただしユーザーの明示があるまでは実装開始しない。
-- 計測後にdecode / Renderer / React-store updates / Timeline / GPU process / DPI・解像度条件を切り分ける。
+- 実際に高CPU・非リアルタイムになるユーザープロジェクト/操作条件で診断を開始する。
+- 30秒程度通常どおり再生して診断停止し、summaryをChatGPTへ渡す。
+- その結果をもとにdecode / Renderer / React-store updates / Timeline / GPU process / DPI・解像度条件のどこを次に掘るか決定する。
+- 診断機能自体はまだcommit/pushしない。人間キャプチャで有効性を確認してから扱いを決める。
 
 ---
 
