@@ -6,7 +6,7 @@ import { DEFAULT_SUBTITLE_STYLE, type AudioSettings, type SubtitleClip, type Sub
 import { FALLBACK_FONT_FAMILIES } from '../../../shared/font-families'
 import { applySubtitleTemplateToClip, deriveSubtitleTemplateGeneration } from '../../../shared/subtitle-template-seed'
 import type { SubtitleTemplateCaptionGeneration } from '../../../shared/subtitle-templates'
-import { canRestoreSilenceCut, DEFAULT_SILENCE_REAPPLY_PROFILE, silenceCutProfileSettings, type SilenceReapplyProfile } from '../../../shared/silence-cut'
+import { canRestoreSilenceCut, DEFAULT_SILENCE_REAPPLY_PROFILE, silenceCutOperationForClip, silenceCutProfileSettings, type SilenceReapplyProfile } from '../../../shared/silence-cut'
 import { getSubtitleTemplate, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../../shared/subtitle-templates'
 import { findClip, useEditorStore } from '../store'
 import { Button, EmptyState, Field, NumberField, Section, SelectField } from './Controls'
@@ -400,11 +400,16 @@ export default function Inspector(): React.JSX.Element {
   const silenceCutReapplyBusy = useEditorStore((state) => state.silenceCutReapplyBusy)
   const reapplySilenceCut = useEditorStore((state) => state.reapplySilenceCut)
   const restoreSilenceCut = useEditorStore((state) => state.restoreSilenceCut)
+  const updateSilenceCutThreshold = useEditorStore((state) => state.updateSilenceCutThreshold)
   const cancelSilenceCutReapply = useEditorStore((state) => state.cancelSilenceCutReapply)
   const [silenceReapplyProfile, setSilenceReapplyProfile] = useState<SilenceReapplyProfile>(DEFAULT_SILENCE_REAPPLY_PROFILE)
   const [silenceReapplyMinUs, setSilenceReapplyMinUs] = useState(silenceCutProfileSettings(DEFAULT_SILENCE_REAPPLY_PROFILE).minSilenceUs)
   const transaction = useEditTransaction()
   const clip = findClip(project, selectedClipIds)
+  const silenceOperation = clip && (clip.kind === 'video' || clip.kind === 'audio') ? silenceCutOperationForClip(project, clip.id) : null
+  useEffect(() => {
+    if (silenceOperation?.minSilenceUs !== undefined) setSilenceReapplyMinUs(silenceOperation.minSilenceUs)
+  }, [silenceOperation?.operationId, silenceOperation?.minSilenceUs])
   return (
     <aside className="panel inspector" aria-label="インスペクタ">
       <header className="panel-header">
@@ -427,13 +432,19 @@ export default function Inspector(): React.JSX.Element {
             </div>
             {(clip.kind === 'video' || clip.kind === 'audio') && <div className="field-grid">
               <label className="field"><span className="field-label">無音カットprofile</span><select disabled={silenceCutReapplyBusy} value={silenceReapplyProfile} onChange={(event) => { const profile = event.target.value as SilenceReapplyProfile; setSilenceReapplyProfile(profile); setSilenceReapplyMinUs(silenceCutProfileSettings(profile).minSilenceUs) }}><option value="natural">自然</option><option value="strong">強め</option><option value="youtube">YouTubeジャンプカット</option></select></label>
-              <label className="field"><span className="field-label">最小無音時間</span><span className="number-input"><input disabled={silenceCutReapplyBusy} type="number" min={0.05} max={2} step={0.05} value={silenceReapplyMinUs / 1_000_000} onChange={(event) => setSilenceReapplyMinUs(Math.round(Math.max(0.05, Math.min(2, Number(event.target.value) || 0.15)) * 1_000_000))} /><span>秒</span></span></label>
+              <label className="field"><span className="field-label">最小無音時間</span><span className="number-input"><input disabled={silenceCutReapplyBusy} type="number" min={0} max={2} step={0.01} value={silenceReapplyMinUs / 1_000_000} onChange={(event) => { const parsed = Number(event.target.value); setSilenceReapplyMinUs(Math.round(Math.max(0, Math.min(2, Number.isFinite(parsed) ? parsed : 0.15)) * 1_000_000)) }} /><span>秒</span></span></label>
               <Button
                 className="subtle-button"
                 disabled={silenceCutReapplyBusy}
                 title="現在のsourceInUs・durationUsを対象にFFmpegの無音解析を明示的に再実行"
                 onClick={() => void reapplySilenceCut(silenceReapplyProfile, silenceReapplyMinUs)}
               >{silenceCutReapplyBusy ? '無音解析中…' : '無音カットを再適用'}</Button>
+              {silenceOperation && canRestoreSilenceCut(project, clip.id) ? <Button
+                className="subtle-button"
+                disabled={silenceCutReapplyBusy}
+                title="元のsource範囲を復元してから、現在の閾値で無音カットを再構成"
+                onClick={() => void updateSilenceCutThreshold(silenceReapplyMinUs)}
+              >無音カットを更新</Button> : null}
               {canRestoreSilenceCut(project, clip.id) && <Button className="subtle-button" onClick={() => restoreSilenceCut()}>無音カットを解除</Button>}
               {silenceCutReapplyBusy && <Button className="subtle-button" onClick={() => void cancelSilenceCutReapply()}>キャンセル</Button>}
             </div>}

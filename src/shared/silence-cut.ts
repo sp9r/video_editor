@@ -30,7 +30,7 @@ export const silenceCutProfileSettings = (profile: SilenceReapplyProfile = DEFAU
 
 export const clampSilenceMinUs = (value: number | undefined, fallback: number): number => {
   if (value === undefined || !Number.isFinite(value)) return fallback
-  return Math.round(Math.max(50_000, Math.min(2_000_000, value)))
+  return Math.round(Math.max(0, Math.min(2_000_000, value)))
 }
 
 export interface SilenceCutSummary {
@@ -310,7 +310,7 @@ export const applySilenceCutToProject = (
   project: ProjectFile,
   selectedClipId: string,
   analysis: Pick<AutoCaptionSilenceAnalysis, 'keepRanges'>,
-  options: { protectedIntervals?: readonly SourceTimeInterval[]; timeMapper?: SourceTimeMapper } = {}
+  options: { protectedIntervals?: readonly SourceTimeInterval[]; timeMapper?: SourceTimeMapper; profile?: SilenceReapplyProfile; minSilenceUs?: TimeUs } = {}
 ): SilenceCutApplyResult => {
   const selected = project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === selectedClipId)
   const targets = linkedMembers(project, selectedClipId)
@@ -393,6 +393,8 @@ export const applySilenceCutToProject = (
     originalDurationUs: selected.durationUs,
     keepRanges: keepRanges.map(({ startUs, endUs }) => ({ startUs, endUs })),
     removedRanges: timeMapper.removedRanges.map(({ startUs, endUs }) => ({ startUs, endUs })),
+    ...(options.profile ? { profile: options.profile } : {}),
+    ...(options.minSilenceUs === undefined ? {} : { minSilenceUs: clampSilenceMinUs(options.minSilenceUs, options.minSilenceUs) }),
     targets: targets.map((target) => {
       const mediaTarget = target as Extract<TimelineClip, { kind: 'video' | 'audio' }>
       const track = project.tracks.find((candidate) => candidate.clips.some((clip) => clip.id === target.id))
@@ -437,6 +439,11 @@ const operationForClip = (project: ProjectFile, clipId: string): SilenceCutOpera
   const matches = metadataOperations(project).filter((operation) => operation.targets.some((target) => target.generatedClipIds.includes(clipId)))
   if (matches.length !== 1) throw new SilenceCutError('unsafe_ripple', '無音カットの復元対象を一意に特定できません。')
   return matches[0]!
+}
+
+/** Returns the owning internal operation without exposing metadata to edit_project.v1. */
+export const silenceCutOperationForClip = (project: ProjectFile, clipId: string): SilenceCutOperationMetadata | null => {
+  try { return operationForClip(project, clipId) } catch { return null }
 }
 
 const findClipWithTrack = (project: ProjectFile, clipId: string): { clip: TimelineClip; trackId: string } | undefined => {

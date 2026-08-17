@@ -13,14 +13,15 @@ import {
   shiftClipTimeline,
   SubtitleCollisionError,
   validateProject,
-  updateClip
+  updateClip,
+  projectFingerprint
 } from '../../shared/project'
 import { deleteLinkedClips, EditingOperationError, isSubtitleWordBoundarySplitAvailable, mergeSubtitleWithNext, mergeSubtitleWithPrevious, moveLinkedClip, moveSubtitleBoundary, nearestSubtitleWordBoundaryIndex, splitLinkedClip, splitSelectedRoots, splitSubtitleAtWordBoundary, trimLinkedClip } from '../../shared/editing/operations'
 import { linkedClipIds } from '../../shared/editing/links'
 import { isMediaTrack } from '../../shared/types'
 import type { AutoCaptionProgress, AutoCaptionResult, AutoCaptionSettings, AutoCaptionSilenceAnalysis } from '../../shared/auto-caption-contract'
 import { applyAutoCaptionResultToProject } from '../../shared/auto-caption-adapter'
-import { applySilenceCutToProject, canRestoreSilenceCut, DEFAULT_SILENCE_REAPPLY_PROFILE, createSilenceCutTimeMapper, restoreSilenceCutToProject, type SilenceReapplyProfile } from '../../shared/silence-cut'
+import { applySilenceCutToProject, canRestoreSilenceCut, DEFAULT_SILENCE_REAPPLY_PROFILE, createSilenceCutTimeMapper, restoreSilenceCutToProject, silenceCutOperationForClip, type SilenceReapplyProfile } from '../../shared/silence-cut'
 import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
 import type { UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { FullCorrectionSession } from '../../shared/full-correction'
@@ -80,6 +81,7 @@ interface EditorState {
   autoCaptionSelected(settings?: AutoCaptionSettings): Promise<AutoCaptionApplySummary | null>
   cancelAutoCaption(): Promise<void>
   reapplySilenceCut(profile?: SilenceReapplyProfile, minSilenceUs?: number): Promise<boolean>
+  updateSilenceCutThreshold(minSilenceUs: number): Promise<boolean>
   restoreSilenceCut(): boolean
   cancelSilenceCutReapply(): Promise<void>
   setUserSubtitleTemplates(templates: UserSubtitleTemplate[]): void
@@ -143,11 +145,6 @@ export interface AutoCaptionApplySummary {
 const HISTORY_LIMIT = 80
 
 const cloneProject = (project: ProjectFile): ProjectFile => structuredClone(project)
-const projectFingerprint = (project: ProjectFile): string => {
-  const normalized = cloneProject(project)
-  normalized.updatedAt = ''
-  return JSON.stringify(normalized)
-}
 const initialProject = createDemoProject()
 
 const compatibleTrack = (_asset: MediaAsset, track: TimelineTrack): boolean => {
@@ -396,7 +393,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         } else if (!shouldSkipRepeatSilenceCut) {
           const silenceApplied = applySilenceCutToProject(project, selectedClip.id, silenceAnalysis, {
             timeMapper: sourceTimeMapper,
-            protectedIntervals: result.rawWords.map((word) => ({ id: word.id, startUs: word.startUs, endUs: word.endUs }))
+            protectedIntervals: result.rawWords.map((word) => ({ id: word.id, startUs: word.startUs, endUs: word.endUs })),
+            profile: settings?.silenceCut && settings.silenceCut !== 'off' ? settings.silenceCut : undefined,
+            minSilenceUs: silenceAnalysis.settings.minSilenceUs
           })
           applyProject = silenceApplied.project
           captionClip = silenceApplied.sourceClip
@@ -404,12 +403,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         }
       }
       const userSubtitleTemplates = get().userSubtitleTemplates
+      const captionCoverageRanges = silenceAnalysis && silenceSummary
+        ? silenceSummary.keepRanges.map((range) => ({
+            startUs: sourceTimeMapper?.mapPoint(range.startUs) ?? selectedClip.startUs + (range.startUs - selectedClip.sourceInUs),
+            endUs: sourceTimeMapper?.mapPoint(range.endUs) ?? selectedClip.startUs + (range.endUs - selectedClip.sourceInUs)
+          }))
+        : undefined
       const applied = applyAutoCaptionResultToProject(applyProject, captionClip, result, {
         maxChars: settings?.maxChars ?? 32,
         maxLines: settings?.maxLines ?? 2,
         sourceTimeMapper,
         subtitleTemplate: settings?.subtitleTemplate ?? 'default',
-        userSubtitleTemplates
+        userSubtitleTemplates,
+        captionCoverageRanges,
+        captionCoverageMaxGapUs: silenceAnalysis?.settings.minSilenceUs
       })
       set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 0.96, progressMode: 'indeterminate', message: '字幕をTimelineへ適用中…', result } })
       const firstCaption = applied.project.tracks.find((track) => track.id === applied.trackId)?.clips[0]
@@ -477,7 +484,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         get().showNotice('現在のクリップに再適用できる無音区間はありません。', 'info')
         return true
       }
-      const applied = applySilenceCutToProject(project, selected.id, result.analysis, { protectedIntervals: result.protectedIntervals })
+      const applied = applySilenceCutToProject(project, selected.id, result.analysis, { protectedIntervals: result.protectedIntervals, profile: requestedProfile, minSilenceUs: result.analysis.settings.minSilenceUs })
       if (applied.summary.removedDurationUs === 0 || applied.project === project) {
         get().showNotice('現在のクリップに再適用できる無音区間はありません。', 'info')
         return true
@@ -488,6 +495,48 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return true
     } catch (error) {
       get().showNotice(`無音カットを再適用できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      return false
+    } finally {
+      set((state) => state.silenceCutReapplyJobId === jobId
+        ? { silenceCutReapplyJobId: null, silenceCutReapplyCancelledJobId: null, silenceCutReapplyBusy: false }
+        : state)
+    }
+  },
+  updateSilenceCutThreshold: async (minSilenceUs) => {
+    const current = get()
+    if (current.silenceCutReapplyBusy) return false
+    if (!window.spectra) {
+      current.showNotice('無音カットの更新はElectron環境で利用できます。', 'warning')
+      return false
+    }
+    const selected = current.project.tracks.flatMap((track) => track.clips).find((clip) => current.selectedClipIds.includes(clip.id) && (clip.kind === 'video' || clip.kind === 'audio'))
+    const operation = selected ? silenceCutOperationForClip(current.project, selected.id) : null
+    if (!selected || !operation || !canRestoreSilenceCut(current.project, selected.id)) {
+      current.showNotice('無音カット後のclipが変更されているため、安全に閾値を更新できません。', 'warning')
+      return false
+    }
+    const requestedThresholdUs = Math.round(Math.max(0, Math.min(2_000_000, Number.isFinite(minSilenceUs) ? minSilenceUs : operation.minSilenceUs ?? 0)))
+    const project = current.project
+    const restored = restoreSilenceCutToProject(project, selected.id)
+    const jobId = makeId('silence-update')
+    set({ silenceCutReapplyJobId: jobId, silenceCutReapplyCancelledJobId: null, silenceCutReapplyBusy: true })
+    try {
+      const profile = operation.profile ?? DEFAULT_SILENCE_REAPPLY_PROFILE
+      const result = await window.spectra.startSilenceCutReapply(restored.project, restored.restoredClipId, jobId, profile, requestedThresholdUs)
+      if (projectFingerprint(get().project) !== projectFingerprint(project)) throw new Error('無音閾値の解析中にプロジェクトが変更されました。結果は適用していません。')
+      if (result.jobId !== jobId || result.selectedClipId !== restored.restoredClipId) throw new Error('無音閾値更新の結果identityが不正です。')
+      if (get().silenceCutReapplyCancelledJobId === jobId) throw new Error('無音閾値更新をキャンセルしました。')
+      const applied = applySilenceCutToProject(restored.project, restored.restoredClipId, result.analysis, {
+        protectedIntervals: result.protectedIntervals,
+        profile,
+        minSilenceUs: result.analysis.settings.minSilenceUs
+      })
+      const firstTarget = applied.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id.startsWith(`${restored.restoredClipId}:silence:`))
+      get().applyProject(applied.project, firstTarget ? { selectClipId: firstTarget.id } : { selectClipId: restored.restoredClipId })
+      get().showNotice(`無音カットを更新しました（最小${(result.analysis.settings.minSilenceUs / 1_000_000).toFixed(2)}秒）。`, 'success')
+      return true
+    } catch (error) {
+      get().showNotice(`無音カットを更新できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
       return false
     } finally {
       set((state) => state.silenceCutReapplyJobId === jobId

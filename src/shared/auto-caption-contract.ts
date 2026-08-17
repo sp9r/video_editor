@@ -346,7 +346,7 @@ const parseSettings = (value: unknown): AutoCaptionBaseline['settings'] => {
   if (!SEGMENTATION_MODES.includes(segmentationMode)) throw new Error('settings.segmentationMode is invalid')
   const silenceCut = value.silenceCut === undefined ? undefined : requiredString(value.silenceCut, 'settings.silenceCut', 16) as SilenceCutMode
   if (silenceCut !== undefined && !SILENCE_CUT_MODES.includes(silenceCut)) throw new Error('settings.silenceCut is invalid')
-  const silenceMinUs = value.silenceMinUs === undefined ? undefined : boundedCount(value.silenceMinUs, 'settings.silenceMinUs', 50_000, 2_000_000)
+  const silenceMinUs = value.silenceMinUs === undefined ? undefined : boundedCount(value.silenceMinUs, 'settings.silenceMinUs', 0, 2_000_000)
   const accelerationMode = value.accelerationMode === undefined ? undefined : requiredString(value.accelerationMode, 'settings.accelerationMode', 16) as AccelerationMode
   if (accelerationMode !== undefined && !ACCELERATION_MODES.includes(accelerationMode)) throw new Error('settings.accelerationMode is invalid')
   const subtitleTemplate = value.subtitleTemplate === undefined ? undefined : identifier(value.subtitleTemplate, 'settings.subtitleTemplate') as SubtitleTemplateId
@@ -376,7 +376,7 @@ export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
   const maxLines = input.maxLines === undefined ? undefined : boundedCount(input.maxLines, 'maxLines', 1, 16)
   const silenceCut = input.silenceCut === undefined ? undefined : requiredString(input.silenceCut, 'silenceCut', 16) as SilenceCutMode
   if (silenceCut !== undefined && !SILENCE_CUT_MODES.includes(silenceCut)) throw new Error('unsupported silenceCut')
-  const silenceMinUs = input.silenceMinUs === undefined ? undefined : boundedCount(input.silenceMinUs, 'silenceMinUs', 50_000, 2_000_000)
+  const silenceMinUs = input.silenceMinUs === undefined ? undefined : boundedCount(input.silenceMinUs, 'silenceMinUs', 0, 2_000_000)
   const accelerationMode = input.accelerationMode === undefined ? undefined : requiredString(input.accelerationMode, 'accelerationMode', 16) as AccelerationMode
   if (accelerationMode !== undefined && !ACCELERATION_MODES.includes(accelerationMode)) throw new Error('unsupported accelerationMode')
   const subtitleTemplate = input.subtitleTemplate === undefined ? undefined : identifier(input.subtitleTemplate, 'subtitleTemplate') as SubtitleTemplateId

@@ -191,6 +191,9 @@ export interface SilenceCutOperationMetadata {
   originalDurationUs: TimeUs
   keepRanges: Array<{ startUs: TimeUs; endUs: TimeUs }>
   removedRanges: Array<{ startUs: TimeUs; endUs: TimeUs }>
+  /** The explicit profile/threshold used to create this internal operation. */
+  profile?: 'natural' | 'strong' | 'youtube'
+  minSilenceUs?: TimeUs
   targets: Array<{
     clipId: string
     trackId: string

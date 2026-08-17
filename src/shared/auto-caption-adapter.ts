@@ -120,6 +120,58 @@ export interface AutoCaptionProjectApply {
   wordBearingCaptionCount: number
 }
 
+export interface CaptionCoverageRange {
+  startUs: number
+  endUs: number
+}
+
+/**
+ * Extends only existing caption clips over short retained gaps.  It never
+ * invents text and deliberately leaves long gaps untouched for the silence
+ * plan/diagnostics to explain.
+ */
+export const ensureSubtitleCoverage = (
+  project: ProjectFile,
+  trackId: string,
+  ranges: readonly CaptionCoverageRange[],
+  maxGapUs: number
+): ProjectFile => {
+  if (!Number.isSafeInteger(maxGapUs) || maxGapUs < 0) return project
+  const next = structuredClone(project)
+  const track = next.tracks.find((candidate) => candidate.id === trackId)
+  if (!track || track.kind !== 'subtitle') return project
+  const captions = track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && clip.enabled && clip.durationUs > 0)
+  for (const range of ranges) {
+    if (!Number.isSafeInteger(range.startUs) || !Number.isSafeInteger(range.endUs) || range.endUs <= range.startUs) continue
+    const covered = captions.filter((caption) => caption.startUs < range.endUs && caption.startUs + caption.durationUs > range.startUs).sort((left, right) => left.startUs - right.startUs)
+    if (!covered.length) continue
+    const first = covered[0]!
+    const last = covered.at(-1)!
+    if (first.startUs > range.startUs && first.startUs - range.startUs <= maxGapUs) {
+      first.durationUs += first.startUs - range.startUs
+      first.startUs = range.startUs
+    }
+    const rangeEndUs = range.endUs
+    if (rangeEndUs > last.startUs + last.durationUs && rangeEndUs - (last.startUs + last.durationUs) <= maxGapUs) {
+      last.durationUs = rangeEndUs - last.startUs
+    }
+    for (let index = 0; index < covered.length - 1; index += 1) {
+      const left = covered[index]!
+      const right = covered[index + 1]!
+      const gapStartUs = Math.max(range.startUs, left.startUs + left.durationUs)
+      const gapEndUs = Math.min(range.endUs, right.startUs)
+      if (gapEndUs <= gapStartUs || gapEndUs - gapStartUs > maxGapUs) continue
+      const midpointUs = Math.floor((gapStartUs + gapEndUs) / 2)
+      const rightEndUs = right.startUs + right.durationUs
+      left.durationUs = Math.max(1, midpointUs - left.startUs)
+      right.startUs = midpointUs
+      right.durationUs = Math.max(1, rightEndUs - midpointUs)
+    }
+  }
+  track.clips.sort((left, right) => left.startUs - right.startUs || left.id.localeCompare(right.id))
+  return validateProject(next)
+}
+
 const nextAutoCaptionTrackName = (project: ProjectFile): string => {
   const names = new Set(project.tracks.filter((track) => track.kind === 'subtitle').map((track) => track.name))
   if (!names.has('自動字幕')) return '自動字幕'
@@ -136,7 +188,7 @@ export const applyAutoCaptionResultToProject = (
   project: ProjectFile,
   clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
   result: AutoCaptionResult,
-  options: { maxChars?: number; maxLines?: number; sourceTimeMapper?: SourceTimeMapper; subtitleTemplate?: SubtitleTemplateId; userSubtitleTemplates?: readonly UserSubtitleTemplate[]; subtitleTemplateStyle?: SubtitleStyle } = {}
+  options: { maxChars?: number; maxLines?: number; sourceTimeMapper?: SourceTimeMapper; subtitleTemplate?: SubtitleTemplateId; userSubtitleTemplates?: readonly UserSubtitleTemplate[]; subtitleTemplateStyle?: SubtitleStyle; captionCoverageRanges?: readonly CaptionCoverageRange[]; captionCoverageMaxGapUs?: number } = {}
 ): AutoCaptionProjectApply => {
   const transcript = autoCaptionResultToTranscript(clip, result, { sourceTimeMapper: options.sourceTimeMapper })
   if (options.maxChars !== undefined && (!Number.isSafeInteger(options.maxChars) || options.maxChars < 1 || options.maxChars > 10_000)) {
@@ -182,7 +234,9 @@ export const applyAutoCaptionResultToProject = (
     updatedAt: new Date().toISOString(),
     tracks: [...project.tracks.map((candidate) => structuredClone(candidate)), track]
   }
-  const validated = validateProject(next)
+  const validated = options.captionCoverageRanges && options.captionCoverageMaxGapUs !== undefined
+    ? ensureSubtitleCoverage(next, track.id, options.captionCoverageRanges, options.captionCoverageMaxGapUs)
+    : validateProject(next)
   return {
     project: validated,
     trackId: track.id,

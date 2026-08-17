@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createClipForAsset, createEmptyProject, createTrack, validateProject } from '../../src/shared/project'
-import { applySilenceCutToProject, buildSilenceReapplyTarget, canRestoreSilenceCut, createSilenceCutTimeMapper, restoreSilenceCutToProject, SilenceCutError, mapSourceTimeThroughSilenceCut } from '../../src/shared/silence-cut'
+import { applySilenceCutToProject, buildSilenceReapplyTarget, canRestoreSilenceCut, clampSilenceMinUs, createSilenceCutTimeMapper, restoreSilenceCutToProject, SilenceCutError, mapSourceTimeThroughSilenceCut, silenceCutOperationForClip } from '../../src/shared/silence-cut'
 import { deleteLinkedClips, splitLinkedClip, trimLinkedClip } from '../../src/shared/editing/operations'
 import { DEFAULT_AUDIO, DEFAULT_SUBTITLE_STYLE, type MediaAsset, type ProjectFile } from '../../src/shared/types'
 
@@ -27,6 +27,12 @@ const fixture = (): ProjectFile => {
 }
 
 describe('non-destructive silence cut', () => {
+  it('accepts a zero-second minimum and persists the explicit threshold on cut metadata', () => {
+    expect(clampSilenceMinUs(0, 150_000)).toBe(0)
+    const cut = applySilenceCutToProject(fixture(), 'video', { keepRanges: ranges }, { profile: 'youtube', minSilenceUs: 0 }).project
+    expect(silenceCutOperationForClip(cut, 'video:silence:1')).toMatchObject({ profile: 'youtube', minSilenceUs: 0 })
+  })
+
   it('uses current sourceInUs/durationUs and raw Whisper words, never SubtitleEditUnit, as reapply input', () => {
     const before = fixture()
     for (const track of before.tracks) for (const clip of track.clips) {

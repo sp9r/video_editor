@@ -173,4 +173,28 @@ describe('auto-caption timeline adapter', () => {
     const generated = applied.project.tracks.at(-1)?.clips[0]
     expect(generated?.kind === 'subtitle' ? generated.style : undefined).toMatchObject({ fontSize: 72, outlineWidth: 4, bold: true })
   })
+
+  it('extends existing captions over short retained gaps without inventing text', () => {
+    const project = createEmptyProject('caption coverage')
+    const clip = { id: 'clip-1', kind: 'video' as const, startUs: 0, sourceInUs: 20_000_000, durationUs: 10_000_000 }
+    const resultWithTwoCaptions = {
+      ...result,
+      rawWords: [
+        { id: 'source-word:0', text: '前', startUs: 20_000_000, endUs: 21_000_000 },
+        { id: 'source-word:1', text: '後', startUs: 21_200_000, endUs: 22_000_000 }
+      ],
+      captions: [
+        { ...result.captions[0]!, id: 'caption:0', text: '前', sourceWordIds: ['source-word:0'], startUs: 20_000_000, endUs: 21_000_000 },
+        { ...result.captions[0]!, id: 'caption:1', text: '後', sourceWordIds: ['source-word:1'], startUs: 21_200_000, endUs: 22_000_000 }
+      ],
+      sourceEndUs: 30_000_000
+    }
+    const applied = applyAutoCaptionResultToProject(project, clip, resultWithTwoCaptions, {
+      captionCoverageRanges: [{ startUs: 0, endUs: 3_000_000 }],
+      captionCoverageMaxGapUs: 300_000
+    })
+    const captions = applied.project.tracks.at(-1)!.clips.filter((candidate) => candidate.kind === 'subtitle')
+    expect(captions.map((caption) => [caption.startUs, caption.startUs + caption.durationUs])).toEqual([[0, 1_100_000], [1_100_000, 2_000_000]])
+    expect(captions.map((caption) => caption.kind === 'subtitle' ? caption.text : '')).toEqual(['前', '後'])
+  })
 })

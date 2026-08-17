@@ -165,7 +165,7 @@ export class SilenceAnalysisService {
         command: this.paths.ffmpegPath,
         args: [
           '-hide_banner', '-loglevel', 'info', '-ss', seconds(target.sourceInUs), '-t', seconds(target.durationUs),
-          '-i', asset.path, '-map', '0:a:0', '-vn', '-af', `silencedetect=noise=${profile.noiseDb.toFixed(2)}dB:d=${seconds(profile.minSilenceUs)}`,
+          '-i', asset.path, '-map', '0:a:0', '-vn', '-af', `silencedetect=noise=${profile.noiseDb.toFixed(2)}dB:d=${seconds(Math.max(1_000, profile.minSilenceUs))}`,
           '-f', 'null', process.platform === 'win32' ? 'NUL' : '/dev/null'
         ],
         signal: controller.signal,
