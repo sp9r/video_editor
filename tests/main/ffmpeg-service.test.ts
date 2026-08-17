@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
@@ -228,6 +228,33 @@ describe('FFmpeg export service', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('evicts old accurate frame files and clears the project cache on preview reset', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-accurate-frame-eviction-'))
+    try {
+      const project = await prepareProjectFiles(root)
+      const executor: ProcessExecutor = {
+        async run(request) {
+          if (request.args.includes('-filter_complex_script')) {
+            const outputPath = request.args.at(-1)
+            if (!outputPath) throw new Error('Missing accurate frame output')
+            await writeFile(outputPath, 'frame')
+          }
+          return success(request)
+        }
+      }
+      const workspaceRoot = join(root, 'workspaces')
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor, platform: 'win32', workspaceRoot })
+      for (let index = 0; index < 65; index += 1) await service.renderAccurateFrame(project, index * 33_334)
+      const frameDirectory = join(workspaceRoot, 'accurate-preview')
+      const beforeReset = (await readdir(frameDirectory)).filter((name) => name.endsWith('.png'))
+      expect(beforeReset.length).toBeLessThanOrEqual(64)
+      await service.clearAccuratePreviewCache()
+      await expect(readdir(frameDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 30_000)
 
   it('falls back from a runtime GPU failure to CPU, validates, and replaces output', async () => {
     const root = await mkdtemp(join(tmpdir(), 'spectra-service-'))

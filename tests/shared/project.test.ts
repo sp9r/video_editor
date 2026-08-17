@@ -7,6 +7,7 @@ import {
   framesToUs,
   layoutSubtitleTracks,
   moveClip,
+  projectFingerprint,
   projectDurationUs,
   relinkMediaAsset,
   splitClip,
@@ -32,6 +33,15 @@ const asset: MediaAsset = {
 }
 
 describe('project timebase', () => {
+  it('keeps the async preview identity stable across timestamp-only saves', () => {
+    const project = createEmptyProject('fingerprint')
+    const saved = structuredClone(project)
+    saved.updatedAt = '2026-08-17T00:00:00.000Z'
+    expect(projectFingerprint(saved)).toBe(projectFingerprint(project))
+    saved.name = 'changed'
+    expect(projectFingerprint(saved)).not.toBe(projectFingerprint(project))
+  })
+
   it('round-trips frames with an integer microsecond timeline', () => {
     const timeUs = framesToUs(300, 30)
     expect(timeUs).toBe(10_000_000)

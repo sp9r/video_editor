@@ -540,6 +540,17 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 - video_editorはfull 374 tests、targeted 129 tests、typecheck、build、Electron startup／interaction／accurate-preview／subtitle geometry／subtitle parity smokeがPASS。clip_automationはfull 320 tests、compileallがPASSした。
 - 自動検証での未解決regressionはない。実動画の見た目・聴感、Review／Thumbnailの操作感、候補フレームの意味性、NVENC実機結果は自動DONEにせずHuman Review Queueへ残す。
 
+### Stage 33 checkpoint — Memory / Preview / Caption Rail / Tight Cut
+
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
+
+- **MEM-001:** Accurate Previewのframe cacheを最大64件に制限し、evicted PNGの後処理削除、project plan変更時のcache clear、明示的project切替時のworkspace cleanupを追加。PNGファイルサイズをdecoded RGBAメモリ量とは扱わず、実機の10/25/50 frameメモリ計測は人間確認へ残す。
+- **PREV-002:** render plan更新中に旧planのclip IDで新project映像を隠さないよう一時的にplanを無効化。Accurate frameは共有project fingerprintとplayhead許容frame幅を満たす場合だけ表示し、別project・別時刻のstale frameをcurrent stateへ重ねない。Fast/Accurateの全style parityは既存のlibass/CSS制約を含め人間確認へ残す。
+- **UX-TL-009:** defaultの字幕詳細OFFでは、現在のSubtitleClip/editUnitsから派生するattached Caption Railをvideo clip内に表示する。専用surface、caption segment、word/edit-unit tick、選択、tooltip、既存ownership boundary handleを提供し、詳細ONでは正式subtitle trackを表示する。永続link・schema・data modelは変更しない。
+- **SIL-005:** `silenceMinUs=0`をvideo_editor／clip_automation contractで受理し、silence operation metadataへprofileと実使用thresholdを保存。未変更のsilence familyだけ、元source範囲をrestoreしてから閾値を再解析する「無音カットを更新」を1 history transactionで適用する。短いcaption gapは既存textを増やさず隣接captionの表示範囲を決定的に延長する。
+
+**Automated evidence:** Stage 33 targeted video tests、typecheck、clip contract/silence/worker targeted testsは実行済み。実動画でのAccurate Preview memory、Fast/Accurate visual、Caption Rail操作、tight-cutの聴感はHuman Review Queueへ残す。
+
 ---
 
 ## Notes for future Luna tasks

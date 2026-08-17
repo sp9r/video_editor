@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-react'
-import { formatTimecode, projectDurationUs } from '../../../shared/project'
+import { formatTimecode, projectDurationUs, projectFingerprint } from '../../../shared/project'
 import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
 import { buildSubtitleRenderSpec, subtitleAnchorTransform, subtitleVisualStateKey } from '../../../shared/subtitle-render'
 import { canonicalShadowBlurRadius } from '../../../shared/subtitle-shadow'
@@ -12,6 +12,14 @@ import { IconButton } from './Controls'
 
 const activeAt = (clip: { startUs: number; durationUs: number; enabled: boolean }, timeUs: number): boolean =>
   clip.enabled && clip.startUs <= timeUs && clip.startUs + clip.durationUs > timeUs
+
+export const accuratePreviewFrameMatchesCurrent = (
+  frame: Pick<AccuratePreviewFrameResult, 'projectFingerprint' | 'requestedTimeUs'>,
+  currentProjectFingerprint: string,
+  currentPlayheadUs: number,
+  frameDurationUs: number
+): boolean => frame.projectFingerprint === currentProjectFingerprint
+  && Math.abs(frame.requestedTimeUs - currentPlayheadUs) <= frameDurationUs
 
 function PreviewVisual({
   clip,
@@ -165,6 +173,7 @@ export default function Preview(): React.JSX.Element {
       setRenderPlan(null)
       return
     }
+    setRenderPlan(null)
     let active = true
     void window.spectra.createPreviewPlan(project)
       .then((plan) => { if (active) setRenderPlan(plan) })
@@ -187,7 +196,11 @@ export default function Preview(): React.JSX.Element {
       void api.renderAccuratePreviewFrame(project, playheadUs)
         .then((result) => {
           previewDiagnosticStore.recordAccurateOutcome(result.cacheHit ?? !result.ffmpegStarted, Boolean(result.ffmpegStarted))
-          if (sequence !== accurateRequestSequence.current || useEditorStore.getState().playing) return
+          const current = useEditorStore.getState()
+          const frameDurationUs = Math.ceil(1_000_000 * current.project.sequence.frameRate.denominator / current.project.sequence.frameRate.numerator)
+          if (sequence !== accurateRequestSequence.current
+            || current.playing
+            || !accuratePreviewFrameMatchesCurrent(result, projectFingerprint(current.project), current.playheadUs, frameDurationUs)) return
           setAccurateFrame(result)
           setAccurateRendering(false)
         })
@@ -265,7 +278,14 @@ export default function Preview(): React.JSX.Element {
   const subtitles = useMemo(() => project.tracks
     .filter((track) => track.kind === 'subtitle' && !track.hidden && !track.muted)
     .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && activeAt(clip, playheadUs) && (!plannedCaptionIds || plannedCaptionIds.has(clip.id)))), [plannedCaptionIds, playheadUs, project])
-  const showCssSubtitles = playing || (!accurateFrame && subtitles.length > 0)
+  const currentProjectFingerprint = useMemo(() => projectFingerprint(project), [project])
+  const accurateFrameMatchesCurrent = Boolean(accurateFrame && accuratePreviewFrameMatchesCurrent(
+    accurateFrame,
+    currentProjectFingerprint,
+    playheadUs,
+    Math.ceil(1_000_000 * project.sequence.frameRate.denominator / project.sequence.frameRate.numerator)
+  ))
+  const showCssSubtitles = playing || (!accurateFrameMatchesCurrent && subtitles.length > 0)
   const previewAudioClips = useMemo(() => previewAudioClipsForPlayback(renderPlan?.audioClips ?? [], playheadUs), [playheadUs, renderPlan])
   const scale = viewportSize.width > 0 && viewportSize.height > 0
     ? Math.min(viewportSize.width / project.sequence.width, viewportSize.height / project.sequence.height)
@@ -401,7 +421,7 @@ export default function Preview(): React.JSX.Element {
                 </button>
               })()
             ))}
-            {!playing && accurateFrame && window.spectra && (
+            {!playing && accurateFrameMatchesCurrent && accurateFrame && window.spectra && (
               <img
                 className="accurate-preview-overlay"
                 src={window.spectra.mediaUrl(accurateFrame.framePath)}

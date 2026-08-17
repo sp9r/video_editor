@@ -34,6 +34,7 @@ import { WaveformExtractor } from './waveform.js'
 import type { WaveformRequest } from '../../shared/types.js'
 import { frameIndexForTime, timeUsForFrameIndex } from '../../shared/frame-time.js'
 import { activeSubtitleClips, subtitleVisualStateKey } from '../../shared/subtitle-render.js'
+import { projectFingerprint } from '../../shared/project.js'
 
 export interface FfmpegServiceOptions {
   ffmpegPath?: string | null
@@ -189,9 +190,6 @@ const assertSubtitleBurnInGraph = (plan: RenderPlan, graph: string): void => {
   }
 }
 
-const projectFingerprint = (project: ProjectFile): string =>
-  createHash('sha256').update(JSON.stringify(project)).digest('hex')
-
 const mediaFingerprint = async (project: ProjectFile): Promise<string> => {
   const entries = await Promise.all(project.media.map(async (asset) => {
     try {
@@ -260,6 +258,11 @@ export class FfmpegService {
     await rm(join(this.workspaceRoot, 'subtitle-overlay'), { recursive: true, force: true })
   }
 
+  async clearAccuratePreviewCache(): Promise<void> {
+    this.#accurateFrames.clear()
+    await rm(join(this.workspaceRoot, 'accurate-preview'), { recursive: true, force: true })
+  }
+
   get subtitleOverlayCacheSize(): number {
     return this.#subtitleOverlays.size
   }
@@ -312,7 +315,9 @@ export class FfmpegService {
     while (this.#accurateFrames.size > 64) {
       const oldest = this.#accurateFrames.keys().next().value
       if (!oldest || oldest === cacheKey) break
+      const evicted = this.#accurateFrames.get(oldest)
       this.#accurateFrames.delete(oldest)
+      void Promise.resolve(evicted).then((result) => result ? rm(result.framePath, { force: true }) : undefined).catch(() => undefined)
     }
     try {
       const rendered = await promise

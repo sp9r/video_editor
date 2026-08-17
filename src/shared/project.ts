@@ -18,6 +18,19 @@ import { isSubtitleTrack } from './types'
 
 const clone = <T>(value: T): T => structuredClone(value)
 
+/** Stable cross-process identity for preview and async project operations. */
+export const projectFingerprint = (project: ProjectFile): string => {
+  const normalized = clone(project)
+  normalized.updatedAt = ''
+  const serialized = JSON.stringify(normalized)
+  let hash = 2166136261
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= serialized.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
+
 export class SubtitleCollisionError extends Error {
   readonly trackId: string
   readonly clipId: string

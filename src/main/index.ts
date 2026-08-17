@@ -160,7 +160,7 @@ const registerIpcHandlers = (): void => {
   ipcMain.handle(IPC.previewPlan, (event, projectInput: ProjectFile) => {
     assertTrustedSender(event)
     const project = validateProject(projectInput)
-    return createPreviewPlan(project, {
+    return requireService().clearAccuratePreviewCache().then(() => createPreviewPlan(project, {
       outputPath: path.join(app.getPath('temp'), 'spectra-preview-plan.mp4'),
       width: project.sequence.width,
       height: project.sequence.height,
@@ -170,7 +170,7 @@ const registerIpcHandlers = (): void => {
       encoderMode: 'software',
       burnSubtitles: true,
       exportSrt: false
-    })
+    }))
   })
 
   ipcMain.handle(IPC.previewAccurateFrame, async (event, projectInput: ProjectFile, timeUs: unknown) => {
@@ -528,14 +528,18 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   await waitForPaint()
   await writeFile(fastScreenshotPath, (await window.webContents.capturePage()).toPNG())
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
-  const accurateFixtureAfterResume = (await readDom()).overlay
-    && await until((dom) => dom.overlay && dom.overlayReady)
+  // A paused seek may invalidate the previous frame before the replacement
+  // is ready. Wait for the current-state frame instead of requiring a stale
+  // frame to remain visible during that interval.
+  const accurateFixtureAfterResume = await until((dom) => dom.overlay && dom.overlayReady)
   const editedProject = structuredClone(project)
   const editedSubtitle = editedProject.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === 'subtitle')
   if (editedSubtitle?.kind === 'subtitle') editedSubtitle.text = 'Accurate Preview edited'
   await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${JSON.stringify({ project: editedProject, timeUs: 500_000 })} }))`)
   const pendingDom = await readDom()
-  const editPendingPreservesOverlay = pendingDom.overlay && pendingDom.overlaySrc === initialOverlaySrc && pendingDom.quality.includes('更新中')
+  // A project edit changes the authoritative identity.  Do not keep showing
+  // the previous project's frame while the replacement is rendering.
+  const editPendingRejectsStaleOverlay = !pendingDom.overlay && pendingDom.quality.includes('更新中')
   const editedFrameReady = await until((dom) => dom.overlay && dom.overlayReady && dom.overlaySrc !== initialOverlaySrc && dom.quality.includes('正確プレビュー'))
   const cueSwitchStartedAt = performance.now()
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
@@ -545,7 +549,7 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const overlayImmediatelyAfterPause = (await readDom()).overlay
   const accurateAfterResume = overlayImmediatelyAfterPause && await until((dom) => dom.overlay && dom.overlayReady)
   const finalDom = await readDom()
-  const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, sequence: { width: project.sequence.width, height: project.sequence.height }, subtitleSpec, fastFixture, fastSubtitleOverlay: fastFixtureDom.fastSubtitleOverlay, fastSubtitleOverlayReady: fastFixtureDom.fastSubtitleOverlayReady, fastSubtitleOverlaySrc: fastFixtureDom.fastSubtitleOverlaySrc, initialCssFallbackCount: initialDom.cssFallbackCount, fastCssFallbackCount: fastFixtureDom.cssFallbackCount, playbackFrameSample, subtitleOverlayFramePath: cachedSubtitleOverlay.framePath, subtitleOverlayFrameIndex: cachedSubtitleOverlay.frameIndex, subtitleOverlayStateFingerprint: cachedSubtitleOverlay.subtitleStateFingerprint, subtitleOverlayColdMs, subtitleOverlayCacheHitMs, subtitleOverlayCueSwitchMs, coldOverlayFramePath: coldSubtitleOverlay.framePath, accurateFixtureAfterResume, editPendingPreservesOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastSubtitleStack: fastFixtureDom.subtitleStack, accurateSubtitleStack: initialDom.subtitleStack, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
+  const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, sequence: { width: project.sequence.width, height: project.sequence.height }, subtitleSpec, fastFixture, fastSubtitleOverlay: fastFixtureDom.fastSubtitleOverlay, fastSubtitleOverlayReady: fastFixtureDom.fastSubtitleOverlayReady, fastSubtitleOverlaySrc: fastFixtureDom.fastSubtitleOverlaySrc, initialCssFallbackCount: initialDom.cssFallbackCount, fastCssFallbackCount: fastFixtureDom.cssFallbackCount, playbackFrameSample, subtitleOverlayFramePath: cachedSubtitleOverlay.framePath, subtitleOverlayFrameIndex: cachedSubtitleOverlay.frameIndex, subtitleOverlayStateFingerprint: cachedSubtitleOverlay.subtitleStateFingerprint, subtitleOverlayColdMs, subtitleOverlayCacheHitMs, subtitleOverlayCueSwitchMs, coldOverlayFramePath: coldSubtitleOverlay.framePath, accurateFixtureAfterResume, editPendingRejectsStaleOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastSubtitleStack: fastFixtureDom.subtitleStack, accurateSubtitleStack: initialDom.subtitleStack, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
   return { ...startup, ...report }
 }
 
