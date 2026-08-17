@@ -109,6 +109,31 @@ export interface InlineSubtitleBlock {
   endUs: TimeUs
 }
 
+export interface CaptionRailUnitGeometry {
+  unit: SubtitleEditUnit
+  leftPercent: number
+  widthPercent: number
+}
+
+/** Projects word/edit-unit timing into the compact caption rail cue. */
+export const captionRailUnitGeometries = (
+  block: Pick<InlineSubtitleBlock, 'startUs' | 'endUs'>,
+  subtitle: Pick<SubtitleClip, 'editUnits' | 'words' | 'text' | 'startUs' | 'durationUs'>
+): CaptionRailUnitGeometry[] => {
+  const durationUs = block.endUs - block.startUs
+  if (durationUs <= 0) return []
+  return (subtitleEditUnits({ ...subtitle, kind: 'subtitle' } as SubtitleClip) ?? []).flatMap((unit) => {
+    const startUs = Math.max(block.startUs, unit.startUs)
+    const endUs = Math.min(block.endUs, unit.endUs)
+    if (endUs <= startUs) return []
+    return [{
+      unit,
+      leftPercent: ((startUs - block.startUs) / durationUs) * 100,
+      widthPercent: ((endUs - startUs) / durationUs) * 100
+    }]
+  })
+}
+
 /** Derives compact subtitle cues inside a video clip without creating a link. */
 export const inlineSubtitleBlocksForVideoClip = (
   videoClip: Pick<TimelineClip, 'kind' | 'startUs' | 'durationUs'>,
@@ -381,7 +406,22 @@ export default function Timeline(): React.JSX.Element {
   const subtitleClips = useMemo(() => project.tracks
     .filter((track) => track.kind === 'subtitle' && !track.hidden && !track.muted)
     .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && clip.enabled)), [project])
+  const subtitleBoundaryPairsByClipId = useMemo(() => {
+    const pairs = new Map<string, SubtitleBoundaryPair>()
+    for (const track of project.tracks.filter((candidate) => candidate.kind === 'subtitle' && !candidate.hidden && !candidate.muted)) {
+      for (const pair of subtitleBoundaryPairs(track)) {
+        pairs.set(pair.left.id, pair)
+        pairs.set(pair.right.id, pair)
+      }
+    }
+    return pairs
+  }, [project.tracks])
   const visibleTracks = useMemo(() => showSubtitleDetails ? project.tracks : project.tracks.filter((track) => track.kind !== 'subtitle'), [project.tracks, showSubtitleDetails])
+  const captionRailTrackIds = useMemo(() => new Set(project.tracks
+    .filter((track) => isMediaTrack(track))
+    .filter((track) => track.clips.some((clip) => clip.kind === 'video' && inlineSubtitleBlocksForVideoClip(clip, subtitleClips).length > 0))
+    .map((track) => track.id)), [project.tracks, subtitleClips])
+  const timelineGridRows = `26px ${visibleTracks.map((track) => captionRailTrackIds.has(track.id) ? '68px' : '56px').join(' ')}`
   const candidateRelationClips = useMemo(() => project.tracks
     .filter((track) => !track.hidden)
     .flatMap((track) => track.clips.filter((clip) => (clip.kind === 'video' || clip.kind === 'subtitle') && clip.enabled)), [project])
@@ -731,7 +771,7 @@ export default function Timeline(): React.JSX.Element {
         </div>
       </header>
       <div className="timeline-shell">
-        <div className="track-labels" ref={labelsRef} style={{ '--track-count': visibleTracks.length } as React.CSSProperties} onScroll={(event) => { if (viewportRef.current) viewportRef.current.scrollTop = event.currentTarget.scrollTop }}>
+        <div className="track-labels" ref={labelsRef} style={{ '--track-count': visibleTracks.length, gridTemplateRows: timelineGridRows } as React.CSSProperties} onScroll={(event) => { if (viewportRef.current) viewportRef.current.scrollTop = event.currentTarget.scrollTop }}>
           <div className="ruler-corner"><Plus size={14} /><span>トラック</span></div>
           {visibleTracks.map((track) => <TrackControls key={track.id} track={track} tracks={project.tracks} />)}
         </div>
@@ -748,7 +788,7 @@ export default function Timeline(): React.JSX.Element {
             event.currentTarget.scrollLeft += event.deltaX + event.deltaY
           }}
         >
-          <div className="timeline-content" style={{ width: timelineWidth, '--track-count': visibleTracks.length } as React.CSSProperties}>
+          <div className="timeline-content" style={{ width: timelineWidth, '--track-count': visibleTracks.length, gridTemplateRows: timelineGridRows } as React.CSSProperties}>
             <div
               className="time-ruler"
               onPointerDown={beginRulerScrub}
@@ -825,10 +865,11 @@ export default function Timeline(): React.JSX.Element {
                   const inlineSubtitleBlocks = !showSubtitleDetails && clip.kind === 'video' && !edit && clipVisible
                     ? inlineSubtitleBlocksForVideoClip(clip, subtitleClips)
                     : []
+                  const hasCaptionRail = inlineSubtitleBlocks.length > 0
                   return (
                     <div
                       key={clip.id}
-                      className={`${timelineClipClassName(clip, selected)}${edit ? ' is-dragging' : ''}${candidateSource ? ' is-candidate-source' : ''}${candidateRelated ? ' is-candidate-related' : ''}`}
+                      className={`${timelineClipClassName(clip, selected)}${edit ? ' is-dragging' : ''}${hasCaptionRail ? ' has-caption-rail' : ''}${candidateSource ? ' is-candidate-source' : ''}${candidateRelated ? ' is-candidate-related' : ''}`}
                       style={{ left: Math.max(0, visualLeft), width: Math.max(8, visualWidth) }}
                       onPointerDown={(event) => beginPointerEdit(event, clip, 'move', track.id)}
                       onPointerMove={(event) => {
@@ -874,16 +915,38 @@ export default function Timeline(): React.JSX.Element {
                         data-boundary-side={guide.side}
                         aria-hidden="true"
                       />)}
-                      {inlineSubtitleBlocks.map((block) => <button
-                        key={`inline-subtitle:${block.subtitleId}`}
-                        type="button"
-                        className={`timeline-inline-subtitle${selectedClipIds.includes(block.subtitleId) ? ' is-selected' : ''}`}
-                        style={{ left: `${block.leftPercent}%`, width: `${block.widthPercent}%` }}
-                        title={block.text}
-                        aria-label={`字幕: ${block.text}`}
-                        onPointerDown={(event) => { event.preventDefault(); event.stopPropagation() }}
-                        onClick={(event) => { event.preventDefault(); event.stopPropagation(); selectClip(block.subtitleId) }}
-                      >{block.text}</button>)}
+                      {hasCaptionRail ? <div className="timeline-caption-rail" aria-label="キャプションレール">
+                        {inlineSubtitleBlocks.map((block) => {
+                          const subtitle = subtitleClips.find((candidate) => candidate.id === block.subtitleId)
+                          const units = subtitle ? captionRailUnitGeometries(block, subtitle) : []
+                          const boundaryPair = subtitleBoundaryPairsByClipId.get(block.subtitleId)
+                          const boundarySide = boundaryPair?.left.id === block.subtitleId ? 'end' : boundaryPair?.right.id === block.subtitleId ? 'start' : null
+                          return <div
+                            key={`caption-rail:${block.subtitleId}`}
+                            className={`caption-rail-cue${selectedClipIds.includes(block.subtitleId) ? ' is-selected' : ''}`}
+                            style={{ left: `${block.leftPercent}%`, width: `${block.widthPercent}%` }}
+                          >
+                            <button
+                              type="button"
+                              className="caption-rail-cue-button"
+                              title={block.text}
+                              aria-label={`字幕: ${block.text}`}
+                              onPointerDown={(event) => { event.preventDefault(); event.stopPropagation() }}
+                              onClick={(event) => { event.preventDefault(); event.stopPropagation(); selectClip(block.subtitleId) }}
+                            >{block.text}</button>
+                            <span className="caption-rail-unit-layer" aria-hidden="true">
+                              {units.map(({ unit, leftPercent, widthPercent }) => <i key={unit.id} style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }} title={unit.text} />)}
+                            </span>
+                            {boundaryPair && boundarySide ? <button
+                              type="button"
+                              className={`caption-rail-boundary-handle is-${boundarySide}`}
+                              aria-label="字幕の編集境界を移動"
+                              title="字幕の編集境界をドラッグ"
+                              onPointerDown={(event) => beginSubtitleBoundaryDrag(event, boundaryPair)}
+                            /> : null}
+                          </div>
+                        })}
+                      </div> : null}
                       <span className="clip-content">{clipGlyph(clip)}{clip.linkGroupId ? <Link2 className="clip-link-icon" size={12} aria-label="リンクされたクリップ" /> : null}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
                       {razorGhost?.clipId === clip.id ? <span
                         className="subtitle-razor-ghost"

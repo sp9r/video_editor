@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { inlineSubtitleBlocksForVideoClip, isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryGuidesForVideoClip, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, ticksFor, timelineCandidateRelationIds, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineScrubTimeUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
+import { captionRailUnitGeometries, inlineSubtitleBlocksForVideoClip, isOutsideContextMenu, isTextEditingTarget, shouldCommitPointerEdit, shouldCommitSubtitleBoundaryDrag, subtitleBoundaryGuidesForVideoClip, subtitleBoundaryPairs, subtitleBoundaryPositionUs, subtitleWordGeometries, ticksFor, timelineCandidateRelationIds, timelineEdgeScrollDelta, timelineFollowScrollLeft, timelineScrubTimeUs, timelineSplitMenuState } from '../../src/renderer/src/components/Timeline'
 import { timelineZoomScrollLeft } from '../../src/renderer/src/action-state'
 import { deriveSubtitleEditUnits } from '../../src/shared/editing/edit-units'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
@@ -173,6 +173,22 @@ describe('timeline interaction guards', () => {
     expect(inlineSubtitleBlocksForVideoClip(video, subtitles)).toEqual([
       { subtitleId: 'partial', text: 'partial', leftPercent: 0, widthPercent: 12.5, startUs: 1_000_000, endUs: 1_500_000 },
       { subtitleId: 'inside', text: 'inside', leftPercent: 25, widthPercent: 25, startUs: 2_000_000, endUs: 3_000_000 }
+    ])
+  })
+
+  it('projects subtitle edit units into the attached caption rail without changing ownership data', () => {
+    const block = { startUs: 2_000_000, endUs: 5_000_000 }
+    const subtitle = {
+      text: 'これは字幕', startUs: 2_000_000, durationUs: 2_500_000,
+      editUnits: [
+        { id: 'u1', text: 'これは', parentSourceWordId: 'w1', startUs: 2_000_000, endUs: 3_000_000, timingProvenance: 'estimated' as const },
+        { id: 'u2', text: '字幕', parentSourceWordId: 'w1', startUs: 3_000_000, endUs: 4_500_000, timingProvenance: 'estimated' as const }
+      ],
+      words: []
+    }
+    expect(captionRailUnitGeometries(block, subtitle)).toEqual([
+      { unit: subtitle.editUnits[0], leftPercent: 0, widthPercent: 33.33333333333333 },
+      { unit: subtitle.editUnits[1], leftPercent: 33.33333333333333, widthPercent: 50 }
     ])
   })
 })
