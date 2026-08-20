@@ -611,12 +611,12 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 
 ### Stage 38 — Final Pre-Reset Fix
 
-**Status:** `IMPLEMENTED — REAL VIDEO E2E / HUMAN ACCEPTANCE PENDING`
+**Status:** `IMPLEMENTED — REAL VIDEO E2E PASS / HUMAN ACCEPTANCE PENDING`
 
 - Fast animated字幕はlibass base PNGを唯一の字幕visualとし、再生ヘッドからopacity／scale／slide transformだけを画像へ適用する。独立CSSタイマーやCSS glyph rendererは追加していない。
 - schedulerは実行中prefetchがcurrentへ昇格した場合に同じ結果をcurrent commitへ転用する。open manual transaction内の最初の実Project mutationもpending async mutationを即時conflict／cancelする。
 - production metricsはElectron起動PIDの子孫だけをmain／renderer／GPU／utility／other／FFmpegへ分類し、無関係なFFmpegを除外するprocess-tree helperと単体テストを追加した。
-- Real video smoke fixtureは1080p H.264を生成して連続再生する実装を追加したが、現環境ではfixture生成／起動がtime-box内に完了せず、droppedFrames・cue boundary・gap・animated observableの実動画値は未取得。推測値で補完しない。
+- Real video smoke fixtureは1280x720 H.264/libx264、30fps、8秒でHTML `<video>`を連続再生する。fixture 346ms、Electron起動約0.3秒、再生8.5秒、report emission成功。dropped 0 / total 4、CSS fallback 0、stale cue 0、subtitle-less gap overlay 0、wrong cue after seek 0、animated transform/opacity observable YES。
 
 **Automated evidence:**
 
@@ -625,11 +625,11 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 - `npm run build`: PASS
 - normal accurate-preview smoke: PASS（CSS fallback 0、Fast／Accurate parity PASS、cold p50/p95 153.97/188.30ms、cache-hit 0.31/0.33ms、cache 4 entries / 161,901 bytes）
 - full Vitest: 70 files / 407 tests中、既存 `tests/main/thumbnail-service.test.ts` がWindows resource/cache cleanup timeoutでFAIL（Stage 38変更箇所のtargeted testsはPASS）。
-- real video smoke: time-box timeout、production-like process metricsの有効な最終値は未採用。
+- real video smoke: PASS。CPU total 7.196%、main 0.457%、renderer 4.641%、GPU 2.098%、utility/other 0%、ffmpeg 0%。working set total 814,411,776 bytes、private total 727,162,880 bytes。owned FFmpeg max 0、overlay cache 6 entries / 197,702 bytes。
 
 **Optional P2:** prefetch promotion and immediate transaction conflict implemented; 128MiB direct-cap test not added.
 
-**Human acceptance:** H.264実動画で10–15秒連続再生、cue boundary／gap／seek／pause-resume、animated image transform、droppedFrames、所有process tree CPU／memory／FFmpeg countを再測定する。
+**Human acceptance:** H.264実動画での見た目・聴感、pause/resume、GPU memoryのhuman retestを残す。
 
 ---
 

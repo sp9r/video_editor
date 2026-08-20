@@ -238,18 +238,21 @@ try {
   const fixtureOverrides = process.env.SPECTRA_SUBTITLE_FIXTURE_JSON ? JSON.parse(process.env.SPECTRA_SUBTITLE_FIXTURE_JSON) : {}
   const sourceColor = process.env.SPECTRA_PREVIEW_SOURCE_COLOR
   const realVideo = process.env.SPECTRA_REAL_VIDEO_E2E === '1'
+  const phaseStartedAt = Date.now()
+  const phase = (name) => { if (realVideo) console.log(`[real-video] ${name} +${Date.now() - phaseStartedAt}ms`) }
+  phase('fixture-start')
   const sourcePath = path.join(root, realVideo ? 'source.mp4' : 'source.png')
   const projectPath = path.join(root, 'project.json')
   await run(ffmpegPath, realVideo
-    ? ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x203040:s=1920x1080:r=30:d=10', '-t', '10', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', sourcePath]
+    ? ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x203040:s=1280x720:r=30:d=8', '-t', '8', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', sourcePath]
     : ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', sourceColor ? `color=c=${sourceColor}:s=1920x1080:r=30:d=1` : 'testsrc2=size=320x180:rate=30:duration=1', '-frames:v', '1', sourcePath])
-  const mediaWidth = realVideo || sourceColor ? 1920 : 320
-  const mediaHeight = realVideo || sourceColor ? 1080 : 180
+  const mediaWidth = realVideo ? 1280 : sourceColor ? 1920 : 320
+  const mediaHeight = realVideo ? 720 : sourceColor ? 1080 : 180
   const defaultSubtitleStyle = { fontFamily: 'Noto Sans JP', fontSize: 123, color: '#ffffff', outlineColor: '#111318', outlineWidth: 14, shadowColor: '#ff0000', shadowBlur: 24, backgroundColor: '#000000', backgroundOpacity: 0.15, bold: true, italic: false, letterSpacing: 0, lineHeight: 1.15, alignment: 'bottom', positionX: 50, positionY: 86, maxWidthPercent: 80, animation: 'none', animationDurationUs: 0 }
   const subtitleStyle = { ...defaultSubtitleStyle, ...(fixtureOverrides.style ?? {}) }
   const subtitleText = typeof fixtureOverrides.text === 'string' ? fixtureOverrides.text : '字幕を入力'
   const fixtureTag = typeof fixtureOverrides.tag === 'string' ? fixtureOverrides.tag : 'base'
-  const playbackMs = realVideo ? 10_500 : Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200)
+  const playbackMs = realVideo ? 8_500 : Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200)
   const longPlayback = Number.isFinite(playbackMs) && playbackMs > 2_000
   const playbackDurationUs = longPlayback ? Math.ceil(playbackMs * 1_000) + 2_000_000 : 1_000_000
   const subtitleClips = realVideo
@@ -271,21 +274,23 @@ try {
     name: `Accurate Preview Smoke ${fixtureTag}`,
     createdAt: '2026-08-14T00:00:00.000Z',
     updatedAt: '2026-08-14T00:00:00.000Z',
-    sequence: { width: 1920, height: 1080, frameRate: { numerator: 30, denominator: 1 }, sampleRate: 48000, backgroundColor: '#102030' },
-    media: [{ id: 'source', name: realVideo ? 'source.mp4' : 'source.png', path: sourcePath, kind: realVideo ? 'video' : 'image', durationUs: realVideo ? 10_000_000 : 0, width: mediaWidth, height: mediaHeight, hasAudio: false, fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false }],
+    sequence: { width: realVideo ? 1280 : 1920, height: realVideo ? 720 : 1080, frameRate: { numerator: 30, denominator: 1 }, sampleRate: 48000, backgroundColor: '#102030' },
+    media: [{ id: 'source', name: realVideo ? 'source.mp4' : 'source.png', path: sourcePath, kind: realVideo ? 'video' : 'image', durationUs: realVideo ? 8_000_000 : 0, width: mediaWidth, height: mediaHeight, hasAudio: false, fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false }],
     tracks: [
-      { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: realVideo ? 'video' : 'image', assetId: 'source', startUs: 0, durationUs: realVideo ? 10_000_000 : playbackDurationUs, sourceInUs: 0, enabled: true, transform: fixtureOverrides.transform ?? { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
+      { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: realVideo ? 'video' : 'image', assetId: 'source', startUs: 0, durationUs: realVideo ? 8_000_000 : playbackDurationUs, sourceInUs: 0, enabled: true, ...(realVideo ? { audio: { volumeDb: 0, pan: 0, fadeInUs: 0, fadeOutUs: 0 } } : {}), transform: fixtureOverrides.transform ?? { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
       { id: 'subtitle', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: subtitleClips }
     ]
   }
   await writeFile(projectPath, JSON.stringify(project), 'utf8')
+  phase('fixture-written')
   const child = spawn(electronPath, ['.'], {
     cwd: repositoryRoot,
-    env: { ...process.env, SPECTRA_ACCURATE_PREVIEW_SMOKE: '1', SPECTRA_PREVIEW_E2E_PROJECT: projectPath, SPECTRA_PREVIEW_PLAYBACK_MS: realVideo ? '10500' : process.env.SPECTRA_PREVIEW_PLAYBACK_MS, SPECTRA_REAL_VIDEO_E2E: realVideo ? '1' : undefined },
+    env: { ...process.env, SPECTRA_ACCURATE_PREVIEW_SMOKE: '1', SPECTRA_PREVIEW_E2E_PROJECT: projectPath, SPECTRA_PREVIEW_PLAYBACK_MS: realVideo ? '8500' : process.env.SPECTRA_PREVIEW_PLAYBACK_MS, SPECTRA_REAL_VIDEO_E2E: realVideo ? '1' : undefined },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     shell: false
   })
+  phase('electron-spawned')
   let output = ''
   const processMetricSamples = []
   let metricReadInFlight = false
@@ -299,18 +304,19 @@ try {
       metricReadInFlight = false
     }
   }
-  await sampleProcessMetrics()
-  const metricTimer = setInterval(() => { void sampleProcessMetrics() }, 500)
   child.stdout.setEncoding('utf8')
   child.stderr.setEncoding('utf8')
-  child.stdout.on('data', (chunk) => { output += chunk })
-  child.stderr.on('data', (chunk) => { output += chunk })
-  const exitCode = await new Promise((resolve, reject) => {
+  child.stdout.on('data', (chunk) => { output += chunk; if (realVideo) process.stdout.write(chunk) })
+  child.stderr.on('data', (chunk) => { output += chunk; if (realVideo) process.stdout.write(chunk) })
+  const exitCodePromise = new Promise((resolve, reject) => {
     const playbackMs = Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200)
     const timer = setTimeout(() => { child.kill(); reject(new Error(`Accurate Preview smoke timed out.\n${output}`)) }, Math.max(60_000, playbackMs + 60_000))
     child.once('error', (error) => { clearTimeout(timer); reject(error) })
     child.once('exit', async (code, signal) => { clearTimeout(timer); await sampleProcessMetrics(); signal ? reject(new Error(`Electron exited by ${signal}\n${output}`)) : resolve(code ?? 1) })
   })
+  await sampleProcessMetrics()
+  const metricTimer = setInterval(() => { void sampleProcessMetrics() }, 500)
+  const exitCode = await exitCodePromise
   clearInterval(metricTimer)
   const line = output.split(/\r?\n/u).find((item) => item.startsWith('SPECTRA_ACCURATE_PREVIEW_REPORT '))
   if (!line) throw new Error(`Accurate Preview report was not emitted.\n${output}`)
