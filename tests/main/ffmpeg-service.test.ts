@@ -1,5 +1,5 @@
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import { FfmpegService, createFfmpegProgressParser } from '../../src/main/ffmpeg/service.js'
@@ -93,15 +93,37 @@ describe('FFmpeg export service', () => {
     }
   })
 
-  it('rejects animated subtitle overlay requests so the renderer can use its explicit CSS fallback', async () => {
+  it('renders animated subtitles as a static authoritative base image for Fast Preview', async () => {
     const project = makeProject()
+    const root = await mkdtemp(join(tmpdir(), 'spectra-subtitle-overlay-animation-test-'))
     const subtitle = project.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
     if (!subtitle || subtitle.kind !== 'subtitle') throw new Error('subtitle fixture missing')
     subtitle.startUs = 0
     subtitle.durationUs = 2_000_000
     subtitle.style = { ...subtitle.style, animation: 'fade', animationDurationUs: 200_000 }
-    const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { workspaceRoot: join(tmpdir(), 'spectra-subtitle-overlay-animation-test') })
-    await expect(service.renderSubtitleOverlay(project, 500_000)).rejects.toThrow(/CSS fallback/u)
+    let ass = ''
+    const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, {
+      workspaceRoot: join(root, 'workspace'),
+      executor: { run: async (request) => {
+        if (request.args.includes('-filter_complex_script')) {
+          const graphPath = request.args[request.args.indexOf('-filter_complex_script') + 1]
+          if (graphPath) {
+            const graph = await readFile(graphPath, 'utf8')
+            const assFile = /ass=filename='([^']+)'/u.exec(graph)?.[1]
+            if (assFile) ass = await readFile(join(dirname(graphPath), assFile), 'utf8').catch(() => '')
+          }
+          const outputPath = request.args.at(-1)
+          if (outputPath) await writeFile(outputPath, 'overlay')
+        }
+        return success(request)
+      } }
+    })
+    try {
+      await expect(service.renderSubtitleOverlay(project, 500_000, { animationMode: 'base' })).resolves.toMatchObject({ ffmpegStarted: true })
+      expect(ass).not.toContain('\\fad')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('bounds the subtitle overlay cache while cycling through 100 visual states', async () => {
@@ -131,7 +153,7 @@ describe('FFmpeg export service', () => {
         clip.style = { ...clip.style, positionX: 10 + index }
         await service.renderSubtitleOverlay(next, 500_000)
       }
-      expect(service.subtitleOverlayCacheSize).toBeLessThanOrEqual(64)
+      expect(service.subtitleOverlayCacheSize).toBeLessThanOrEqual(24)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

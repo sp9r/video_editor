@@ -67,7 +67,7 @@ describe('latest-only subtitle overlay scheduling', () => {
     }
   })
 
-  it('starts the latest cue without waiting for a stale in-flight render', async () => {
+  it('keeps one authoritative render in flight and then starts the latest cue', async () => {
     vi.useFakeTimers()
     try {
       const calls: string[] = []
@@ -89,14 +89,43 @@ describe('latest-only subtitle overlay scheduling', () => {
       schedule('cue-b')
       await vi.advanceTimersByTimeAsync(0)
 
-      expect(calls).toEqual(['cue-a', 'cue-b'])
-      resolvers.get('cue-b')?.('cue-b')
+      expect(calls).toEqual(['cue-a'])
       await vi.advanceTimersByTimeAsync(0)
       expect(scheduler.inFlight).toBe(true)
 
       resolvers.get('cue-a')?.('cue-a')
       await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toEqual(['cue-a', 'cue-b'])
+      resolvers.get('cue-b')?.('cue-b')
+      await vi.advanceTimersByTimeAsync(0)
       expect(scheduler.inFlight).toBe(false)
+      scheduler.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds prefetch to two queued visual states and prioritizes the current cue', async () => {
+    vi.useFakeTimers()
+    try {
+      const calls: string[] = []
+      const resolvers = new Map<string, (value: string) => void>()
+      const scheduler = new LatestSubtitleOverlayScheduler<string>(0)
+      const item = (key: string) => ({ key, run: () => {
+        calls.push(key)
+        return new Promise<string>((resolve) => resolvers.set(key, resolve))
+      }, onCommit: () => undefined, onError: () => undefined })
+      scheduler.schedule(item('current'))
+      scheduler.schedulePrefetch(item('next-1'))
+      scheduler.schedulePrefetch(item('next-2'))
+      scheduler.schedulePrefetch(item('next-3'))
+      expect(scheduler.queuedPrefetchCount).toBe(2)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toEqual(['current'])
+      resolvers.get('current')?.('current')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toEqual(['current', 'next-2'])
       scheduler.dispose()
     } finally {
       vi.useRealTimers()

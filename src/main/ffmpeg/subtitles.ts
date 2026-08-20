@@ -147,7 +147,7 @@ const hasVisibleColor = (value: string): boolean => parseHexColor(value).alpha >
  */
 export const assShadowBlurFromCss = canonicalShadowBlurRadius
 
-export const generateAss = (project: ProjectFile): string => {
+export const generateAss = (project: ProjectFile, options: { disableAnimations?: boolean } = {}): string => {
   const cues = collectSubtitleCues(project)
   const width = Math.max(16, Math.round(project.sequence.width))
   const height = Math.max(16, Math.round(project.sequence.height))
@@ -180,7 +180,7 @@ export const generateAss = (project: ProjectFile): string => {
     const x = Math.round(spec.xPx)
     const y = Math.round(spec.yPx)
     const renderEvent = (styleName: string, eventX: number, eventY: number, eventLayer: number, shadow = false): string => {
-      const override = animationOverride(spec, eventX, eventY)
+      const override = options.disableAnimations ? `\\pos(${eventX},${eventY})` : animationOverride(spec, eventX, eventY)
       const assBlur = shadow ? assShadowBlurFromCss(spec.shadowBlurPx) : 0
       const blurOverride = assBlur > 0 ? `\\blur${assBlur}` : ''
       const text = `{${override}${blurOverride}}${escapeAssText(spec.wrappedText)}`

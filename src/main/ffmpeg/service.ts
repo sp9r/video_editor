@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import type {
@@ -33,7 +33,7 @@ import { generateAss, generateSrt } from './subtitles.js'
 import { WaveformExtractor } from './waveform.js'
 import type { WaveformRequest } from '../../shared/types.js'
 import { frameIndexForTime, timeUsForFrameIndex } from '../../shared/frame-time.js'
-import { activeSubtitleClips, subtitleVisualStateKey } from '../../shared/subtitle-render.js'
+import { subtitleVisualStateKey } from '../../shared/subtitle-render.js'
 import { projectFingerprint } from '../../shared/project.js'
 
 export interface FfmpegServiceOptions {
@@ -66,6 +66,7 @@ export interface AccurateFrameOptions {
 
 export interface SubtitleOverlayOptions {
   signal?: AbortSignal
+  animationMode?: 'full' | 'base'
 }
 
 export interface ExportJob {
@@ -147,20 +148,33 @@ const moveIntoPlace = async (temporaryPath: string, outputPath: string): Promise
   }
 }
 
-const trimSubtitleOverlayDiskCache = async (directory: string, maximum = 64): Promise<void> => {
+const MAX_SUBTITLE_OVERLAY_CACHE_ENTRIES = 24
+const MAX_SUBTITLE_OVERLAY_CACHE_BYTES = 128 * 1024 * 1024
+
+const trimSubtitleOverlayDiskCache = async (directory: string, maximum = MAX_SUBTITLE_OVERLAY_CACHE_ENTRIES, maximumBytes = MAX_SUBTITLE_OVERLAY_CACHE_BYTES): Promise<number> => {
   const entries = await readdir(directory, { withFileTypes: true })
   const files = (await Promise.all(entries
     .filter((entry) => entry.isFile() && entry.name.endsWith('.png'))
     .map(async (entry) => {
       const path = join(directory, entry.name)
       try {
-        return { path, modifiedAt: (await stat(path)).mtimeMs }
+        const file = await stat(path)
+        return { path, modifiedAt: file.mtimeMs, size: file.size }
       } catch {
         return null
       }
-    }))).filter((entry): entry is { path: string; modifiedAt: number } => entry !== null)
+    }))).filter((entry): entry is { path: string; modifiedAt: number; size: number } => entry !== null)
   files.sort((left, right) => left.modifiedAt - right.modifiedAt)
-  await Promise.all(files.slice(0, Math.max(0, files.length - maximum)).map((entry) => rm(entry.path, { force: true })))
+  let totalBytes = files.reduce((total, entry) => total + (entry.size ?? 0), 0)
+  const remove: typeof files = []
+  while (files.length - remove.length > maximum || totalBytes > maximumBytes) {
+    const entry = files[remove.length]
+    if (!entry) break
+    remove.push(entry)
+    totalBytes -= entry.size ?? 0
+  }
+  await Promise.all(remove.map((entry) => rm(entry.path, { force: true })))
+  return Math.max(0, totalBytes)
 }
 
 const assertInputFile = async (path: string): Promise<void> => {
@@ -223,6 +237,7 @@ export class FfmpegService {
   readonly #accurateFrames = new Map<string, Promise<AccuratePreviewFrameResult> | AccuratePreviewFrameResult>()
   readonly #subtitleOverlays = new Map<string, Promise<SubtitleOverlayResult> | SubtitleOverlayResult>()
   readonly #accurateInFlight = new Set<Promise<AccuratePreviewFrameResult>>()
+  #subtitleOverlayCacheBytes = 0
   #accuratePreviewGeneration = 0
   #accuratePreviewCleanup: Promise<void> | null = null
 
@@ -258,6 +273,7 @@ export class FfmpegService {
   /** Test/smoke-only reset for the bounded subtitle overlay workspace. */
   async clearSubtitleOverlayCache(): Promise<void> {
     this.#subtitleOverlays.clear()
+    this.#subtitleOverlayCacheBytes = 0
     await rm(join(this.workspaceRoot, 'subtitle-overlay'), { recursive: true, force: true })
   }
 
@@ -275,6 +291,10 @@ export class FfmpegService {
 
   get subtitleOverlayCacheSize(): number {
     return this.#subtitleOverlays.size
+  }
+
+  get subtitleOverlayCacheBytes(): number {
+    return this.#subtitleOverlayCacheBytes
   }
 
   async renderAccurateFrame(
@@ -360,28 +380,33 @@ export class FfmpegService {
     }
     const frameIndex = frameIndexForTime(requestedTimeUs, fps)
     const renderedTimeUs = timeUsForFrameIndex(frameIndex, fps)
-    const active = activeSubtitleClips(project, renderedTimeUs)
-    if (active.some(({ clip }) => clip.style.animation !== 'none')) {
-      throw new Error('Animated subtitles use the CSS fallback until authoritative animation segments are implemented')
-    }
+    const animationMode = options.animationMode ?? 'full'
     const subtitleStateFingerprint = createHash('sha256').update(subtitleVisualStateKey(project, renderedTimeUs)).digest('hex')
     const cacheKey = createHash('sha256').update(JSON.stringify({
       rendererVersion: subtitleOverlayRendererVersion,
       width: Math.max(16, Math.round(project.sequence.width)),
       height: Math.max(16, Math.round(project.sequence.height)),
       fps,
-      subtitleStateFingerprint
+      subtitleStateFingerprint,
+      animationMode
     })).digest('hex')
     const cached = this.#subtitleOverlays.get(cacheKey)
-    if (cached) return { ...(await cached), cacheHit: true, ffmpegStarted: false }
+    if (cached) {
+      this.#subtitleOverlays.delete(cacheKey)
+      this.#subtitleOverlays.set(cacheKey, cached)
+      const cachedResult = await cached
+      await utimes(cachedResult.framePath, new Date(), new Date()).catch(() => undefined)
+      return { ...cachedResult, cacheHit: true, ffmpegStarted: false }
+    }
     const promise = this.#renderSubtitleOverlay(project, cacheKey, {
       frameIndex,
       renderedTimeUs,
       subtitleStateFingerprint,
+      animationMode,
       signal: options.signal
     })
     this.#subtitleOverlays.set(cacheKey, promise)
-    while (this.#subtitleOverlays.size > 64) {
+    while (this.#subtitleOverlays.size > MAX_SUBTITLE_OVERLAY_CACHE_ENTRIES) {
       const oldest = this.#subtitleOverlays.keys().next().value
       if (!oldest || oldest === cacheKey) break
       const value = this.#subtitleOverlays.get(oldest)
@@ -390,6 +415,7 @@ export class FfmpegService {
     }
     try {
       const rendered = await promise
+      this.#subtitleOverlayCacheBytes = await trimSubtitleOverlayDiskCache(join(this.workspaceRoot, 'subtitle-overlay'))
       return { ...rendered, cacheHit: rendered.ffmpegStarted === false }
     } catch (error) {
       if (this.#subtitleOverlays.get(cacheKey) === promise) this.#subtitleOverlays.delete(cacheKey)
@@ -473,13 +499,14 @@ export class FfmpegService {
   async #renderSubtitleOverlay(
     project: ProjectFile,
     cacheKey: string,
-    metadata: Omit<SubtitleOverlayResult, 'framePath'> & { renderedTimeUs: number; signal?: AbortSignal }
+    metadata: Omit<SubtitleOverlayResult, 'framePath'> & { renderedTimeUs: number; animationMode: 'full' | 'base'; signal?: AbortSignal }
   ): Promise<SubtitleOverlayResult> {
     const directory = join(this.workspaceRoot, 'subtitle-overlay')
     const outputPath = join(directory, `${cacheKey}.png`)
     try {
       const existing = await stat(outputPath)
       if (existing.isFile() && existing.size > 0) {
+        await utimes(outputPath, new Date(), new Date()).catch(() => undefined)
         return { framePath: outputPath, frameIndex: metadata.frameIndex, subtitleStateFingerprint: metadata.subtitleStateFingerprint, ffmpegStarted: false }
       }
     } catch {
@@ -498,7 +525,7 @@ export class FfmpegService {
     try {
       await Promise.all([
         writeFile(filterGraphPath, buildSubtitleOverlayFilterGraph(width, height, numerator, denominator, metadata.renderedTimeUs, assFileName), 'utf8'),
-        writeFile(assPath, generateAss(project), 'utf8')
+        writeFile(assPath, generateAss(project, { disableAnimations: metadata.animationMode === 'base' }), 'utf8')
       ])
       await this.executor.run({
         command: this.paths.ffmpegPath,
@@ -534,7 +561,7 @@ export class FfmpegService {
       const rendered = await stat(temporaryPath)
       if (!rendered.isFile() || rendered.size === 0) throw new Error('Subtitle overlay renderer produced an empty frame')
       await moveIntoPlace(temporaryPath, outputPath)
-      await trimSubtitleOverlayDiskCache(directory)
+      this.#subtitleOverlayCacheBytes = await trimSubtitleOverlayDiskCache(directory)
       return { framePath: outputPath, frameIndex: metadata.frameIndex, subtitleStateFingerprint: metadata.subtitleStateFingerprint, ffmpegStarted: true }
     } finally {
       await Promise.all([

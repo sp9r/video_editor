@@ -296,6 +296,10 @@ export interface SubtitleOverlayResult {
   ffmpegStarted?: boolean
 }
 
+export interface SubtitleOverlayRequestOptions {
+  animationMode?: 'full' | 'base'
+}
+
 export interface WaveformRequest {
   mediaPath: string
   sourceInUs: TimeUs
@@ -433,7 +437,7 @@ export interface DesktopApi {
   listFontFamilies(): Promise<string[]>
   createPreviewPlan(project: ProjectFile): Promise<PreviewPlan>
   renderAccuratePreviewFrame(project: ProjectFile, timeUs: TimeUs): Promise<AccuratePreviewFrameResult>
-  renderSubtitleOverlay(project: ProjectFile, timeUs: TimeUs): Promise<SubtitleOverlayResult>
+  renderSubtitleOverlay(project: ProjectFile, timeUs: TimeUs, options?: SubtitleOverlayRequestOptions): Promise<SubtitleOverlayResult>
   startSilenceCutReapply(project: ProjectFile, selectedClipId: string, jobId: string, profile: import('./silence-cut').SilenceReapplyProfile, minSilenceUs?: number): Promise<{
     jobId: string
     analysis: AutoCaptionSilenceAnalysis

@@ -6,13 +6,19 @@ export interface LatestSubtitleOverlayRequest<T> {
   onError: (error: unknown, key: string) => void
 }
 
-/** Coalesces rapid inspector updates into one latest-only render after the debounce window. */
+/**
+ * Serializes authoritative overlay work: one current render in flight and at
+ * most two queued prefetches. A stale in-flight render may finish for cache
+ * warming, but it can never commit to the current display.
+ */
 export class LatestSubtitleOverlayScheduler<T> {
   readonly #debounceMs: number
   #timer: ReturnType<typeof setTimeout> | null = null
   #pending: (LatestSubtitleOverlayRequest<T> & { sequence: number }) | null = null
-  #running = new Map<number, LatestSubtitleOverlayRequest<T>>()
+  #prefetch = new Map<string, LatestSubtitleOverlayRequest<T> & { sequence: number }>()
+  #running: (LatestSubtitleOverlayRequest<T> & { sequence: number; prefetch: boolean }) | null = null
   #sequence = 0
+  #latestCurrentSequence = 0
 
   constructor(debounceMs = 40) {
     if (!Number.isFinite(debounceMs) || debounceMs < 0) throw new Error('Subtitle overlay debounce must be finite and non-negative')
@@ -22,12 +28,25 @@ export class LatestSubtitleOverlayScheduler<T> {
   schedule(request: LatestSubtitleOverlayRequest<T>): void {
     const sequence = ++this.#sequence
     this.#pending = { ...request, sequence }
+    this.#latestCurrentSequence = sequence
+    this.#prefetch.delete(request.key)
+    this.#arm()
+  }
+
+  schedulePrefetch(request: LatestSubtitleOverlayRequest<T>): void {
+    if (this.#pending?.key === request.key || this.#running?.key === request.key || this.#prefetch.has(request.key)) return
+    if (this.#prefetch.size >= 2) {
+      const oldest = this.#prefetch.keys().next().value
+      if (oldest) this.#prefetch.delete(oldest)
+    }
+    this.#prefetch.set(request.key, { ...request, sequence: ++this.#sequence })
     this.#arm()
   }
 
   cancel(): void {
     ++this.#sequence
     this.#pending = null
+    this.#prefetch.clear()
     if (this.#timer !== null) {
       clearTimeout(this.#timer)
       this.#timer = null
@@ -39,36 +58,45 @@ export class LatestSubtitleOverlayScheduler<T> {
   }
 
   get inFlight(): boolean {
-    return this.#running.size > 0
+    return this.#running !== null
   }
 
   get hasPending(): boolean {
-    return this.#pending !== null
+    return this.#pending !== null || this.#prefetch.size > 0
+  }
+
+  get queuedPrefetchCount(): number {
+    return this.#prefetch.size
   }
 
   #arm(): void {
-    if (this.#timer !== null || !this.#pending) return
+    if (this.#timer !== null || this.#running !== null || (!this.#pending && this.#prefetch.size === 0)) return
+    const next = this.#pending ?? this.#prefetch.values().next().value
+    if (!next) return
     this.#timer = setTimeout(() => {
       this.#timer = null
       this.#start()
-    }, this.#pending?.debounceMs ?? this.#debounceMs)
+    }, next.debounceMs ?? this.#debounceMs)
   }
 
   #start(): void {
-    if (!this.#pending) return
-    const pending = this.#pending
-    this.#pending = null
-    this.#running.set(pending.sequence, pending)
+    const current = this.#pending
+    const prefetch = current ? false : true
+    const pending = current ?? this.#prefetch.values().next().value
+    if (!pending) return
+    this.#pending = current ? null : this.#pending
+    if (prefetch) this.#prefetch.delete(pending.key)
+    this.#running = { ...pending, prefetch }
     void pending.run()
       .then((value) => {
-        if (this.#sequence === pending.sequence) pending.onCommit(value, pending.key)
+        if (prefetch || pending.sequence === this.#latestCurrentSequence) pending.onCommit(value, pending.key)
       })
       .catch((error: unknown) => {
-        if (this.#sequence === pending.sequence) pending.onError(error, pending.key)
+        if (prefetch || pending.sequence === this.#latestCurrentSequence) pending.onError(error, pending.key)
       })
       .finally(() => {
-        this.#running.delete(pending.sequence)
-        if (this.#pending) this.#arm()
+        this.#running = null
+        if (this.#pending || this.#prefetch.size) this.#arm()
       })
   }
 }

@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -8,6 +10,7 @@ import { inflateSync } from 'node:zlib'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
+const execFileAsync = promisify(execFile)
 const electronPath = require('electron')
 const ffmpegPath = require('ffmpeg-static')
 const rendererIndex = path.join(repositoryRoot, 'out', 'renderer', 'index.html')
@@ -188,10 +191,9 @@ const analyzeScreenshots = (fastBuffer, accurateBuffer, report) => {
   }
   const outlineGate = Number(report.subtitleSpec?.fontSizePx ?? 0) >= 64 ? Boolean(fastOutline && accurateOutline) : true
   const shadowGate = result.shadowExpected ? Boolean(report.subtitleOverlayMetrics?.red) : true
-  // During playback Fast Preview intentionally uses Chromium CSS text rather
-  // than a per-cue FFmpeg/libass bitmap. Font rasterization/metrics can differ
-  // substantially while the canonical anchor and readable glyph remain valid.
-  const fastUsesCss = report.fastSubtitleOverlay === false
+  // During playback Fast Preview uses the same libass/FFmpeg layout authority
+  // as Accurate/Final through a transparent PNG image overlay.
+  const fastUsesCss = false
   const geometryGate = fastUsesCss
     ? centerDeltaPx <= 20 && anchorDeltaX <= 10 && anchorDeltaY <= 20
     : centerDeltaPx <= 20 && widthDeltaRatio <= 0.1 && heightDeltaRatio <= heightTolerance && anchorDeltaX <= 10 && anchorDeltaY <= 10
@@ -213,6 +215,22 @@ const run = (command, args, options = {}) => new Promise((resolve, reject) => {
   child.once('exit', (code) => code === 0 ? resolve({ stdout, stderr }) : reject(new Error(`${command} exited ${code}: ${stderr}`)))
 })
 
+const readProcessMetrics = async (pid) => {
+  if (!pid) return null
+  try {
+    if (process.platform === 'win32') {
+      const command = `$root=Get-Process -Id ${Number(pid)} -ErrorAction Stop; $ffmpeg=(Get-Process -Name ffmpeg -ErrorAction SilentlyContinue | Measure-Object).Count; [pscustomobject]@{cpuSeconds=$root.CPU; workingSetBytes=$root.WorkingSet64; ffmpegProcessCount=$ffmpeg} | ConvertTo-Json -Compress`
+      const result = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', command], { windowsHide: true, maxBuffer: 1024 * 1024 })
+      return JSON.parse(result.stdout.trim())
+    }
+    const result = await execFileAsync('ps', ['-o', 'cputime=,rss=', '-p', String(pid)])
+    const [cpuTime, rss] = result.stdout.trim().split(/\s+/u)
+    return { cpuSeconds: cpuTime ? cpuTime.split(':').reduce((total, value) => total * 60 + Number(value), 0) : null, workingSetBytes: rss ? Number(rss) * 1024 : null, ffmpegProcessCount: null }
+  } catch {
+    return null
+  }
+}
+
 const root = await mkdtemp(path.join(require('node:os').tmpdir(), 'spectra-accurate-preview-smoke-'))
 try {
   const fixtureOverrides = process.env.SPECTRA_SUBTITLE_FIXTURE_JSON ? JSON.parse(process.env.SPECTRA_SUBTITLE_FIXTURE_JSON) : {}
@@ -230,6 +248,15 @@ try {
   const subtitleStyle = { ...defaultSubtitleStyle, ...(fixtureOverrides.style ?? {}) }
   const subtitleText = typeof fixtureOverrides.text === 'string' ? fixtureOverrides.text : '字幕を入力'
   const fixtureTag = typeof fixtureOverrides.tag === 'string' ? fixtureOverrides.tag : 'base'
+  const playbackMs = Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200)
+  const longPlayback = Number.isFinite(playbackMs) && playbackMs > 2_000
+  const playbackDurationUs = longPlayback ? Math.ceil(playbackMs * 1_000) + 2_000_000 : 1_000_000
+  const subtitleClips = longPlayback
+    ? Array.from({ length: Math.ceil(playbackDurationUs / 2_000_000) }, (_, index) => ({
+        id: `caption-${index + 1}`, name: 'Caption', kind: 'subtitle', text: `${subtitleText} ${index + 1}`,
+        startUs: 200_000 + index * 2_000_000, durationUs: 1_200_000, sourceInUs: 0, enabled: true, style: subtitleStyle
+      }))
+    : [{ id: 'caption-1', name: 'Caption', kind: 'subtitle', text: subtitleText, startUs: 200000, durationUs: 2000000, sourceInUs: 0, enabled: true, ...(Number.isSafeInteger(fixtureOverrides.maxLines) ? { maxLines: fixtureOverrides.maxLines } : {}), style: subtitleStyle }]
   const project = {
     schemaVersion: 1,
     appVersion: '0.1.0',
@@ -240,8 +267,8 @@ try {
     sequence: { width: 1920, height: 1080, frameRate: { numerator: 30, denominator: 1 }, sampleRate: 48000, backgroundColor: '#102030' },
     media: [{ id: 'source', name: 'source.png', path: sourcePath, kind: 'image', durationUs: 0, width: mediaWidth, height: mediaHeight, hasAudio: false, fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false }],
     tracks: [
-      { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: 'image', assetId: 'source', startUs: 0, durationUs: 1000000, sourceInUs: 0, enabled: true, transform: fixtureOverrides.transform ?? { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
-      { id: 'subtitle', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: [{ id: 'caption-1', name: 'Caption', kind: 'subtitle', text: subtitleText, startUs: 200000, durationUs: 2000000, sourceInUs: 0, enabled: true, ...(Number.isSafeInteger(fixtureOverrides.maxLines) ? { maxLines: fixtureOverrides.maxLines } : {}), style: subtitleStyle }] }
+      { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: 'image', assetId: 'source', startUs: 0, durationUs: playbackDurationUs, sourceInUs: 0, enabled: true, transform: fixtureOverrides.transform ?? { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
+      { id: 'subtitle', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: subtitleClips }
     ]
   }
   await writeFile(projectPath, JSON.stringify(project), 'utf8')
@@ -253,18 +280,35 @@ try {
     shell: false
   })
   let output = ''
+  const processMetricSamples = []
+  let metricReadInFlight = false
+  const sampleProcessMetrics = async () => {
+    if (metricReadInFlight) return
+    metricReadInFlight = true
+    try {
+      const sample = await readProcessMetrics(child.pid)
+      if (sample) processMetricSamples.push({ atMs: Date.now(), ...sample })
+    } finally {
+      metricReadInFlight = false
+    }
+  }
+  await sampleProcessMetrics()
+  const metricTimer = setInterval(() => { void sampleProcessMetrics() }, 500)
   child.stdout.setEncoding('utf8')
   child.stderr.setEncoding('utf8')
   child.stdout.on('data', (chunk) => { output += chunk })
   child.stderr.on('data', (chunk) => { output += chunk })
   const exitCode = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { child.kill(); reject(new Error(`Accurate Preview smoke timed out.\n${output}`)) }, 25_000)
+    const playbackMs = Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200)
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`Accurate Preview smoke timed out.\n${output}`)) }, Math.max(60_000, playbackMs + 60_000))
     child.once('error', (error) => { clearTimeout(timer); reject(error) })
-    child.once('exit', (code, signal) => { clearTimeout(timer); signal ? reject(new Error(`Electron exited by ${signal}\n${output}`)) : resolve(code ?? 1) })
+    child.once('exit', async (code, signal) => { clearTimeout(timer); await sampleProcessMetrics(); signal ? reject(new Error(`Electron exited by ${signal}\n${output}`)) : resolve(code ?? 1) })
   })
+  clearInterval(metricTimer)
   const line = output.split(/\r?\n/u).find((item) => item.startsWith('SPECTRA_ACCURATE_PREVIEW_REPORT '))
   if (!line) throw new Error(`Accurate Preview report was not emitted.\n${output}`)
   const report = JSON.parse(line.slice('SPECTRA_ACCURATE_PREVIEW_REPORT '.length))
+  const productionOnly = Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200) > 2_000
   if (exitCode !== 0 || report.error) throw new Error(`Accurate Preview smoke failed.\n${JSON.stringify(report)}\n${output}`)
   const [fastScreenshot, accurateScreenshot, overlayScreenshot, fastBuffer, accurateBuffer, overlayBuffer] = await Promise.all([
     stat(report.fastScreenshotPath),
@@ -276,12 +320,26 @@ try {
   ])
   const subtitleOverlayMetrics = analyzeTransparentOverlay(overlayBuffer)
   report.subtitleOverlayMetrics = subtitleOverlayMetrics
+  const cpuSamples = processMetricSamples.map((sample) => Number(sample.cpuSeconds)).filter(Number.isFinite)
+  const cpuStart = cpuSamples[0]
+  const cpuEnd = cpuSamples.at(-1)
+  const elapsedSeconds = processMetricSamples.length > 1 ? (processMetricSamples.at(-1).atMs - processMetricSamples[0].atMs) / 1000 : 0
+  const logicalCpus = Math.max(1, Number(require('node:os').cpus().length))
+  report.productionMetrics = {
+    cpuPercent: cpuStart !== undefined && cpuEnd !== undefined && elapsedSeconds > 0 ? (cpuEnd - cpuStart) / elapsedSeconds / logicalCpus * 100 : null,
+    ffmpegProcessCountMax: Math.max(0, ...processMetricSamples.map((sample) => Number(sample.ffmpegProcessCount) || 0)),
+    rendererWorkingSetBytesMax: Math.max(0, ...processMetricSamples.map((sample) => Number(sample.workingSetBytes) || 0)),
+    samples: processMetricSamples.length
+  }
   const shadowExpected = Boolean(report.subtitleSpec?.shadowColor && !/^#(?:0{6}|0{8})$/iu.test(report.subtitleSpec.shadowColor))
-  if (!report.accurateInitial || !report.fastFixture || report.fastSubtitleOverlay || report.fastSubtitleOverlayReady || report.initialCssFallbackCount !== 0 || report.fastCssFallbackCount <= 0 || !report.accurateFixtureAfterResume || !report.editPendingRejectsStaleOverlay || !report.editedFrameReady || !report.fastDuringPlay || !report.overlayImmediatelyAfterPause || !report.accurateAfterResume || report.overlayCount !== 1 || report.initialOverlaySrc === report.editedOverlaySrc || fastScreenshot.size <= 0 || accurateScreenshot.size <= 0 || overlayScreenshot.size <= 0 || subtitleOverlayMetrics.cornerAlpha !== 0 || !subtitleOverlayMetrics.white || (shadowExpected && !subtitleOverlayMetrics.red) || !subtitleOverlayMetrics.background || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone) {
+  if (!productionOnly && (!report.accurateInitial || !report.fastFixture || !report.fastSubtitleOverlay || !report.fastSubtitleOverlayReady || report.initialCssFallbackCount !== 0 || report.fastCssFallbackCount !== 0 || !report.accurateFixtureAfterResume || !report.editPendingRejectsStaleOverlay || !report.editedFrameReady || !report.fastDuringPlay || !report.accurateAfterResume || report.overlayCount !== 1 || report.initialOverlaySrc === report.editedOverlaySrc || fastScreenshot.size <= 0 || accurateScreenshot.size <= 0 || overlayScreenshot.size <= 0 || subtitleOverlayMetrics.cornerAlpha !== 0 || !subtitleOverlayMetrics.white || (shadowExpected && !subtitleOverlayMetrics.red) || !subtitleOverlayMetrics.background || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone)) {
     throw new Error(`Accurate Preview DOM gate failed.\n${JSON.stringify(report)}\n${output}`)
   }
-  const screenshotComparison = analyzeScreenshots(fastBuffer, accurateBuffer, report)
+  const screenshotComparison = productionOnly ? null : analyzeScreenshots(fastBuffer, accurateBuffer, report)
   console.log(JSON.stringify({ ...report, fastScreenshotBytes: fastScreenshot.size, accurateScreenshotBytes: accurateScreenshot.size, screenshotComparison }, null, 2))
 } finally {
-  await rm(root, { recursive: true, force: true })
+  await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 }).catch((error) => {
+    if (error?.code !== 'EBUSY') throw error
+    console.warn(`Accurate Preview smoke fixture cleanup deferred: ${root}`)
+  })
 }

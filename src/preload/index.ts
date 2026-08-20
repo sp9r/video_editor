@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '../shared/ipc'
-import type { DesktopApi, ExportProgress, ExportSettings, ProjectFile, TimeUs, WaveformRequest } from '../shared/types'
+import type { DesktopApi, ExportProgress, ExportSettings, ProjectFile, SubtitleOverlayRequestOptions, TimeUs, WaveformRequest } from '../shared/types'
 import type { SubtitleTemplateDraft } from '../shared/subtitle-templates'
 import type { AutoCaptionProgress } from '../shared/auto-caption-contract'
 import type { ExperimentalReviewRecord } from '../shared/review/types'
@@ -25,7 +25,7 @@ const api: DesktopApi = {
   listFontFamilies: () => ipcRenderer.invoke(IPC.fontFamilies),
   createPreviewPlan: (project: ProjectFile) => ipcRenderer.invoke(IPC.previewPlan, project),
   renderAccuratePreviewFrame: (project: ProjectFile, timeUs: TimeUs) => ipcRenderer.invoke(IPC.previewAccurateFrame, project, timeUs),
-  renderSubtitleOverlay: (project: ProjectFile, timeUs: TimeUs) => ipcRenderer.invoke(IPC.previewSubtitleOverlay, project, timeUs),
+  renderSubtitleOverlay: (project: ProjectFile, timeUs: TimeUs, options?: SubtitleOverlayRequestOptions) => ipcRenderer.invoke(IPC.previewSubtitleOverlay, project, timeUs, options),
   startSilenceCutReapply: (project: ProjectFile, selectedClipId: string, jobId: string, profile: SilenceReapplyProfile, minSilenceUs?: number) => ipcRenderer.invoke(IPC.silenceCutReapply, project, selectedClipId, jobId, profile, minSilenceUs),
   cancelSilenceCutReapply: (jobId: string) => ipcRenderer.invoke(IPC.silenceCutCancel, jobId),
   autoCaptionHealth: () => ipcRenderer.invoke(IPC.autoCaptionHealth),

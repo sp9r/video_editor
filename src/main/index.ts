@@ -181,12 +181,16 @@ const registerIpcHandlers = (): void => {
     return await requireService().renderAccurateFrame(validateProject(projectInput), timeUs)
   })
 
-  ipcMain.handle(IPC.previewSubtitleOverlay, async (event, projectInput: ProjectFile, timeUs: unknown) => {
+  ipcMain.handle(IPC.previewSubtitleOverlay, async (event, projectInput: ProjectFile, timeUs: unknown, optionsInput: unknown) => {
     assertTrustedSender(event)
     if (typeof timeUs !== 'number' || !Number.isFinite(timeUs) || timeUs < 0) {
       throw new Error('字幕overlayの時刻が不正です。')
     }
-    return await requireService().renderSubtitleOverlay(validateProject(projectInput), timeUs)
+    const rawOptions = optionsInput && typeof optionsInput === 'object' ? optionsInput as { animationMode?: unknown } : undefined
+    const animationMode = rawOptions?.animationMode === 'base' || rawOptions?.animationMode === 'full'
+      ? rawOptions.animationMode
+      : undefined
+    return await requireService().renderSubtitleOverlay(validateProject(projectInput), timeUs, { animationMode })
   })
 
   ipcMain.handle(IPC.silenceCutReapply, async (event, projectInput: ProjectFile, selectedClipId: unknown, jobId: unknown, profileInput: unknown, minSilenceInput: unknown) => {
@@ -470,6 +474,11 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   })()`)
   console.log('SPECTRA_ACCURATE_PREVIEW_STAGE dom-poll-start')
   const wait = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds))
+  const percentile = (values: number[], fraction: number): number | null => {
+    if (!values.length) return null
+    const sorted = [...values].sort((left, right) => left - right)
+    return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * fraction))] ?? null
+  }
   const waitForPaint = (): Promise<unknown> => window.webContents.executeJavaScript(`(async () => {
     const images = Array.from(document.querySelectorAll('.accurate-preview-overlay, .fast-authoritative-subtitle-overlay'))
       .filter((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0)
@@ -503,27 +512,67 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const accurateScreenshotPath = path.join(app.getPath('temp'), `spectra-accurate-preview-phase4r2${screenshotSuffix}.png`)
   await waitForPaint()
   await writeFile(accurateScreenshotPath, (await window.webContents.capturePage()).toPNG())
-  await requireService().clearSubtitleOverlayCache()
+  const service = requireService()
+  const cueProject = structuredClone(project)
+  const cueSubtitle = cueProject.tracks.flatMap((track) => track.clips).find((clip) => clip.kind === 'subtitle')
+  if (cueSubtitle?.kind === 'subtitle') cueSubtitle.text = 'Cue switch measurement'
+  await service.clearSubtitleOverlayCache()
   const coldOverlayStartedAt = performance.now()
-  const coldSubtitleOverlay = await requireService().renderSubtitleOverlay(project, 500_000)
-  const subtitleOverlayColdMs = performance.now() - coldOverlayStartedAt
+  const coldSubtitleOverlay = await service.renderSubtitleOverlay(project, 500_000)
+  const coldSamplesMs = [performance.now() - coldOverlayStartedAt]
+  for (let index = 1; index < 5; index += 1) {
+    await service.clearSubtitleOverlayCache()
+    const startedAt = performance.now()
+    await service.renderSubtitleOverlay(project, 500_000)
+    coldSamplesMs.push(performance.now() - startedAt)
+  }
   const cacheHitStartedAt = performance.now()
-  const cachedSubtitleOverlay = await requireService().renderSubtitleOverlay(project, 500_000)
-  const subtitleOverlayCacheHitMs = performance.now() - cacheHitStartedAt
+  const cachedSubtitleOverlay = await service.renderSubtitleOverlay(project, 500_000)
+  const cacheHitSamplesMs = [performance.now() - cacheHitStartedAt]
+  for (let index = 1; index < 8; index += 1) {
+    const startedAt = performance.now()
+    await service.renderSubtitleOverlay(project, 500_000)
+    cacheHitSamplesMs.push(performance.now() - startedAt)
+  }
+  const cueSwitchSamplesMs: number[] = []
+  for (let index = 0; index < 5; index += 1) {
+    await service.clearSubtitleOverlayCache()
+    await service.renderSubtitleOverlay(project, 500_000)
+    const startedAt = performance.now()
+    await service.renderSubtitleOverlay(cueProject, 500_000)
+    cueSwitchSamplesMs.push(performance.now() - startedAt)
+  }
+  const subtitleOverlayColdMs = coldSamplesMs[0] ?? null
+  const subtitleOverlayCacheHitMs = cacheHitSamplesMs[0] ?? null
+  const subtitleOverlayColdP50Ms = percentile(coldSamplesMs, 0.5)
+  const subtitleOverlayColdP95Ms = percentile(coldSamplesMs, 0.95)
+  const subtitleOverlayCacheHitP50Ms = percentile(cacheHitSamplesMs, 0.5)
+  const subtitleOverlayCacheHitP95Ms = percentile(cacheHitSamplesMs, 0.95)
+  const subtitleOverlayCueSwitchP50Ms = percentile(cueSwitchSamplesMs, 0.5)
+  const subtitleOverlayCueSwitchP95Ms = percentile(cueSwitchSamplesMs, 0.95)
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
-  const fastFixture = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.cssFallbackCount > 0 && !dom.fastSubtitleOverlay)
+  const fastFixture = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.cssFallbackCount === 0 && dom.fastSubtitleOverlay && dom.fastSubtitleOverlayReady)
   const fastFixtureDom = await readDom()
+  const playbackSampleMs = Math.max(200, Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200))
   const playbackFrameSample = await window.webContents.executeJavaScript(`new Promise((resolve) => {
     const started = performance.now()
     let frames = 0
     const tick = () => {
       frames += 1
       const elapsedMs = performance.now() - started
-      if (elapsedMs >= 200) resolve({ frames, elapsedMs, fps: frames / elapsedMs * 1000 })
+      if (elapsedMs >= ${playbackSampleMs}) resolve({ frames, elapsedMs, fps: frames / elapsedMs * 1000 })
       else requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
   })`)
+  const playbackQuality = await window.webContents.executeJavaScript(`(() => {
+    const qualities = Array.from(document.querySelectorAll('video')).map((video) => typeof video.getVideoPlaybackQuality === 'function' ? video.getVideoPlaybackQuality() : null).filter(Boolean)
+    return qualities.length ? { droppedVideoFrames: Math.max(...qualities.map((quality) => quality.droppedVideoFrames)), totalVideoFrames: Math.max(...qualities.map((quality) => quality.totalVideoFrames)), supported: true } : { droppedVideoFrames: null, totalVideoFrames: null, supported: false }
+  })()`)
+  if (playbackSampleMs > 2_000) {
+    await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${detail} }))`)
+    await until((dom) => dom.overlay && dom.overlayReady)
+  }
   const fastScreenshotPath = path.join(app.getPath('temp'), `spectra-fast-preview-phase4r2${screenshotSuffix}.png`)
   await waitForPaint()
   await writeFile(fastScreenshotPath, (await window.webContents.capturePage()).toPNG())
@@ -543,13 +592,14 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const editedFrameReady = await until((dom) => dom.overlay && dom.overlayReady && dom.overlaySrc !== initialOverlaySrc && dom.quality.includes('正確プレビュー'))
   const cueSwitchStartedAt = performance.now()
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
-  const fastDuringPlay = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.cssFallbackCount > 0 && !dom.fastSubtitleOverlay)
+  const fastDuringPlay = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.cssFallbackCount === 0 && dom.fastSubtitleOverlay && dom.fastSubtitleOverlayReady)
   const subtitleOverlayCueSwitchMs = performance.now() - cueSwitchStartedAt
   await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
   const overlayImmediatelyAfterPause = (await readDom()).overlay
-  const accurateAfterResume = overlayImmediatelyAfterPause && await until((dom) => dom.overlay && dom.overlayReady)
+  const accurateAfterResume = await until((dom) => dom.overlay && dom.overlayReady)
   const finalDom = await readDom()
-  const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, sequence: { width: project.sequence.width, height: project.sequence.height }, subtitleSpec, fastFixture, fastSubtitleOverlay: fastFixtureDom.fastSubtitleOverlay, fastSubtitleOverlayReady: fastFixtureDom.fastSubtitleOverlayReady, fastSubtitleOverlaySrc: fastFixtureDom.fastSubtitleOverlaySrc, initialCssFallbackCount: initialDom.cssFallbackCount, fastCssFallbackCount: fastFixtureDom.cssFallbackCount, playbackFrameSample, subtitleOverlayFramePath: cachedSubtitleOverlay.framePath, subtitleOverlayFrameIndex: cachedSubtitleOverlay.frameIndex, subtitleOverlayStateFingerprint: cachedSubtitleOverlay.subtitleStateFingerprint, subtitleOverlayColdMs, subtitleOverlayCacheHitMs, subtitleOverlayCueSwitchMs, coldOverlayFramePath: coldSubtitleOverlay.framePath, accurateFixtureAfterResume, editPendingRejectsStaleOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastSubtitleStack: fastFixtureDom.subtitleStack, accurateSubtitleStack: initialDom.subtitleStack, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
+  const reportOverlay = await service.renderSubtitleOverlay(project, 500_000)
+  const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, sequence: { width: project.sequence.width, height: project.sequence.height }, subtitleSpec, fastFixture, fastSubtitleOverlay: fastFixtureDom.fastSubtitleOverlay, fastSubtitleOverlayReady: fastFixtureDom.fastSubtitleOverlayReady, fastSubtitleOverlaySrc: fastFixtureDom.fastSubtitleOverlaySrc, initialCssFallbackCount: initialDom.cssFallbackCount, fastCssFallbackCount: fastFixtureDom.cssFallbackCount, playbackFrameSample, playbackQuality, subtitleOverlayFramePath: reportOverlay.framePath, subtitleOverlayFrameIndex: reportOverlay.frameIndex, subtitleOverlayStateFingerprint: reportOverlay.subtitleStateFingerprint, subtitleOverlayCacheEntries: service.subtitleOverlayCacheSize, subtitleOverlayCacheBytes: service.subtitleOverlayCacheBytes, subtitleOverlayColdMs, subtitleOverlayCacheHitMs, subtitleOverlayCueSwitchMs, subtitleOverlayColdP50Ms, subtitleOverlayColdP95Ms, subtitleOverlayCacheHitP50Ms, subtitleOverlayCacheHitP95Ms, subtitleOverlayCueSwitchP50Ms, subtitleOverlayCueSwitchP95Ms, coldOverlayFramePath: coldSubtitleOverlay.framePath, accurateFixtureAfterResume, editPendingRejectsStaleOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastSubtitleStack: fastFixtureDom.subtitleStack, accurateSubtitleStack: initialDom.subtitleStack, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
   return { ...startup, ...report }
 }
 

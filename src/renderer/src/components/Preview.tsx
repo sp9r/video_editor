@@ -2,17 +2,40 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-react'
 import { formatTimecode, projectDurationUs, projectFingerprint } from '../../../shared/project'
 import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
-import { buildSubtitleRenderSpec, subtitleAnchorTransform, subtitleVisualStateKey } from '../../../shared/subtitle-render'
-import { canonicalShadowBlurRadius } from '../../../shared/subtitle-shadow'
-import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip } from '../../../shared/types'
+import { activeSubtitleClips, subtitleVisualStateKey } from '../../../shared/subtitle-render'
+import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleOverlayResult } from '../../../shared/types'
 import { PREVIEW_AUDIO_DRIFT_TOLERANCE_SECONDS, previewAudioClipsForPlayback, previewAudioIsActive, previewAudioSourceTimeUs, previewAudioVolume } from '../preview-audio'
 import { previewDiagnosticContext, previewDiagnosticStore } from '../preview-performance-diagnostics'
 import { previewQualityLabel } from '../preview-status'
+import { LatestSubtitleOverlayScheduler } from '../subtitle-overlay-scheduler'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
 
 const activeAt = (clip: { startUs: number; durationUs: number; enabled: boolean }, timeUs: number): boolean =>
   clip.enabled && clip.startUs <= timeUs && clip.startUs + clip.durationUs > timeUs
+
+const nextSubtitleVisualStates = (project: Parameters<typeof subtitleVisualStateKey>[0], timeUs: number): Array<{ timeUs: number; key: string }> => {
+  const boundaries = project.tracks
+    .filter((track) => track.kind === 'subtitle' && !track.hidden && !track.muted)
+    .flatMap((track) => track.clips)
+    .filter((clip) => clip.kind === 'subtitle' && clip.enabled)
+    .flatMap((clip) => [clip.startUs, clip.startUs + clip.durationUs])
+    .filter((boundary) => boundary > timeUs && boundary <= timeUs + 6_000_000)
+    .sort((left, right) => left - right)
+  const states: Array<{ timeUs: number; key: string }> = []
+  let previous = subtitleVisualStateKey(project, timeUs)
+  for (const boundary of boundaries) {
+    const key = subtitleVisualStateKey(project, boundary)
+    if (key === previous || !activeSubtitleClips(project, boundary).length) {
+      previous = key
+      continue
+    }
+    states.push({ timeUs: boundary, key })
+    previous = key
+    if (states.length >= 2) break
+  }
+  return states
+}
 
 export const accuratePreviewFrameMatchesCurrent = (
   frame: Pick<AccuratePreviewFrameResult, 'projectFingerprint' | 'requestedTimeUs'>,
@@ -131,6 +154,8 @@ export default function Preview(): React.JSX.Element {
   previewDiagnosticStore.recordComponentRender('preview')
   const [renderPlan, setRenderPlan] = useState<PreviewPlan | null>(null)
   const [accurateFrame, setAccurateFrame] = useState<AccuratePreviewFrameResult | null>(null)
+  const [fastSubtitleOverlay, setFastSubtitleOverlay] = useState<SubtitleOverlayResult | null>(null)
+  const [fastAnimatedApproximate, setFastAnimatedApproximate] = useState(false)
   const [accurateRendering, setAccurateRendering] = useState(false)
   const [accurateError, setAccurateError] = useState<string | null>(null)
   const [fullscreen, setFullscreen] = useState(false)
@@ -141,6 +166,10 @@ export default function Preview(): React.JSX.Element {
   const audioRefs = useRef(new Map<string, HTMLAudioElement>())
   const audioPlayAttempted = useRef(new Set<string>())
   const accurateRequestSequence = useRef(0)
+  const fastRequestSequence = useRef(0)
+  const previousPlayheadUs = useRef<number | null>(null)
+  const [seekGeneration, setSeekGeneration] = useState(0)
+  const fastOverlayScheduler = useRef(new LatestSubtitleOverlayScheduler<SubtitleOverlayResult>(40))
   const durationUs = Math.max(renderPlan?.durationUs ?? projectDurationUs(project), 1_000_000)
 
   const activeSubtitleStateKey = useMemo(() => subtitleVisualStateKey(project, playheadUs), [playheadUs, project])
@@ -170,6 +199,12 @@ export default function Preview(): React.JSX.Element {
   }
 
   useEffect(() => {
+    const previous = previousPlayheadUs.current
+    if (playing && previous !== null && Math.abs(playheadUs - previous) > 500_000) setSeekGeneration((generation) => generation + 1)
+    previousPlayheadUs.current = playheadUs
+  }, [playheadUs, playing])
+
+  useEffect(() => {
     if (!window.spectra) {
       setRenderPlan(null)
       return
@@ -181,6 +216,46 @@ export default function Preview(): React.JSX.Element {
       .catch(() => { if (active) setRenderPlan(null) })
     return () => { active = false }
   }, [project])
+
+  useEffect(() => {
+    const sequence = ++fastRequestSequence.current
+    const scheduler = fastOverlayScheduler.current
+    scheduler.cancel()
+    setFastSubtitleOverlay(null)
+    setFastAnimatedApproximate(false)
+    if (!playing || !window.spectra || !activeSubtitleClips(project, playheadUs).length) return
+    const api = window.spectra
+    const currentKey = activeSubtitleStateKey
+    const animated = activeSubtitleClips(project, playheadUs).some(({ clip }) => clip.style.animation !== 'none')
+    const request = (timeUs: number, key: string, prefetch: boolean): void => {
+      const run = (): Promise<SubtitleOverlayResult> => {
+        previewDiagnosticStore.recordSubtitleOverlayRequest(key)
+        return api.renderSubtitleOverlay(project, timeUs, { animationMode: 'base' })
+      }
+      const onCommit = (result: SubtitleOverlayResult): void => {
+        previewDiagnosticStore.recordSubtitleOverlayOutcome(result.cacheHit ?? !result.ffmpegStarted)
+        if (prefetch) return
+        const current = useEditorStore.getState()
+        if (sequence !== fastRequestSequence.current || !current.playing || subtitleVisualStateKey(current.project, current.playheadUs) !== key) return
+        setFastSubtitleOverlay(result)
+        setFastAnimatedApproximate(animated)
+      }
+      const onError = (error: unknown): void => {
+        if (!prefetch && sequence === fastRequestSequence.current) setFastSubtitleOverlay(null)
+        if (!prefetch) previewDiagnosticStore.recordSubtitleOverlayOutcome(false)
+        void error
+      }
+      const item = { key, run, onCommit, onError }
+      if (prefetch) scheduler.schedulePrefetch(item)
+      else scheduler.schedule(item)
+    }
+    request(playheadUs, currentKey, false)
+    for (const next of nextSubtitleVisualStates(project, playheadUs)) request(next.timeUs, next.key, true)
+    return () => {
+      fastRequestSequence.current += 1
+      scheduler.cancel()
+    }
+  }, [activeSubtitleStateKey, playing, project, seekGeneration])
 
   useEffect(() => {
     const sequence = ++accurateRequestSequence.current
@@ -272,13 +347,9 @@ export default function Preview(): React.JSX.Element {
   }, [playing, renderPlan?.durationUs])
 
   const plannedVideoIds = renderPlan ? new Set(renderPlan.videoClips.map((clip) => clip.clipId)) : null
-  const plannedCaptionIds = renderPlan ? new Set(renderPlan.captions.map((clip) => clip.clipId)) : null
   const visuals = useMemo(() => visualLayerOrder(project)
     .map(({ clip }) => clip)
     .filter((clip) => activeAt(clip, playheadUs) && (!plannedVideoIds || plannedVideoIds.has(clip.id))), [playheadUs, plannedVideoIds, project])
-  const subtitles = useMemo(() => project.tracks
-    .filter((track) => track.kind === 'subtitle' && !track.hidden && !track.muted)
-    .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && activeAt(clip, playheadUs) && (!plannedCaptionIds || plannedCaptionIds.has(clip.id)))), [plannedCaptionIds, playheadUs, project])
   const currentProjectFingerprint = useMemo(() => projectFingerprint(project), [project])
   const accurateFrameMatchesCurrent = Boolean(accurateFrame && accuratePreviewFrameMatchesCurrent(
     accurateFrame,
@@ -286,7 +357,6 @@ export default function Preview(): React.JSX.Element {
     playheadUs,
     Math.ceil(1_000_000 * project.sequence.frameRate.denominator / project.sequence.frameRate.numerator)
   ))
-  const showCssSubtitles = playing || (!accurateFrameMatchesCurrent && subtitles.length > 0)
   const previewAudioClips = useMemo(() => previewAudioClipsForPlayback(renderPlan?.audioClips ?? [], playheadUs), [playheadUs, renderPlan])
   const scale = viewportSize.width > 0 && viewportSize.height > 0
     ? Math.min(viewportSize.width / project.sequence.width, viewportSize.height / project.sequence.height)
@@ -358,70 +428,16 @@ export default function Preview(): React.JSX.Element {
             })}
             {visuals.length === 0 && <div className="viewer-placeholder"><Play size={34} /><span>再生位置に映像がありません</span></div>}
             <div className="safe-guides" aria-hidden="true"><i /></div>
-            {showCssSubtitles && subtitles.map((subtitle) => (
-              (() => {
-                const spec = buildSubtitleRenderSpec(subtitle, project.sequence)
-                const textStyle = {
-                  fontFamily: spec.fontFamily,
-                  fontSize: `${spec.fontSizePx}px`,
-                  fontWeight: spec.bold ? 700 : 400,
-                  fontStyle: spec.italic ? 'italic' : 'normal' as const,
-                  letterSpacing: `${spec.letterSpacingPx}px`,
-                  lineHeight: spec.lineHeight,
-                  whiteSpace: 'pre-wrap' as const,
-                  overflowWrap: 'anywhere' as const
-                }
-                return <button
-                  type="button"
-                  key={subtitle.id}
-                  className={`preview-subtitle subtitle-${spec.animation} anchor-${spec.anchor}`}
-                  data-subtitle-renderer="css-fallback"
-                  title={spec.layoutDiagnostics.map((diagnostic) => diagnostic.message).join(' ')}
-                  onClick={() => selectClip(subtitle.id)}
-                  style={{
-                    left: `${spec.xPx}px`,
-                    top: `${spec.yPx}px`,
-                    width: `${spec.maxWidthPx}px`,
-                    animationDuration: `${Math.max(0, spec.animationDurationUs / 1_000)}ms`,
-                    transform: subtitleAnchorTransform(spec.anchor)
-                  }}
-                >
-                  <span className="preview-subtitle-stack">
-                    <span className="preview-subtitle-text-box">
-                    {spec.backgroundOpacity > 0 && <span
-                      className="preview-subtitle-layer preview-subtitle-background"
-                      aria-hidden="true"
-                      style={{
-                        ...textStyle,
-                        color: 'transparent',
-                        WebkitTextStroke: '0 transparent',
-                        background: `color-mix(in srgb, ${spec.backgroundColor} ${spec.backgroundOpacity * 100}%, transparent)`
-                      }}
-                    >{spec.wrappedText}</span>}
-                    {spec.shadowColor && <span
-                      className="preview-subtitle-layer preview-subtitle-shadow"
-                      aria-hidden="true"
-                      style={{
-                        ...textStyle,
-                        color: spec.shadowColor,
-                        transform: `translate(${spec.shadowOffsetXPx}px, ${spec.shadowOffsetYPx}px)`,
-                        filter: canonicalShadowBlurRadius(spec.shadowBlurPx) > 0 ? `blur(${canonicalShadowBlurRadius(spec.shadowBlurPx)}px)` : undefined
-                      }}
-                    >{spec.wrappedText}</span>}
-                    <span
-                      className="preview-subtitle-layer preview-subtitle-main"
-                      style={{
-                        ...textStyle,
-                        color: spec.color,
-                        WebkitTextStroke: `${spec.outlineWidthPx}px ${spec.outlineColor}`,
-                        paintOrder: 'stroke fill'
-                      }}
-                    >{spec.wrappedText}</span>
-                    </span>
-                  </span>
-                </button>
-              })()
-            ))}
+            {playing && fastSubtitleOverlay && window.spectra && (
+              <img
+                className="fast-authoritative-subtitle-overlay"
+                data-subtitle-authority="libass"
+                data-fast-animation-approximate={fastAnimatedApproximate ? 'true' : 'false'}
+                src={window.spectra.mediaUrl(fastSubtitleOverlay.framePath)}
+                alt=""
+                draggable={false}
+              />
+            )}
             {!playing && accurateFrameMatchesCurrent && accurateFrame && window.spectra && (
               <img
                 className="accurate-preview-overlay"
