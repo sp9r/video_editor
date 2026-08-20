@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-react'
 import { formatTimecode, projectDurationUs, projectFingerprint } from '../../../shared/project'
 import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
-import { activeSubtitleClips, subtitleVisualStateKey } from '../../../shared/subtitle-render'
+import { activeSubtitleClips, fastSubtitleAnimationStyle, subtitleVisualStateKey } from '../../../shared/subtitle-render'
 import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleOverlayResult } from '../../../shared/types'
 import { PREVIEW_AUDIO_DRIFT_TOLERANCE_SECONDS, previewAudioClipsForPlayback, previewAudioIsActive, previewAudioSourceTimeUs, previewAudioVolume } from '../preview-audio'
 import { previewDiagnosticContext, previewDiagnosticStore } from '../preview-performance-diagnostics'
@@ -226,7 +226,6 @@ export default function Preview(): React.JSX.Element {
     if (!playing || !window.spectra || !activeSubtitleClips(project, playheadUs).length) return
     const api = window.spectra
     const currentKey = activeSubtitleStateKey
-    const animated = activeSubtitleClips(project, playheadUs).some(({ clip }) => clip.style.animation !== 'none')
     const request = (timeUs: number, key: string, prefetch: boolean): void => {
       const run = (): Promise<SubtitleOverlayResult> => {
         previewDiagnosticStore.recordSubtitleOverlayRequest(key)
@@ -234,11 +233,10 @@ export default function Preview(): React.JSX.Element {
       }
       const onCommit = (result: SubtitleOverlayResult): void => {
         previewDiagnosticStore.recordSubtitleOverlayOutcome(result.cacheHit ?? !result.ffmpegStarted)
-        if (prefetch) return
         const current = useEditorStore.getState()
         if (sequence !== fastRequestSequence.current || !current.playing || subtitleVisualStateKey(current.project, current.playheadUs) !== key) return
         setFastSubtitleOverlay(result)
-        setFastAnimatedApproximate(animated)
+        setFastAnimatedApproximate(activeSubtitleClips(current.project, current.playheadUs).some(({ clip }) => clip.style.animation !== 'none'))
       }
       const onError = (error: unknown): void => {
         if (!prefetch && sequence === fastRequestSequence.current) setFastSubtitleOverlay(null)
@@ -361,6 +359,10 @@ export default function Preview(): React.JSX.Element {
   const scale = viewportSize.width > 0 && viewportSize.height > 0
     ? Math.min(viewportSize.width / project.sequence.width, viewportSize.height / project.sequence.height)
     : 1
+  const fastAnimationStyle = useMemo(() => {
+    const active = activeSubtitleClips(project, playheadUs).find(({ clip }) => clip.style.animation !== 'none')?.clip
+    return active ? fastSubtitleAnimationStyle(active, playheadUs) : { opacity: 1, transform: 'none' }
+  }, [playheadUs, project])
 
   useEffect(() => {
     const activeIds = new Set<string>()
@@ -411,7 +413,7 @@ export default function Preview(): React.JSX.Element {
         <PreviewDiagnosticControls project={project} playheadUs={playheadUs} playing={playing} viewportSize={viewportSize} />
       </header>
       <div className="viewer-stage">
-        <div ref={canvasRef} className="viewer-canvas" style={{ background: project.sequence.backgroundColor, aspectRatio: `${project.sequence.width} / ${project.sequence.height}` }}>
+        <div ref={canvasRef} className="viewer-canvas" data-playhead-us={playheadUs} data-playing={playing ? 'true' : 'false'} style={{ background: project.sequence.backgroundColor, aspectRatio: `${project.sequence.width} / ${project.sequence.height}` }}>
           <div
             className="preview-scene"
             style={{
@@ -433,9 +435,11 @@ export default function Preview(): React.JSX.Element {
                 className="fast-authoritative-subtitle-overlay"
                 data-subtitle-authority="libass"
                 data-fast-animation-approximate={fastAnimatedApproximate ? 'true' : 'false'}
+                data-subtitle-visual-key={fastSubtitleOverlay.subtitleStateFingerprint}
                 src={window.spectra.mediaUrl(fastSubtitleOverlay.framePath)}
                 alt=""
                 draggable={false}
+                style={fastAnimatedApproximate ? fastAnimationStyle : undefined}
               />
             )}
             {!playing && accurateFrameMatchesCurrent && accurateFrame && window.spectra && (

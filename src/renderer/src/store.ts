@@ -233,7 +233,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   applyProject: (project, options = {}) => {
     const current = get().project
     if (project === current) return
-    if (!options.asyncMutationOperationId && !get().transactionBase) conflictPendingAsyncMutation()
+    const transactionBase = get().transactionBase
+    const transactionChanged = Boolean(transactionBase && projectFingerprint(transactionBase) !== projectFingerprint(project))
+    if (!options.asyncMutationOperationId && (!transactionBase || transactionChanged)) conflictPendingAsyncMutation()
     set((state) => ({
       project,
       past: options.preserveHistory || state.transactionBase ? state.past : [...state.past, cloneProject(current)].slice(-HISTORY_LIMIT),

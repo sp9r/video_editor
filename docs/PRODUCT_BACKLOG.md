@@ -609,6 +609,28 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 
 **Human acceptance:** 実動画／720p・1080p・可能なら4Kで、字幕のline break・font fallback・stroke・shadow・background、cue boundary／subtitle-less interval、seek／edit／Undo／Redo中のstale表示なし、Fast animated近似、Auto Caption／silence系race、save while pendingを確認する。長時間計測fixtureはimage sourceのためdropped video framesは未測定。video sourceでの再測定を残す。
 
+### Stage 38 — Final Pre-Reset Fix
+
+**Status:** `IMPLEMENTED — REAL VIDEO E2E / HUMAN ACCEPTANCE PENDING`
+
+- Fast animated字幕はlibass base PNGを唯一の字幕visualとし、再生ヘッドからopacity／scale／slide transformだけを画像へ適用する。独立CSSタイマーやCSS glyph rendererは追加していない。
+- schedulerは実行中prefetchがcurrentへ昇格した場合に同じ結果をcurrent commitへ転用する。open manual transaction内の最初の実Project mutationもpending async mutationを即時conflict／cancelする。
+- production metricsはElectron起動PIDの子孫だけをmain／renderer／GPU／utility／other／FFmpegへ分類し、無関係なFFmpegを除外するprocess-tree helperと単体テストを追加した。
+- Real video smoke fixtureは1080p H.264を生成して連続再生する実装を追加したが、現環境ではfixture生成／起動がtime-box内に完了せず、droppedFrames・cue boundary・gap・animated observableの実動画値は未取得。推測値で補完しない。
+
+**Automated evidence:**
+
+- targeted Stage 38 tests: 4 files / 47 tests PASS
+- `npm run typecheck`: PASS
+- `npm run build`: PASS
+- normal accurate-preview smoke: PASS（CSS fallback 0、Fast／Accurate parity PASS、cold p50/p95 153.97/188.30ms、cache-hit 0.31/0.33ms、cache 4 entries / 161,901 bytes）
+- full Vitest: 70 files / 407 tests中、既存 `tests/main/thumbnail-service.test.ts` がWindows resource/cache cleanup timeoutでFAIL（Stage 38変更箇所のtargeted testsはPASS）。
+- real video smoke: time-box timeout、production-like process metricsの有効な最終値は未採用。
+
+**Optional P2:** prefetch promotion and immediate transaction conflict implemented; 128MiB direct-cap test not added.
+
+**Human acceptance:** H.264実動画で10–15秒連続再生、cue boundary／gap／seek／pause-resume、animated image transform、droppedFrames、所有process tree CPU／memory／FFmpeg countを再測定する。
+
 ---
 
 ## Notes for future Luna tasks

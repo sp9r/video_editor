@@ -131,4 +131,24 @@ describe('latest-only subtitle overlay scheduling', () => {
       vi.useRealTimers()
     }
   })
+
+  it('promotes a running prefetch when that visual state becomes current', async () => {
+    vi.useFakeTimers()
+    try {
+      const committed: string[] = []
+      let resolvePrefetch: ((value: string) => void) | undefined
+      const scheduler = new LatestSubtitleOverlayScheduler<string>(0)
+      const item = (key: string) => ({ key, run: () => new Promise<string>((resolve) => { resolvePrefetch = resolve }), onCommit: (value: string) => committed.push(value), onError: () => undefined })
+      scheduler.schedulePrefetch(item('next'))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(scheduler.inFlight).toBe(true)
+      scheduler.schedule(item('next'))
+      resolvePrefetch?.('next')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(committed).toEqual(['next'])
+      scheduler.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

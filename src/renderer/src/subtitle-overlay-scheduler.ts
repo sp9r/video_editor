@@ -27,6 +27,11 @@ export class LatestSubtitleOverlayScheduler<T> {
 
   schedule(request: LatestSubtitleOverlayRequest<T>): void {
     const sequence = ++this.#sequence
+    if (this.#running?.prefetch && this.#running.key === request.key) {
+      this.#running = { ...this.#running, ...request, sequence, prefetch: false }
+      this.#latestCurrentSequence = sequence
+      return
+    }
     this.#pending = { ...request, sequence }
     this.#latestCurrentSequence = sequence
     this.#prefetch.delete(request.key)
@@ -89,10 +94,12 @@ export class LatestSubtitleOverlayScheduler<T> {
     this.#running = { ...pending, prefetch }
     void pending.run()
       .then((value) => {
-        if (prefetch || pending.sequence === this.#latestCurrentSequence) pending.onCommit(value, pending.key)
+        const promoted = this.#running?.key === pending.key && this.#running.sequence === this.#latestCurrentSequence && !this.#running.prefetch
+        if (prefetch || promoted || pending.sequence === this.#latestCurrentSequence) pending.onCommit(value, pending.key)
       })
       .catch((error: unknown) => {
-        if (prefetch || pending.sequence === this.#latestCurrentSequence) pending.onError(error, pending.key)
+        const promoted = this.#running?.key === pending.key && this.#running.sequence === this.#latestCurrentSequence && !this.#running.prefetch
+        if (prefetch || promoted || pending.sequence === this.#latestCurrentSequence) pending.onError(error, pending.key)
       })
       .finally(() => {
         this.#running = null

@@ -78,6 +78,25 @@ export const subtitleAnchorTransform = (anchor: SubtitleAnchor): string => {
   return 'translate(-50%, -100%)'
 }
 
+export interface FastSubtitleAnimationStyle {
+  opacity: number
+  transform: string
+}
+
+/** Playhead-driven approximation applied only to the authoritative image. */
+export const fastSubtitleAnimationStyle = (clip: SubtitleClip, timeUs: number): FastSubtitleAnimationStyle => {
+  const animation = clip.style.animation
+  const durationUs = Math.max(0, clip.style.animationDurationUs)
+  if (animation === 'none' || durationUs <= 0) return { opacity: 1, transform: 'none' }
+  const relativeUs = Math.max(0, timeUs - clip.startUs)
+  const progress = Math.min(1, relativeUs / durationUs)
+  const eased = 1 - Math.pow(1 - progress, 3)
+  if (animation === 'fade' || animation === 'typewriter') return { opacity: eased, transform: 'none' }
+  if (animation === 'pop') return { opacity: eased, transform: `scale(${(0.9 + eased * 0.1).toFixed(4)})` }
+  if (animation === 'slide-up') return { opacity: eased, transform: `translateY(${((1 - eased) * 3).toFixed(3)}%)` }
+  return { opacity: eased, transform: 'none' }
+}
+
 export const activeSubtitleClips = (project: ProjectFile, timeUs: number): Array<{ clip: SubtitleClip; trackIndex: number }> => project.tracks
   .flatMap((track, trackIndex) => track.kind === 'subtitle' && !track.hidden && !track.muted
     ? track.clips

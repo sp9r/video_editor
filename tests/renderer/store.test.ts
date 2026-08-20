@@ -85,6 +85,29 @@ describe('editor history and linked selection', () => {
     expect(useEditorStore.getState().project).toEqual(project)
   })
 
+  it('conflicts immediately on the first change inside an open transaction', async () => {
+    const project = fixture()
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('video')
+    let resolveWorker: ((value: any) => void) | undefined
+    const cancel = vi.fn(async () => undefined)
+    window.spectra = {
+      startSilenceCutReapply: vi.fn(() => new Promise((resolve) => { resolveWorker = resolve })),
+      cancelSilenceCutReapply: cancel
+    } as unknown as DesktopApi
+    const running = useEditorStore.getState().reapplySilenceCut()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(useEditorStore.getState().pendingAsyncMutation?.state).toBe('running')
+    useEditorStore.getState().beginEditTransaction()
+    useEditorStore.getState().patchClip('video', (clip) => clip.kind === 'video' ? { ...clip, enabled: false } : clip)
+    expect(useEditorStore.getState().pendingAsyncMutation?.state).toBe('conflicted')
+    expect(cancel).toHaveBeenCalled()
+    resolveWorker?.({ jobId: useEditorStore.getState().silenceCutReapplyJobId, selectedClipId: 'video', analysis: { removedDurationUs: 0 } })
+    expect(await running).toBe(false)
+    expect(useEditorStore.getState().past).toHaveLength(0)
+  })
+
   it('turns an open manual transaction into history before save', () => {
     const project = fixture()
     useEditorStore.getState().loadProject(project)

@@ -554,7 +554,21 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const fastFixture = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.cssFallbackCount === 0 && dom.fastSubtitleOverlay && dom.fastSubtitleOverlayReady)
   const fastFixtureDom = await readDom()
   const playbackSampleMs = Math.max(200, Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200))
-  const playbackFrameSample = await window.webContents.executeJavaScript(`new Promise((resolve) => {
+  const playbackFrameSample = await window.webContents.executeJavaScript(process.env.SPECTRA_REAL_VIDEO_E2E === '1' ? `new Promise((resolve) => {
+    const started = performance.now()
+    const samples = []
+    let lastPlayhead = -1
+    const timer = setInterval(() => {
+      const canvas = document.querySelector('.viewer-canvas')
+      const playheadUs = Number(canvas?.getAttribute('data-playhead-us') ?? 0)
+      const image = document.querySelector('.fast-authoritative-subtitle-overlay')
+      const style = image ? getComputedStyle(image) : null
+      const item = { playheadUs, key: image?.getAttribute('data-subtitle-visual-key') ?? '', transform: style?.transform ?? 'none', opacity: style?.opacity ?? '1', hasOverlay: Boolean(image), fallbackCount: document.querySelectorAll('[data-subtitle-renderer="css-fallback"]').length }
+      if (playheadUs !== lastPlayhead) samples.push(item)
+      lastPlayhead = playheadUs
+      if (performance.now() - started >= ${playbackSampleMs}) { clearInterval(timer); resolve({ elapsedMs: performance.now() - started, samples }) }
+    }, 50)
+  })` : `new Promise((resolve) => {
     const started = performance.now()
     let frames = 0
     const tick = () => {
@@ -599,7 +613,11 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const accurateAfterResume = await until((dom) => dom.overlay && dom.overlayReady)
   const finalDom = await readDom()
   const reportOverlay = await service.renderSubtitleOverlay(project, 500_000)
-  const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, sequence: { width: project.sequence.width, height: project.sequence.height }, subtitleSpec, fastFixture, fastSubtitleOverlay: fastFixtureDom.fastSubtitleOverlay, fastSubtitleOverlayReady: fastFixtureDom.fastSubtitleOverlayReady, fastSubtitleOverlaySrc: fastFixtureDom.fastSubtitleOverlaySrc, initialCssFallbackCount: initialDom.cssFallbackCount, fastCssFallbackCount: fastFixtureDom.cssFallbackCount, playbackFrameSample, playbackQuality, subtitleOverlayFramePath: reportOverlay.framePath, subtitleOverlayFrameIndex: reportOverlay.frameIndex, subtitleOverlayStateFingerprint: reportOverlay.subtitleStateFingerprint, subtitleOverlayCacheEntries: service.subtitleOverlayCacheSize, subtitleOverlayCacheBytes: service.subtitleOverlayCacheBytes, subtitleOverlayColdMs, subtitleOverlayCacheHitMs, subtitleOverlayCueSwitchMs, subtitleOverlayColdP50Ms, subtitleOverlayColdP95Ms, subtitleOverlayCacheHitP50Ms, subtitleOverlayCacheHitP95Ms, subtitleOverlayCueSwitchP50Ms, subtitleOverlayCueSwitchP95Ms, coldOverlayFramePath: coldSubtitleOverlay.framePath, accurateFixtureAfterResume, editPendingRejectsStaleOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastSubtitleStack: fastFixtureDom.subtitleStack, accurateSubtitleStack: initialDom.subtitleStack, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
+  type RealVideoSample = { playheadUs: number; key: string; transform: string; opacity: string; hasOverlay: boolean; fallbackCount: number }
+  const realVideoSamples: RealVideoSample[] = process.env.SPECTRA_REAL_VIDEO_E2E === '1' && playbackFrameSample && Array.isArray(playbackFrameSample.samples) ? playbackFrameSample.samples as RealVideoSample[] : []
+  const gapSamples = realVideoSamples.filter((sample: RealVideoSample) => (sample.playheadUs >= 2_500_000 && sample.playheadUs < 4_000_000) || (sample.playheadUs >= 6_000_000 && sample.playheadUs < 7_000_000) || sample.playheadUs >= 9_000_000)
+  const animatedSamples = realVideoSamples.filter((sample: RealVideoSample) => sample.playheadUs >= 7_000_000 && sample.playheadUs < 9_000_000)
+  const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, sequence: { width: project.sequence.width, height: project.sequence.height }, subtitleSpec, fastFixture, fastSubtitleOverlay: fastFixtureDom.fastSubtitleOverlay, fastSubtitleOverlayReady: fastFixtureDom.fastSubtitleOverlayReady, fastSubtitleOverlaySrc: fastFixtureDom.fastSubtitleOverlaySrc, initialCssFallbackCount: initialDom.cssFallbackCount, fastCssFallbackCount: fastFixtureDom.cssFallbackCount, playbackFrameSample, playbackQuality, realVideoE2E: process.env.SPECTRA_REAL_VIDEO_E2E === '1' ? { sampleCount: realVideoSamples.length, subtitleLessGapOverlayCount: gapSamples.filter((sample: RealVideoSample) => sample.hasOverlay).length, staleCueCount: gapSamples.filter((sample: RealVideoSample) => sample.hasOverlay).length, animatedCueImage: animatedSamples.some((sample: RealVideoSample) => sample.hasOverlay), animatedCueTransforms: [...new Set(animatedSamples.map((sample: RealVideoSample) => `${sample.transform}/${sample.opacity}`))], cssFallbackCount: realVideoSamples.reduce((max: number, sample: RealVideoSample) => Math.max(max, sample.fallbackCount), 0) } : null, subtitleOverlayFramePath: reportOverlay.framePath, subtitleOverlayFrameIndex: reportOverlay.frameIndex, subtitleOverlayStateFingerprint: reportOverlay.subtitleStateFingerprint, subtitleOverlayCacheEntries: service.subtitleOverlayCacheSize, subtitleOverlayCacheBytes: service.subtitleOverlayCacheBytes, subtitleOverlayColdMs, subtitleOverlayCacheHitMs, subtitleOverlayCueSwitchMs, subtitleOverlayColdP50Ms, subtitleOverlayColdP95Ms, subtitleOverlayCacheHitP50Ms, subtitleOverlayCacheHitP95Ms, coldOverlayFramePath: coldSubtitleOverlay.framePath, accurateFixtureAfterResume, editPendingRejectsStaleOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastSubtitleStack: fastFixtureDom.subtitleStack, accurateSubtitleStack: initialDom.subtitleStack, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
   return { ...startup, ...report }
 }
 

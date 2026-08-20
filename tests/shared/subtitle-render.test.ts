@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeSubtitleClips, buildSubtitleRenderSpec, subtitleAnchorTransform, subtitleVisualStateKey } from '../../src/shared/subtitle-render.js'
+import { activeSubtitleClips, buildSubtitleRenderSpec, fastSubtitleAnimationStyle, subtitleAnchorTransform, subtitleVisualStateKey } from '../../src/shared/subtitle-render.js'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types.js'
 
 const caption = (style: Partial<typeof DEFAULT_SUBTITLE_STYLE> = {}, text = 'alpha beta\n日本語'): Parameters<typeof buildSubtitleRenderSpec>[0] => ({
@@ -15,6 +15,12 @@ const caption = (style: Partial<typeof DEFAULT_SUBTITLE_STYLE> = {}, text = 'alp
 })
 
 describe('canonical subtitle render spec', () => {
+  it('derives approximate Fast animation from playhead time on the image only', () => {
+    const clip = caption({ animation: 'pop', animationDurationUs: 500_000 })
+    expect(fastSubtitleAnimationStyle(clip, 0)).toEqual({ opacity: 0, transform: 'scale(0.9000)' })
+    expect(fastSubtitleAnimationStyle(clip, 250_000).transform).not.toBe('none')
+    expect(fastSubtitleAnimationStyle(clip, 1_000_000)).toEqual({ opacity: 1, transform: 'scale(1.0000)' })
+  })
   it('uses the same logical position and anchor semantics for all alignments', () => {
     const sequence = { width: 1920, height: 1080 }
     const top = buildSubtitleRenderSpec(caption({ alignment: 'top', positionX: 50, positionY: 10 }), sequence)

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { aggregateOwnedProcessSample, diffRoleCpuPercent } from './process-tree-metrics.mjs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -219,13 +220,14 @@ const readProcessMetrics = async (pid) => {
   if (!pid) return null
   try {
     if (process.platform === 'win32') {
-      const command = `$root=Get-Process -Id ${Number(pid)} -ErrorAction Stop; $ffmpeg=(Get-Process -Name ffmpeg -ErrorAction SilentlyContinue | Measure-Object).Count; [pscustomobject]@{cpuSeconds=$root.CPU; workingSetBytes=$root.WorkingSet64; ffmpegProcessCount=$ffmpeg} | ConvertTo-Json -Compress`
+      const command = `$root=${Number(pid)}; $cim=@{}; Get-CimInstance Win32_Process | ForEach-Object { $cim[[int]$_.ProcessId]=$_.ParentProcessId }; $owned=@($root); $changed=$true; while($changed){$changed=$false; foreach($item in $cim.GetEnumerator()){if($owned -contains [int]$item.Value -and $owned -notcontains [int]$item.Key){$owned+=[int]$item.Key;$changed=$true}}}; $rows=@(); foreach($id in $owned){try{$p=Get-Process -Id $id -ErrorAction Stop; $w=Get-CimInstance Win32_Process -Filter \"ProcessId=$id\"; $rows+=[pscustomobject]@{pid=$id;parentPid=[int]$w.ParentProcessId;name=$w.Name;commandLine=$w.CommandLine;cpuSeconds=$p.CPU;workingSetBytes=$p.WorkingSet64;privateBytes=$p.PrivateMemorySize64}}catch{}}; $rows | ConvertTo-Json -Compress`
       const result = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', command], { windowsHide: true, maxBuffer: 1024 * 1024 })
-      return JSON.parse(result.stdout.trim())
+      const parsed = JSON.parse(result.stdout.trim() || '[]')
+      return aggregateOwnedProcessSample(pid, Array.isArray(parsed) ? parsed : [parsed])
     }
     const result = await execFileAsync('ps', ['-o', 'cputime=,rss=', '-p', String(pid)])
     const [cpuTime, rss] = result.stdout.trim().split(/\s+/u)
-    return { cpuSeconds: cpuTime ? cpuTime.split(':').reduce((total, value) => total * 60 + Number(value), 0) : null, workingSetBytes: rss ? Number(rss) * 1024 : null, ffmpegProcessCount: null }
+    return aggregateOwnedProcessSample(pid, [{ pid, parentPid: 0, name: 'electron', commandLine: '', cpuSeconds: cpuTime ? cpuTime.split(':').reduce((total, value) => total * 60 + Number(value), 0) : 0, workingSetBytes: rss ? Number(rss) * 1024 : 0 }])
   } catch {
     return null
   }
@@ -235,23 +237,28 @@ const root = await mkdtemp(path.join(require('node:os').tmpdir(), 'spectra-accur
 try {
   const fixtureOverrides = process.env.SPECTRA_SUBTITLE_FIXTURE_JSON ? JSON.parse(process.env.SPECTRA_SUBTITLE_FIXTURE_JSON) : {}
   const sourceColor = process.env.SPECTRA_PREVIEW_SOURCE_COLOR
-  const sourcePath = path.join(root, 'source.png')
+  const realVideo = process.env.SPECTRA_REAL_VIDEO_E2E === '1'
+  const sourcePath = path.join(root, realVideo ? 'source.mp4' : 'source.png')
   const projectPath = path.join(root, 'project.json')
-  await run(ffmpegPath, [
-    '-hide_banner', '-loglevel', 'error', '-y',
-    '-f', 'lavfi', '-i', sourceColor ? `color=c=${sourceColor}:s=1920x1080:r=30:d=1` : 'testsrc2=size=320x180:rate=30:duration=1',
-    '-frames:v', '1', sourcePath
-  ])
-  const mediaWidth = sourceColor ? 1920 : 320
-  const mediaHeight = sourceColor ? 1080 : 180
+  await run(ffmpegPath, realVideo
+    ? ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x203040:s=1920x1080:r=30:d=10', '-t', '10', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', sourcePath]
+    : ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', sourceColor ? `color=c=${sourceColor}:s=1920x1080:r=30:d=1` : 'testsrc2=size=320x180:rate=30:duration=1', '-frames:v', '1', sourcePath])
+  const mediaWidth = realVideo || sourceColor ? 1920 : 320
+  const mediaHeight = realVideo || sourceColor ? 1080 : 180
   const defaultSubtitleStyle = { fontFamily: 'Noto Sans JP', fontSize: 123, color: '#ffffff', outlineColor: '#111318', outlineWidth: 14, shadowColor: '#ff0000', shadowBlur: 24, backgroundColor: '#000000', backgroundOpacity: 0.15, bold: true, italic: false, letterSpacing: 0, lineHeight: 1.15, alignment: 'bottom', positionX: 50, positionY: 86, maxWidthPercent: 80, animation: 'none', animationDurationUs: 0 }
   const subtitleStyle = { ...defaultSubtitleStyle, ...(fixtureOverrides.style ?? {}) }
   const subtitleText = typeof fixtureOverrides.text === 'string' ? fixtureOverrides.text : '字幕を入力'
   const fixtureTag = typeof fixtureOverrides.tag === 'string' ? fixtureOverrides.tag : 'base'
-  const playbackMs = Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200)
+  const playbackMs = realVideo ? 10_500 : Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200)
   const longPlayback = Number.isFinite(playbackMs) && playbackMs > 2_000
   const playbackDurationUs = longPlayback ? Math.ceil(playbackMs * 1_000) + 2_000_000 : 1_000_000
-  const subtitleClips = longPlayback
+  const subtitleClips = realVideo
+    ? [
+        { id: 'caption-1', name: 'Cue 1', kind: 'subtitle', text: '実動画 cue 1', startUs: 500_000, durationUs: 2_000_000, sourceInUs: 0, enabled: true, style: subtitleStyle },
+        { id: 'caption-2', name: 'Cue 2', kind: 'subtitle', text: '実動画 cue 2', startUs: 4_000_000, durationUs: 2_000_000, sourceInUs: 0, enabled: true, style: subtitleStyle },
+        { id: 'caption-3', name: 'Cue 3', kind: 'subtitle', text: '実動画 animated cue', startUs: 7_000_000, durationUs: 2_000_000, sourceInUs: 0, enabled: true, style: { ...subtitleStyle, animation: 'pop', animationDurationUs: 500_000 } }
+      ]
+    : longPlayback
     ? Array.from({ length: Math.ceil(playbackDurationUs / 2_000_000) }, (_, index) => ({
         id: `caption-${index + 1}`, name: 'Caption', kind: 'subtitle', text: `${subtitleText} ${index + 1}`,
         startUs: 200_000 + index * 2_000_000, durationUs: 1_200_000, sourceInUs: 0, enabled: true, style: subtitleStyle
@@ -265,16 +272,16 @@ try {
     createdAt: '2026-08-14T00:00:00.000Z',
     updatedAt: '2026-08-14T00:00:00.000Z',
     sequence: { width: 1920, height: 1080, frameRate: { numerator: 30, denominator: 1 }, sampleRate: 48000, backgroundColor: '#102030' },
-    media: [{ id: 'source', name: 'source.png', path: sourcePath, kind: 'image', durationUs: 0, width: mediaWidth, height: mediaHeight, hasAudio: false, fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false }],
+    media: [{ id: 'source', name: realVideo ? 'source.mp4' : 'source.png', path: sourcePath, kind: realVideo ? 'video' : 'image', durationUs: realVideo ? 10_000_000 : 0, width: mediaWidth, height: mediaHeight, hasAudio: false, fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false }],
     tracks: [
-      { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: 'image', assetId: 'source', startUs: 0, durationUs: playbackDurationUs, sourceInUs: 0, enabled: true, transform: fixtureOverrides.transform ?? { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
+      { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: realVideo ? 'video' : 'image', assetId: 'source', startUs: 0, durationUs: realVideo ? 10_000_000 : playbackDurationUs, sourceInUs: 0, enabled: true, transform: fixtureOverrides.transform ?? { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
       { id: 'subtitle', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: subtitleClips }
     ]
   }
   await writeFile(projectPath, JSON.stringify(project), 'utf8')
   const child = spawn(electronPath, ['.'], {
     cwd: repositoryRoot,
-    env: { ...process.env, SPECTRA_ACCURATE_PREVIEW_SMOKE: '1', SPECTRA_PREVIEW_E2E_PROJECT: projectPath },
+    env: { ...process.env, SPECTRA_ACCURATE_PREVIEW_SMOKE: '1', SPECTRA_PREVIEW_E2E_PROJECT: projectPath, SPECTRA_PREVIEW_PLAYBACK_MS: realVideo ? '10500' : process.env.SPECTRA_PREVIEW_PLAYBACK_MS, SPECTRA_REAL_VIDEO_E2E: realVideo ? '1' : undefined },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     shell: false
@@ -320,15 +327,28 @@ try {
   ])
   const subtitleOverlayMetrics = analyzeTransparentOverlay(overlayBuffer)
   report.subtitleOverlayMetrics = subtitleOverlayMetrics
-  const cpuSamples = processMetricSamples.map((sample) => Number(sample.cpuSeconds)).filter(Number.isFinite)
-  const cpuStart = cpuSamples[0]
-  const cpuEnd = cpuSamples.at(-1)
   const elapsedSeconds = processMetricSamples.length > 1 ? (processMetricSamples.at(-1).atMs - processMetricSamples[0].atMs) / 1000 : 0
   const logicalCpus = Math.max(1, Number(require('node:os').cpus().length))
+  const firstMetrics = processMetricSamples.find((sample) => sample.cpuSeconds > 0 || sample.workingSetBytes > 0) ?? processMetricSamples[0]
+  const peakMetrics = processMetricSamples.reduce((peak, sample) => !peak || sample.cpuSeconds > peak.cpuSeconds ? sample : peak, null)
+  const memoryByRole = processMetricSamples.reduce((peak, sample) => {
+    for (const [role, value] of Object.entries(sample.workingSetBytesByRole ?? {})) peak[role] = Math.max(peak[role] ?? 0, Number(value) || 0)
+    return peak
+  }, {})
+  const privateBytesByRole = processMetricSamples.reduce((peak, sample) => {
+    for (const [role, value] of Object.entries(sample.privateBytesByRole ?? {})) peak[role] = Math.max(peak[role] ?? 0, Number(value) || 0)
+    return peak
+  }, {})
+  const cpuPercentByRole = firstMetrics && peakMetrics ? diffRoleCpuPercent(firstMetrics.cpuByRole, peakMetrics.cpuByRole, elapsedSeconds, logicalCpus) : null
   report.productionMetrics = {
-    cpuPercent: cpuStart !== undefined && cpuEnd !== undefined && elapsedSeconds > 0 ? (cpuEnd - cpuStart) / elapsedSeconds / logicalCpus * 100 : null,
-    ffmpegProcessCountMax: Math.max(0, ...processMetricSamples.map((sample) => Number(sample.ffmpegProcessCount) || 0)),
-    rendererWorkingSetBytesMax: Math.max(0, ...processMetricSamples.map((sample) => Number(sample.workingSetBytes) || 0)),
+    cpuPercentByRole,
+    cpuPercentTotal: cpuPercentByRole ? Object.values(cpuPercentByRole).reduce((total, value) => total + value, 0) : null,
+    memoryWorkingSetBytesByRole: memoryByRole,
+    memoryWorkingSetBytesTotal: Object.values(memoryByRole).reduce((total, value) => total + value, 0),
+    privateBytesByRole,
+    privateBytesTotal: Object.values(privateBytesByRole).reduce((total, value) => total + value, 0),
+    ownedFfmpegProcessCountMax: Math.max(0, ...processMetricSamples.map((sample) => Number(sample.ffmpegProcessCount) || 0)),
+    ownedProcessCountMax: Math.max(0, ...processMetricSamples.map((sample) => sample.ownedProcessIds?.length ?? 0)),
     samples: processMetricSamples.length
   }
   const shadowExpected = Boolean(report.subtitleSpec?.shadowColor && !/^#(?:0{6}|0{8})$/iu.test(report.subtitleSpec.shadowColor))
