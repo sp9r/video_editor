@@ -1,5 +1,6 @@
 import type { AutoCaptionBaseline } from './auto-caption-contract'
 import type { EncoderReport, ExportSettings, ProjectFile, TimeUs, TimelineClip } from './types'
+import { canRestoreSilenceCut } from './silence-cut'
 
 export type ProjectQaSeverity = 'error' | 'warning' | 'info'
 
@@ -71,6 +72,10 @@ const checkSilenceMetadata = (project: ProjectFile, issues: ProjectQaIssue[]): v
     for (const target of operation.targets) {
       const missing = target.generatedClipIds.filter((id) => !clips.has(id))
       if (missing.length) addIssue(issues, 'warning', 'AUTO_SILENCE_METADATA_STALE', '無音カット解除用の生成clip情報が現在のTimelineと一致しません。', target.clipId)
+      const restoreAnchor = target.generatedClipIds[0]
+      if (restoreAnchor && !canRestoreSilenceCut(project, restoreAnchor)) {
+        addIssue(issues, 'warning', 'AUTO_SILENCE_RESTORE_UNAVAILABLE', '無音カットの解除/再構成ができない状態です。現在のProjectは引き続き書き出し可能ですが、生成clipの変更・分割・削除・link/source範囲・metadata不一致を確認してください。', target.clipId)
+      }
     }
   }
 }

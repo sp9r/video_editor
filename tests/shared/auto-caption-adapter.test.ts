@@ -117,6 +117,30 @@ describe('auto-caption timeline adapter', () => {
     expect(generated?.kind === 'subtitle' ? generated.words?.[0] : undefined).toMatchObject({ startUs: 15_010_000, endUs: 15_010_000 })
   })
 
+  it('fails atomically when a valid caption collapses at a silence boundary instead of dropping ownership', () => {
+    const project = createEmptyProject('caption boundary failure')
+    const clip = { id: 'clip-boundary', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }
+    const before = structuredClone(project)
+    const mapper = { mapPoint: () => 15_000_000 } as never
+    expect(() => applyAutoCaptionResultToProject(project, clip, result, { sourceTimeMapper: mapper })).toThrow(/sourceWordId/u)
+    expect(project).toEqual(before)
+  })
+
+  it('keeps exact source ownership for an all-point raw-word run with a positive caption interval', () => {
+    const allPoint = {
+      ...result,
+      rawWords: [
+        { id: 'source-word:point-a', text: '字幕', startUs: 25_000_000, endUs: 25_000_000 },
+        { id: 'source-word:point-b', text: 'です', startUs: 25_000_000, endUs: 25_000_000 }
+      ],
+      captions: [{ ...result.captions[0]!, text: '字幕です', sourceWordIds: ['source-word:point-a', 'source-word:point-b'] }]
+    }
+    const applied = applyAutoCaptionResultToProject(createEmptyProject('all point'), { startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }, allPoint)
+    const generated = applied.project.tracks.at(-1)?.clips[0]
+    expect(generated?.kind === 'subtitle' ? generated.sourceWordIds : undefined).toEqual(['source-word:point-a', 'source-word:point-b'])
+    expect(generated?.kind === 'subtitle' ? generated.words?.map((word) => word.id) : undefined).toEqual(['source-word:point-a', 'source-word:point-b'])
+  })
+
   it('creates a fresh named track with edit units and keeps previous tracks untouched', () => {
     const project = createEmptyProject('fresh track')
     const clip = { id: 'clip-1', kind: 'video' as const, startUs: 10_000_000, sourceInUs: 20_000_000, durationUs: 10_000_000 }

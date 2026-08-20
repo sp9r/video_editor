@@ -148,6 +148,8 @@ export interface SubtitleClip extends BaseClip {
   /** Optional lineage from the auto-caption worker; source IDs remain stable across reruns/review. */
   sourceCaptionId?: string
   sourceJobId?: string
+  /** Exact worker ownership, retained even when optional timing words are unsafe. */
+  sourceWordIds?: string[]
   words?: SubtitleWord[]
   /** Internal .spectra edit units; never serialized into edit_project.v1. */
   editUnits?: SubtitleEditUnit[]
@@ -223,6 +225,10 @@ export interface ProjectFile {
   updatedAt: string
   projectPath?: string
   projectFormat?: 'spectra' | 'edit_project_v1'
+  /** Producer metadata imported from edit_project.v1; opaque and non-authoritative. */
+  opaqueContractMetadata?: Record<string, unknown>
+  /** Recovery-only provenance; normal .spectra saves omit this field. */
+  recoveryProvenance?: { originalProjectDirectory: string }
   sequence: SequenceSettings
   media: MediaAsset[]
   tracks: TimelineTrack[]

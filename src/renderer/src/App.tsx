@@ -264,9 +264,15 @@ export default function App(): React.JSX.Element {
         showNotice(`E2Eプロジェクトを読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
       }
     }
+    // Register before the asynchronous app-info lookup completes. Electron
+    // smoke mode dispatches the fixture as soon as the renderer is ready, so
+    // waiting for getAppInfo() here creates a startup race.
+    window.addEventListener('spectra:e2e-project', onPreviewE2eProject)
     void window.spectra.getAppInfo().then((info) => {
-      if (active && info.smokeMode) window.addEventListener('spectra:e2e-project', onPreviewE2eProject)
-    }).catch(() => undefined)
+      if (active && !info.smokeMode) window.removeEventListener('spectra:e2e-project', onPreviewE2eProject)
+    }).catch(() => {
+      if (active) window.removeEventListener('spectra:e2e-project', onPreviewE2eProject)
+    })
     return () => {
       active = false
       window.removeEventListener('spectra:e2e-project', onPreviewE2eProject)

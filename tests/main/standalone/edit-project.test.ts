@@ -112,6 +112,19 @@ describe('standalone edit_project.v1 loader', () => {
     }
   })
 
+  it('imports optional producer metadata as opaque, non-authoritative project data', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'video-editor-contract-metadata-'))
+    try {
+      const document = { ...makeDocument(), metadata: { source_run_id: 'run-1', producer_extension: { keep: true } } }
+      const projectPath = await writeProject(root, document)
+      const loaded = await loadEditProject(projectPath)
+      expect(loaded.project.opaqueContractMetadata).toEqual(document.metadata)
+      expect(loaded.project.editorMetadata).toBeUndefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('preserves resolution when the common parent moves', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'video-editor-move-'))
     const moved = `${parent}-moved`

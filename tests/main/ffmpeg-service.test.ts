@@ -256,6 +256,40 @@ describe('FFmpeg export service', () => {
     }
   }, 30_000)
 
+  it('invalidates an in-flight accurate render without leaving a cache-visible PNG', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-accurate-frame-generation-'))
+    try {
+      const project = await prepareProjectFiles(root)
+      let renderCalls = 0
+      let release: () => void = () => undefined
+      let startedResolve: (() => void) | undefined
+      const started = new Promise<void>((resolve) => { startedResolve = resolve })
+      const executor: ProcessExecutor = {
+        async run(request) {
+          if (request.args.includes('-filter_complex_script')) {
+            renderCalls += 1
+            startedResolve?.()
+            await new Promise<void>((resolve) => { release = resolve })
+            const outputPath = request.args.at(-1)
+            if (!outputPath) throw new Error('Missing accurate frame output')
+            await writeFile(outputPath, 'stale-frame')
+          }
+          return success(request)
+        }
+      }
+      const workspaceRoot = join(root, 'workspaces')
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor, platform: 'win32', workspaceRoot })
+      const pending = service.renderAccurateFrame(project, 100_000)
+      await started
+      await service.clearAccuratePreviewCache()
+      release()
+      await expect(pending).rejects.toThrow(/invalidated/u)
+      await expect(readdir(join(workspaceRoot, 'accurate-preview'))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('falls back from a runtime GPU failure to CPU, validates, and replaces output', async () => {
     const root = await mkdtemp(join(tmpdir(), 'spectra-service-'))
     try {

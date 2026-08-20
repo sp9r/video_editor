@@ -27,6 +27,7 @@ const projectForDisk = (project: ProjectFile, projectPath: string): ProjectFile 
   const diskProject = structuredClone(project)
   delete diskProject.projectPath
   delete diskProject.projectFormat
+  delete diskProject.recoveryProvenance
   if (project.projectFormat === 'edit_project_v1') delete diskProject.editorMetadata
   diskProject.updatedAt = new Date().toISOString()
   diskProject.media = diskProject.media.map((asset) => ({
@@ -100,9 +101,13 @@ const recoveryPath = (): string => path.join(app.getPath('userData'), 'recovery'
 
 export const writeRecovery = async (project: ProjectFile): Promise<void> => {
   const target = recoveryPath()
-  const directory = project.projectPath ? path.dirname(project.projectPath) : process.cwd()
+  const directory = project.projectPath ? path.dirname(path.resolve(project.projectPath)) : process.cwd()
   const recovery = structuredClone(project)
-  recovery.media = recovery.media.map((asset) => ({ ...asset, relativePath: path.relative(directory, asset.path) }))
+  recovery.recoveryProvenance = { originalProjectDirectory: directory }
+  recovery.media = recovery.media.map((asset) => {
+    const absolutePath = path.isAbsolute(asset.path) ? asset.path : path.resolve(directory, asset.path)
+    return { ...asset, path: absolutePath, relativePath: path.relative(directory, absolutePath) }
+  })
   await writeJsonAtomically(target, recovery)
 }
 
@@ -111,7 +116,22 @@ export const loadRecovery = async (): Promise<ProjectFile | null> => {
   if (!(await existsAsFile(target))) return null
   try {
     const source = await readFile(target, 'utf8')
-    return validateProject(JSON.parse(source) as unknown)
+    const recovered = validateProject(JSON.parse(source) as unknown)
+    const recoveryDirectory = path.dirname(target)
+    const originalDirectory = recovered.recoveryProvenance?.originalProjectDirectory
+    const baseDirectory = originalDirectory && path.isAbsolute(originalDirectory) ? originalDirectory : recoveryDirectory
+    recovered.media = await Promise.all(recovered.media.map(async (asset) => {
+      const relativeCandidate = asset.relativePath ? path.resolve(baseDirectory, asset.relativePath) : null
+      const candidates = [relativeCandidate, asset.path].filter((candidate): candidate is string => Boolean(candidate))
+      const resolved = (await Promise.all(candidates.map(async (candidate) => (await existsAsFile(candidate)) ? candidate : null)))
+        .find((candidate): candidate is string => Boolean(candidate))
+      return {
+        ...asset,
+        path: resolved ?? relativeCandidate ?? asset.path,
+        offline: !resolved
+      }
+    }))
+    return recovered
   } catch {
     return null
   }

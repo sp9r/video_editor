@@ -36,6 +36,9 @@ const drawText = (context: CanvasRenderingContext2D, text: string, x: number, y:
   context.shadowOffsetY = 0
 }
 
+export const thumbnailLoadIsCurrent = (requestSequence: number, candidateId: string, currentSequence: number, currentCandidateId: string | null): boolean =>
+  requestSequence === currentSequence && candidateId === currentCandidateId
+
 export default function ThumbnailWorkspace({ project, onClose }: Props): React.JSX.Element {
   const selectedClipIds = useEditorStore((state) => state.selectedClipIds)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -47,7 +50,10 @@ export default function ThumbnailWorkspace({ project, onClose }: Props): React.J
   const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const renderSequence = useRef(0)
+  const selectedCandidateIdRef = useRef<string | null>(null)
   const selectedCandidate = useMemo(() => candidates.find((candidate) => candidate.id === selectedId) ?? candidates[0], [candidates, selectedId])
+  selectedCandidateIdRef.current = selectedCandidate?.id ?? null
 
   useEffect(() => {
     let active = true
@@ -69,11 +75,13 @@ export default function ThumbnailWorkspace({ project, onClose }: Props): React.J
   }, [project, selectedClipIds])
 
   useEffect(() => {
+    const sequence = ++renderSequence.current
     if (!selectedCandidate || !canvasRef.current) return
     const image = new Image()
     image.crossOrigin = 'anonymous'
     image.src = window.spectra?.mediaUrl(selectedCandidate.framePath) ?? ''
     image.onload = () => {
+      if (!thumbnailLoadIsCurrent(sequence, selectedCandidate.id, renderSequence.current, selectedCandidateIdRef.current)) return
       const canvas = canvasRef.current
       if (!canvas) return
       const context = canvas.getContext('2d')
@@ -89,6 +97,12 @@ export default function ThumbnailWorkspace({ project, onClose }: Props): React.J
       }
       drawText(context, layout.title, x, y, layout, layout.fontSize)
       if (layout.subtitle) drawText(context, layout.subtitle, x, y + layout.fontSize * 1.12, layout, Math.max(18, Math.round(layout.fontSize * .48)))
+    }
+    image.onerror = () => undefined
+    return () => {
+      image.onload = null
+      image.onerror = null
+      image.src = ''
     }
   }, [layout, selectedCandidate])
 

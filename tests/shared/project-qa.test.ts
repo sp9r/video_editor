@@ -57,6 +57,7 @@ describe('project QA', () => {
     expect(report.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
       'MEDIA_UNREADABLE', 'MEDIA_VIDEO_AUDIO_MISSING', 'TIMELINE_VISUAL_GAP', 'SUBTITLE_DISABLED_HIDDEN',
       'AUTO_CAPTION_FALLBACK_DIAGNOSTIC_MISSING', 'AUTO_SILENCE_METADATA_STALE', 'EXPORT_DIMENSIONS_INVALID', 'EXPORT_FRAMERATE_INVALID'
+      , 'AUTO_SILENCE_RESTORE_UNAVAILABLE'
     ]))
   })
 

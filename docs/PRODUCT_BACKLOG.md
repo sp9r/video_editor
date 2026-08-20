@@ -551,6 +551,44 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 
 **Automated evidence:** Stage 33 targeted video tests、typecheck、clip contract/silence/worker targeted testsは実行済み。実動画でのAccurate Preview memory、Fast/Accurate visual、Caption Rail操作、tight-cutの聴感はHuman Review Queueへ残す。
 
+### Stage 35 — Current Product Path Reliability Hardening
+
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
+
+- **F02 DONE:** review logの保存を直列化し、最新内容を再読込してupsert、unique temporary file＋atomic rename、失敗時のtemporary cleanupを行う。並列save／同一destination置換／失敗後回復を回帰化。
+- **F05 DONE:** Auto Captionのcaption boundary collapseを無言dropせずatomic failureにする。生成subtitle clipへworkerのexact `sourceWordIds`を保持し、point-only timingでもownershipを失わない。
+- **F08 DONE:** silence reapply／threshold update／Auto Caption applyのasync mutation前にopen transactionをcommitする。markSaved中のopen transactionもhistoryとclean stateを矛盾させない。
+- **F10 DONE:** ThumbnailWorkspaceの非同期画像ロードをrequest sequence＋candidate IDでguardし、古いonloadがcanvasを上書きしない。
+- **F11 DONE:** Accurate Preview cache invalidationはgenerationを進め、in-flight FFmpeg完了後のstale PNG公開を防ぐ。clearはin-flight完了後にcache directoryを掃除する。
+- **F12 DONE:** viewer quality表示をplaying／accurate match／stale更新中／errorの状態機械に合わせ、高速表示と正確表示を誤表示しない。
+- **F13 DONE:** thumbnail cacheをkey単位でcoalesceし、manifest＋frame存在検証、temporary PNGのatomic rename、LRU最大64件、invalidation cleanupを追加。
+- **F14 DONE:** Project QAはsilence metadataの破損をerror、restore不能なgenerated familyをwarningとして分類する。書き出し可能性と復元可能性を混同しない。
+- **F15 DONE:** standalone edit_project importのproducer metadataはopaque metadataとして`.spectra`内部へ保持する。`edit_project.v1` contractには追加せず、未知キーを権威情報として解釈しない。
+- **F16 DONE:** recovery fileへ元Project directoryのprovenanceを保存し、recovery file自身の場所へ移動しても相対media pathを元Project基準で解決する。旧provenanceなしrecoveryは安全側でoffline扱い。
+- E2E補助: rendererのE2E project listenerを非同期app-info取得より先に登録し、accurate-preview smokeの起動raceを解消。
+
+**Legacy audit / current-path classification:**
+
+- **F01:** `LEGACY — KEEP TEMPORARILY`。`clip_automation/caption_commands.py`はlegacy `editor_api.py`／`editor_frontend`からのみ到達し、現行Spectra Video Studioのworker→`edit_project`→`video_editor`経路では未使用。
+- **F03:** `CURRENT — KEEP / DEFER`。現行worker discoveryがoptional `spectra_auto_processing_worker.py`を優先し、不在時にcaption workerへfallbackする。Stage 35では修正しない。
+- **F04:** `LEGACY — KEEP TEMPORARILY`。legacy editorのDelete/RestoreとASS/FFmpeg export経路を対象とし、現行video_editorのlinked edit／silence restoreとは別経路。
+- **F06:** `LEGACY — KEEP TEMPORARILY`。legacy `editor_frontend`の`splitTextForCaption`に限定され、現行adapterのcaption segmentationとは別実装。
+- **F09:** `UNKNOWN — no concrete active implementation found`。legacy autosaveという記述はあるが、現行sourceの実装到達性を確認できなかったため推測で分類しない。
+
+**F07 evidence (read-only):** playing中は`Preview.tsx`のCSS subtitle fallbackで、cueごとのFFmpeg overlayではない。paused Accurate Previewは`preview:accurate-frame`→FFmpeg＋ASS→PNG、別のstatic overlay APIはanimation none時だけ使用する。accurate-preview smoke実測はcold `187.46ms`、cache hit `0.12ms`、cue switch `7.96ms`。CPU使用率とFFmpeg process countは現行smokeでは **NOT MEASURED**。
+
+**Automated evidence:**
+
+- `npm.cmd run typecheck`: PASS
+- `npm.cmd run build`: PASS
+- `npm.cmd test -- --maxWorkers=1`: 69 files / 393 tests PASS
+- targeted reliability tests: PASS。`npm.cmd run check`の通常並列実行はWindows resource contentionでFFmpeg／thumbnail stressとparent renameがtimeoutするため、single-worker全件を最終判定とした。
+- Electron startup / interaction / accurate-preview / subtitle geometry / subtitle parity: PASS
+- thumbnail／recovery専用Electron smoke script: package scriptsには未提供。
+- `clip_automation`: Stage 35のコード変更なし。既存untracked user filesは保持。
+
+**Human acceptance:** 実動画でreview concurrent save、silence reapply／restore、thumbnail cache再利用、recovery移動、Fast／Accurate切替、字幕の見た目・聴感を確認する。
+
 ---
 
 ## Notes for future Luna tasks

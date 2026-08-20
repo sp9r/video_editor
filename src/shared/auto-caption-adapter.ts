@@ -60,6 +60,9 @@ export const autoCaptionResultToTranscript = (
   const segments = result.captions.map((caption) => {
     const mappedStartUs = mapSourceTime(caption.startUs)
     const mappedEndUs = mapSourceTime(caption.endUs)
+    if (mappedEndUs <= mappedStartUs) {
+      throw new Error(`自動字幕のcaption ${caption.id} は無音カット後に正の表示区間を持てません。sourceWordIdを失うため適用を中止しました。`)
+    }
     const words = caption.sourceWordIds.map((wordId) => {
       const word = wordsById.get(wordId)
       if (!word) throw new Error('自動字幕結果のword ownershipが不正です。')
@@ -84,7 +87,7 @@ export const autoCaptionResultToTranscript = (
       text: caption.text,
       ...(wordTruth ? { words: derivedWords } : {})
     }
-  }).filter((segment) => segment.endUs > segment.startUs)
+  })
   if (segments.length === 0) throw new Error('自動字幕結果に字幕がありません。')
   return { kind: 'transcript', language: result.language, text: segments.map((segment) => segment.text).join(''), segments }
 }
@@ -216,6 +219,7 @@ export const applyAutoCaptionResultToProject = (
     ...(maxLines === undefined ? {} : { maxLines }),
     sourceCaptionId: result.captions[index]?.id,
     sourceJobId: result.jobId,
+    sourceWordIds: result.captions[index]?.sourceWordIds ? [...result.captions[index]!.sourceWordIds] : [],
     ...(segment.words?.length
       ? {
           words: segment.words.map((word) => ({ ...word })),

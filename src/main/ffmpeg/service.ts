@@ -222,6 +222,9 @@ export class FfmpegService {
   readonly #jobs = new Map<string, ActiveJob>()
   readonly #accurateFrames = new Map<string, Promise<AccuratePreviewFrameResult> | AccuratePreviewFrameResult>()
   readonly #subtitleOverlays = new Map<string, Promise<SubtitleOverlayResult> | SubtitleOverlayResult>()
+  readonly #accurateInFlight = new Set<Promise<AccuratePreviewFrameResult>>()
+  #accuratePreviewGeneration = 0
+  #accuratePreviewCleanup: Promise<void> | null = null
 
   constructor(paths: FfmpegPaths, options: Omit<FfmpegServiceOptions, 'paths' | 'ffmpegPath' | 'ffprobePath'> = {}) {
     this.paths = paths
@@ -259,7 +262,14 @@ export class FfmpegService {
   }
 
   async clearAccuratePreviewCache(): Promise<void> {
+    this.#accuratePreviewGeneration += 1
+    const inFlight = [...this.#accurateInFlight]
     this.#accurateFrames.clear()
+    if (inFlight.length) {
+      this.#accuratePreviewCleanup = Promise.allSettled(inFlight)
+        .then(() => rm(join(this.workspaceRoot, 'accurate-preview'), { recursive: true, force: true }).catch(() => undefined))
+      return
+    }
     await rm(join(this.workspaceRoot, 'accurate-preview'), { recursive: true, force: true })
   }
 
@@ -273,6 +283,12 @@ export class FfmpegService {
     options: AccurateFrameOptions = {}
   ): Promise<AccuratePreviewFrameResult> {
     if (!Number.isFinite(requestedTimeUs) || requestedTimeUs < 0) throw new Error('Accurate preview time must be a finite non-negative number')
+    const generation = this.#accuratePreviewGeneration
+    const cleanup = this.#accuratePreviewCleanup
+    if (cleanup) {
+      await cleanup
+      if (this.#accuratePreviewCleanup === cleanup) this.#accuratePreviewCleanup = null
+    }
     const settings: ExportSettings = {
       outputPath: join(this.workspaceRoot, 'accurate-preview-placeholder.mp4'),
       width: options.width ?? project.sequence.width,
@@ -291,6 +307,7 @@ export class FfmpegService {
     const renderedTimeUs = timeUsForFrameIndex(frameIndex, fps)
     const fingerprint = projectFingerprint(project)
     const mediaHash = await mediaFingerprint(project)
+    if (generation !== this.#accuratePreviewGeneration) throw new Error('Accurate preview was invalidated by a project change.')
     const cacheKey = createHash('sha256').update(JSON.stringify({
       fingerprint,
       mediaHash,
@@ -309,8 +326,11 @@ export class FfmpegService {
       renderedTimeUs,
       frameIndex,
       projectFingerprint: fingerprint,
+      generation,
       signal: options.signal
     })
+    this.#accurateInFlight.add(promise)
+    void promise.then(() => this.#accurateInFlight.delete(promise), () => this.#accurateInFlight.delete(promise))
     this.#accurateFrames.set(cacheKey, promise)
     while (this.#accurateFrames.size > 64) {
       const oldest = this.#accurateFrames.keys().next().value
@@ -380,15 +400,19 @@ export class FfmpegService {
   async #renderAccurateFrame(
     plan: RenderPlan,
     cacheKey: string,
-    metadata: Omit<AccuratePreviewFrameResult, 'framePath'> & { signal?: AbortSignal }
+    metadata: Omit<AccuratePreviewFrameResult, 'framePath'> & { generation: number; signal?: AbortSignal }
   ): Promise<AccuratePreviewFrameResult> {
     const directory = join(this.workspaceRoot, 'accurate-preview')
     const outputPath = join(directory, `${cacheKey}.png`)
+    let existingFrame: Awaited<ReturnType<typeof stat>> | null = null
     try {
-      const existing = await stat(outputPath)
-      if (existing.isFile() && existing.size > 0) return { framePath: outputPath, ...metadata, ffmpegStarted: false }
+      existingFrame = await stat(outputPath)
     } catch {
       // The bounded cache is best effort; render a missing or invalid entry again.
+    }
+    if (existingFrame?.isFile() && existingFrame.size > 0) {
+      if (metadata.generation !== this.#accuratePreviewGeneration) throw new Error('Accurate preview was invalidated by a project change.')
+      return { framePath: outputPath, ...metadata, ffmpegStarted: false }
     }
     await mkdir(directory, { recursive: true })
     const token = randomUUID()
@@ -429,7 +453,12 @@ export class FfmpegService {
       })
       const rendered = await stat(temporaryPath)
       if (!rendered.isFile() || rendered.size === 0) throw new Error('Accurate preview renderer produced an empty frame')
+      if (metadata.generation !== this.#accuratePreviewGeneration) throw new Error('Accurate preview was invalidated by a project change.')
       await moveIntoPlace(temporaryPath, outputPath)
+      if (metadata.generation !== this.#accuratePreviewGeneration) {
+        await rm(outputPath, { force: true })
+        throw new Error('Accurate preview was invalidated by a project change.')
+      }
       return { framePath: outputPath, ...metadata, ffmpegStarted: true }
     } finally {
       await Promise.all([
@@ -437,6 +466,7 @@ export class FfmpegService {
         rm(filterGraphPath, { force: true }).catch(() => undefined),
         rm(assPath, { force: true }).catch(() => undefined)
       ])
+      if (metadata.generation !== this.#accuratePreviewGeneration) await rm(directory, { recursive: true, force: true }).catch(() => undefined)
     }
   }
 

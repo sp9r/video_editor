@@ -1,15 +1,15 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
 
-const electronMocks = vi.hoisted(() => ({ showSaveDialog: vi.fn() }))
-vi.mock('electron', () => ({ app: { getPath: vi.fn() }, dialog: electronMocks }))
+const electronMocks = vi.hoisted(() => ({ showSaveDialog: vi.fn(), getPath: vi.fn() }))
+vi.mock('electron', () => ({ app: { getPath: electronMocks.getPath }, dialog: electronMocks }))
 
 import { addClipToTrack, createClipForAsset, createEmptyProject } from '../../src/shared/project'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types'
-import { saveProject } from '../../src/main/project-service'
+import { loadRecovery, saveProject, writeRecovery } from '../../src/main/project-service'
 import type { MediaAsset } from '../../src/shared/types'
 
 const sourceAsset = (path: string): MediaAsset => ({
@@ -32,7 +32,7 @@ describe('manual project persistence boundary', () => {
 
       let project = createEmptyProject('manual')
       const asset = sourceAsset(sourcePath)
-      project = { ...project, projectPath: contractPath, projectFormat: 'edit_project_v1', media: [asset] }
+      project = { ...project, projectPath: contractPath, projectFormat: 'edit_project_v1', opaqueContractMetadata: { source_run_id: 'run-1', opaque: { keep: true } }, media: [asset] }
       const clip = { ...createClipForAsset(asset, 0, 2_000_000), id: 'video', linkGroupId: 'link:video:audio', sourceAudioEnabled: false }
       project = addClipToTrack(project, project.tracks.find((track) => track.kind === 'media')!.id, clip)
       const result = await saveProject(project)
@@ -43,6 +43,7 @@ describe('manual project persistence boundary', () => {
       const savedClip = (saved.tracks as Array<{ clips: Array<Record<string, unknown>> }>).flatMap((track) => track.clips).find((item) => item.id === 'video')
       expect(savedClip).toMatchObject({ linkGroupId: 'link:video:audio', sourceAudioEnabled: false })
       expect(saved.projectFormat).toBeUndefined()
+      expect(saved.opaqueContractMetadata).toEqual({ source_run_id: 'run-1', opaque: { keep: true } })
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -69,6 +70,42 @@ describe('manual project persistence boundary', () => {
       expect(result.cancelled).toBe(false)
       const saved = JSON.parse(await readFile(outputPath, 'utf8')) as { tracks: Array<{ clips: Array<{ id: string; words?: unknown[] }> }> }
       expect(saved.tracks.flatMap((track) => track.clips).find((clip) => clip.id === 'caption')?.words).toHaveLength(2)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves recovery relative media against the original project directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'video-editor-recovery-'))
+    try {
+      const projectDirectory = join(root, 'project-a')
+      const recoveryUserData = join(root, 'recovery-b')
+      const projectPath = join(projectDirectory, 'clip.spectra')
+      const sourcePath = join(projectDirectory, 'media', 'source.mp4')
+      await mkdir(join(projectDirectory, 'media'), { recursive: true })
+      await writeFile(sourcePath, 'source media', { encoding: 'utf8' })
+      electronMocks.getPath.mockReturnValue(recoveryUserData)
+      const project = { ...createEmptyProject('recovery'), projectPath, media: [sourceAsset(sourcePath)] }
+      await writeRecovery(project)
+      const recovered = await loadRecovery()
+      expect(recovered?.recoveryProvenance?.originalProjectDirectory).toBe(projectDirectory)
+      expect(recovered?.media[0]).toMatchObject({ path: sourcePath, relativePath: join('media', 'source.mp4'), offline: false })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps old recovery compatibility and marks unresolved fallback media offline', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'video-editor-old-recovery-'))
+    try {
+      const recoveryUserData = join(root, 'recovery-b')
+      electronMocks.getPath.mockReturnValue(recoveryUserData)
+      const project = { ...createEmptyProject('old recovery'), media: [{ ...sourceAsset('source.mp4'), relativePath: 'source.mp4' }] }
+      const target = join(recoveryUserData, 'recovery', 'latest.spectra.autosave')
+      await mkdir(join(recoveryUserData, 'recovery'), { recursive: true })
+      await writeFile(target, `${JSON.stringify(project)}\n`)
+      const recovered = await loadRecovery()
+      expect(recovered?.media[0]?.offline).toBe(true)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

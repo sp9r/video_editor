@@ -7,6 +7,7 @@ import { canonicalShadowBlurRadius } from '../../../shared/subtitle-shadow'
 import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleClip } from '../../../shared/types'
 import { PREVIEW_AUDIO_DRIFT_TOLERANCE_SECONDS, previewAudioClipsForPlayback, previewAudioIsActive, previewAudioSourceTimeUs, previewAudioVolume } from '../preview-audio'
 import { previewDiagnosticContext, previewDiagnosticStore } from '../preview-performance-diagnostics'
+import { previewQualityLabel } from '../preview-status'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
 
@@ -334,7 +335,7 @@ export default function Preview(): React.JSX.Element {
       <header className="viewer-tabs">
         <span className="viewer-tab is-active">完成映像</span>
         <span className="viewer-quality" aria-live="polite">
-          <i />{playing ? '高速プレビュー' : accurateRendering ? '正確プレビュー更新中…' : accurateFrame ? '正確プレビュー' : '正確プレビュー生成中…'}
+          <i />{previewQualityLabel({ playing, accurateFrameMatchesCurrent, accurateRendering, accurateError })}
           {accurateError && <small className="preview-accurate-error" title={accurateError}>取得失敗</small>}
         </span>
         <PreviewDiagnosticControls project={project} playheadUs={playheadUs} playing={playing} viewportSize={viewportSize} />

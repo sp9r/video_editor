@@ -57,6 +57,45 @@ describe('editor history and linked selection', () => {
     expect(useEditorStore.getState().project).toEqual(after)
   })
 
+  it('commits an open manual transaction before applying an async silence operation', async () => {
+    const project = fixture()
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().selectClip('video')
+    useEditorStore.getState().beginEditTransaction()
+    useEditorStore.getState().patchClip('video', (clip) => clip.kind === 'video' ? { ...clip, audio: { ...clip.audio, volumeDb: -3 } } : clip)
+    const manual = structuredClone(useEditorStore.getState().project)
+    window.spectra = {
+      startSilenceCutReapply: vi.fn(async (_project, selectedClipId, jobId, _profile) => ({
+        jobId, selectedClipId,
+        analysis: {
+          silences: [{ startUs: 1_500_000, endUs: 2_500_000, durationUs: 1_000_000 }],
+          keepRanges: [{ startUs: 0, endUs: 1_400_000, durationUs: 1_400_000 }, { startUs: 1_600_000, endUs: 4_000_000, durationUs: 2_400_000 }],
+          removedDurationUs: 200_000,
+          settings: { profile: 'natural', minSilenceUs: 600_000, retainPauseUs: 180_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false },
+          diagnostics: []
+        }, protectedIntervals: [], alreadyRemovedSourceRanges: []
+      }))
+    } as unknown as DesktopApi
+    expect(await useEditorStore.getState().reapplySilenceCut()).toBe(true)
+    expect(useEditorStore.getState().transactionBase).toBeNull()
+    expect(useEditorStore.getState().past).toHaveLength(2)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().project).toEqual(manual)
+    useEditorStore.getState().undo()
+    expect(useEditorStore.getState().project).toEqual(project)
+  })
+
+  it('turns an open manual transaction into history before save', () => {
+    const project = fixture()
+    useEditorStore.getState().loadProject(project)
+    useEditorStore.getState().beginEditTransaction()
+    useEditorStore.getState().patchClip('video', (clip) => clip.kind === 'video' ? { ...clip, audio: { ...clip.audio, volumeDb: -6 } } : clip)
+    useEditorStore.getState().markSaved()
+    expect(useEditorStore.getState().transactionBase).toBeNull()
+    expect(useEditorStore.getState().past).toHaveLength(1)
+    expect(useEditorStore.getState().dirty).toBe(false)
+  })
+
   it('keeps Project and history unchanged on silence reapply failure', async () => {
     const project = fixture()
     useEditorStore.getState().loadProject(project)

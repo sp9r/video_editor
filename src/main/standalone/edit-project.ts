@@ -639,6 +639,7 @@ const buildProjectModel = async (
     updatedAt: document.project.updated_at ?? new Date(0).toISOString(),
     projectPath,
     projectFormat: 'edit_project_v1',
+    ...(document.metadata ? { opaqueContractMetadata: structuredClone(document.metadata) } : {}),
     sequence: {
       width: Math.round(document.sequence.width),
       height: Math.round(document.sequence.height),

@@ -147,6 +147,11 @@ const HISTORY_LIMIT = 80
 const cloneProject = (project: ProjectFile): ProjectFile => structuredClone(project)
 const initialProject = createDemoProject()
 
+/** Async product operations must never join a pointer/Inspector gesture. */
+const commitOpenTransactionBeforeAsyncMutation = (): void => {
+  if (useEditorStore.getState().transactionBase) useEditorStore.getState().commitEditTransaction()
+}
+
 const compatibleTrack = (_asset: MediaAsset, track: TimelineTrack): boolean => {
   return isMediaTrack(track)
 }
@@ -217,7 +222,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   markSaved: (project) => {
     const saved = project ? cloneProject(project) : get().project
-    set({ project: saved, dirty: false, lastSavedAt: new Date(), savedFingerprint: projectFingerprint(saved), transactionBase: null })
+    set((state) => {
+      const transactionChanged = Boolean(state.transactionBase && projectFingerprint(state.transactionBase) !== projectFingerprint(state.project))
+      return {
+        project: saved,
+        past: transactionChanged ? [...state.past, cloneProject(state.transactionBase!)].slice(-HISTORY_LIMIT) : state.past,
+        future: transactionChanged ? [] : state.future,
+        dirty: false,
+        lastSavedAt: new Date(),
+        savedFingerprint: projectFingerprint(saved),
+        transactionBase: null
+      }
+    })
   },
   beginEditTransaction: () => {
     if (!get().transactionBase) set({ transactionBase: cloneProject(get().project) })
@@ -418,6 +434,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         captionCoverageRanges,
         captionCoverageMaxGapUs: silenceAnalysis?.settings.minSilenceUs
       })
+      commitOpenTransactionBeforeAsyncMutation()
       set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 0.96, progressMode: 'indeterminate', message: '字幕をTimelineへ適用中…', result } })
       const firstCaption = applied.project.tracks.find((track) => track.id === applied.trackId)?.clips[0]
       get().applyProject(applied.project, firstCaption ? { selectClipId: firstCaption.id } : undefined)
@@ -490,6 +507,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         return true
       }
       const firstTarget = applied.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === `${selected.id}:silence:1`)
+      commitOpenTransactionBeforeAsyncMutation()
       get().applyProject(applied.project, firstTarget ? { selectClipId: firstTarget.id } : undefined)
       get().showNotice(`無音カットを再適用しました（${(applied.summary.removedDurationUs / 1_000_000).toFixed(2)}秒短縮）。`, 'success')
       return true
@@ -532,6 +550,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         minSilenceUs: result.analysis.settings.minSilenceUs
       })
       const firstTarget = applied.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id.startsWith(`${restored.restoredClipId}:silence:`))
+      commitOpenTransactionBeforeAsyncMutation()
       get().applyProject(applied.project, firstTarget ? { selectClipId: firstTarget.id } : { selectClipId: restored.restoredClipId })
       get().showNotice(`無音カットを更新しました（最小${(result.analysis.settings.minSilenceUs / 1_000_000).toFixed(2)}秒）。`, 'success')
       return true
