@@ -589,6 +589,26 @@ Stage 30.1 decision: Product directionはengine bundled + model first-run downlo
 
 **Human acceptance:** 実動画でreview concurrent save、silence reapply／restore、thumbnail cache再利用、recovery移動、Fast／Accurate切替、字幕の見た目・聴感を確認する。
 
+### Stage 37 — Preview Authority + Async Mutation Contract
+
+**Status:** `IMPLEMENTED — HUMAN ACCEPTANCE PENDING`
+
+- **F07 DONE:** playing中のstatic字幕はCSS文字を使わず、既存libass／FFmpegのtransparent PNG overlayをFast／Accurate／Finalの共通layout authorityとした。animated字幕もlibass base imageを使い、Fastの近似はimage transform／opacity層に限定。cold missは無字幕、request sequence／project fingerprint／visual keyでstale DOM commitを拒否する。
+- Fast overlay schedulerはcurrent優先、in-flight 1、prefetch最大2、6秒先まで。overlay cacheはmetadata最大24件、disk最大128MiB、memory／disk LRU、同一key coalesce。seek／edit／load／Undo／Redoでdisplay eligibilityを無効化する。
+- **F08 DONE:** renderer-memory-only `PendingAsyncMutation` coordinatorを追加。Auto Caption／Silence Reapply／Threshold Updateは同時に1件だけ実行し、manual mutation／Undo／Redo／loadでconflict＋best-effort cancel、late resultは指定noticeで破棄。valid resultのみopen transaction後に独立1 history entry、no-op／failure／cancel／staleはhistory変更なし。saveはworkerとconflictせず、後続applyでdirtyへ戻る。
+- **F03 FALSIFIED AS CURRENT-PATH BUG:** unique mkdtemp、worker exit後のartifact validation、service terminal completion、cleanup、sequential／concurrent job identity isolationをfault-injection testで確認。`CURRENT WORKER CODE`だが`NOT REPRODUCIBLE AS CURRENT PRODUCT CONSISTENCY BUG`としてmanifest／generation persistence redesignを延期した。
+
+**Automated evidence:**
+
+- `npm.cmd test -- --run --maxWorkers=1`: 70 files / 403 tests PASS
+- `npm.cmd run typecheck`: PASS
+- `npm.cmd run build`: PASS
+- Electron startup／interaction／accurate-preview／subtitle parity／subtitle geometry: PASS
+- Short production-like accurate-preview: CSS fallback 0、Fast／Accurate glyph geometry parity PASS。実測 cold p50/p95 141.0/143.6ms、cache-hit 0.26/0.31ms、cue-switch 178.7/183.4ms、CPU 1.59%、FFmpeg最大2、dropped video frames N/A（PNG image fixture、video elementなし）、cache 4 entries / 161,901 bytes。
+- 120秒 production-like playback with repeated 2秒 cue switches: playback 120,002ms / 119.92fps、cold p50/p95 187.0/189.4ms、cache-hit 0.36/0.46ms、cue-switch 280.1/290.0ms、CPU 0.47%、FFmpeg最大2、dropped video frames N/A、cache 24 entries / 850,707 bytes、renderer working set peak約438MB。これらは現環境のfixture実測であり、optimal limitの主張ではない。
+
+**Human acceptance:** 実動画／720p・1080p・可能なら4Kで、字幕のline break・font fallback・stroke・shadow・background、cue boundary／subtitle-less interval、seek／edit／Undo／Redo中のstale表示なし、Fast animated近似、Auto Caption／silence系race、save while pendingを確認する。長時間計測fixtureはimage sourceのためdropped video framesは未測定。video sourceでの再測定を残す。
+
 ---
 
 ## Notes for future Luna tasks

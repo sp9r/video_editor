@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -75,6 +75,10 @@ const fakeExecutor = (mode: 'success' | 'malformed' | 'oversized' | 'timeout' | 
   }
   return { command: request.command, args: request.args, exitCode: 0, stdout: '', stderr: '' }
 }
+
+const success = (request: CommandRequest): CommandResult => ({
+  command: request.command, args: request.args, exitCode: 0, stdout: '', stderr: ''
+})
 
 const runUntilTerminal = async (service: AutoCaptionService, project: ReturnType<typeof makeProject>['project'], settings?: AutoCaptionSettings) => {
   const events: any[] = []
@@ -252,6 +256,107 @@ describe('auto-caption worker discovery and service', () => {
     expect(terminal.message).toContain('silence_validation')
     expect(terminal.diagnostics?.[0]?.code).toBe('AUTO_CAPTION_SILENCE_VALIDATION')
     expect(JSON.stringify(terminal)).not.toContain(root)
+  })
+
+  it('falsifies mixed-generation publication and cleans the unique workspace after worker failure', async () => {
+    const root = await makeTemp('publication-fault-caption-after-silence')
+    const media = path.join(root, 'source.mp4')
+    await writeFile(media, 'fixture', 'utf8')
+    const fixture = makeProject(media)
+    let requestPath = ''
+    const service = new AutoCaptionService({
+      appPath: root,
+      userDataPath: root,
+      executor: { run: async (request) => {
+        requestPath = request.args[request.args.indexOf('--request') + 1] ?? ''
+        const outputPath = request.args[request.args.indexOf('--output') + 1]!
+        const silencePath = request.args[request.args.indexOf('--silence-output') + 1]!
+        const payload = JSON.parse(await readFile(requestPath, 'utf8')) as { jobId: string }
+        await writeFile(silencePath, JSON.stringify({ silences: [], keepRanges: [{ startUs: 20_000_000, endUs: 30_000_000, durationUs: 10_000_000 }], removedDurationUs: 0, settings: { profile: 'natural', minSilenceUs: 600_000, retainPauseUs: 180_000, noiseDb: -35, speechProtectionUs: 80_000, fillerRemoval: false }, diagnostics: [] }), 'utf8')
+        await writeFile(outputPath, JSON.stringify(resultFor(payload.jobId)), 'utf8')
+        throw new Error('caption publication fault after silence artifact')
+      } },
+      discover: async () => ({ ...discovery(root), parallel: true })
+    })
+    const run = await runUntilTerminal(service, fixture.project)
+    const terminal = await run.terminal
+    expect(terminal.state).toBe('failed')
+    expect(run.events).not.toContain('completed')
+    await vi.waitFor(async () => expect(stat(path.dirname(requestPath))).rejects.toThrow())
+  })
+
+  it('rejects a missing silence artifact before completion', async () => {
+    const root = await makeTemp('publication-fault-missing-silence')
+    const media = path.join(root, 'source.mp4')
+    await writeFile(media, 'fixture', 'utf8')
+    const fixture = makeProject(media)
+    const service = new AutoCaptionService({
+      appPath: root,
+      userDataPath: root,
+      executor: { run: async (request) => {
+        const requestPath = request.args[request.args.indexOf('--request') + 1]!
+        const outputPath = request.args[request.args.indexOf('--output') + 1]!
+        const payload = JSON.parse(await readFile(requestPath, 'utf8')) as { jobId: string }
+        await writeFile(outputPath, JSON.stringify(resultFor(payload.jobId)), 'utf8')
+        return success(request)
+      } },
+      discover: async () => ({ ...discovery(root), parallel: true })
+    })
+    const run = await runUntilTerminal(service, fixture.project)
+    const terminal = await run.terminal
+    expect(terminal.state).toBe('failed')
+    expect(run.events).not.toContain('completed')
+  })
+
+  it('ignores an early worker completed signal until both artifacts validate', async () => {
+    const root = await makeTemp('publication-fault-early-completed')
+    const media = path.join(root, 'source.mp4')
+    await writeFile(media, 'fixture', 'utf8')
+    const fixture = makeProject(media)
+    const service = new AutoCaptionService({
+      appPath: root,
+      userDataPath: root,
+      executor: { run: async (request) => {
+        const requestPath = request.args[request.args.indexOf('--request') + 1]!
+        const outputPath = request.args[request.args.indexOf('--output') + 1]!
+        const payload = JSON.parse(await readFile(requestPath, 'utf8')) as { jobId: string }
+        request.onStdout?.(`${JSON.stringify({ version: 'spectra.auto-caption.progress.v1', jobId: payload.jobId, state: 'completed', ratio: 1, message: 'worker completed early' })}\n`)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        await writeFile(outputPath, JSON.stringify(resultFor(payload.jobId)), 'utf8')
+        return success(request)
+      } },
+      discover: async () => discovery(root)
+    })
+    const run = await runUntilTerminal(service, fixture.project)
+    const terminal = await run.terminal
+    expect(terminal.state).toBe('completed')
+    expect(run.events.filter((event) => event.state === 'completed')).toHaveLength(1)
+  })
+
+  it('isolates sequential and concurrent jobs with distinct temporary workspaces', async () => {
+    const root = await makeTemp('publication-fault-isolation')
+    const media = path.join(root, 'source.mp4')
+    await writeFile(media, 'fixture', 'utf8')
+    const fixture = makeProject(media)
+    const workspaces: string[] = []
+    const service = new AutoCaptionService({
+      appPath: root,
+      userDataPath: root,
+      executor: { run: async (request) => {
+        const requestPath = request.args[request.args.indexOf('--request') + 1]!
+        const outputPath = request.args[request.args.indexOf('--output') + 1]!
+        workspaces.push(path.dirname(requestPath))
+        const payload = JSON.parse(await readFile(requestPath, 'utf8')) as { jobId: string }
+        await writeFile(outputPath, JSON.stringify(resultFor(payload.jobId)), 'utf8')
+        return success(request)
+      } },
+      discover: async () => discovery(root)
+    })
+    await (await runUntilTerminal(service, fixture.project)).terminal
+    await (await runUntilTerminal(service, fixture.project)).terminal
+    const concurrent = await Promise.all([runUntilTerminal(service, fixture.project), runUntilTerminal(service, fixture.project)])
+    await Promise.all(concurrent.map((run) => run.terminal))
+    expect(new Set(workspaces).size).toBe(4)
   })
 
   it('retains the validated terminal result when the renderer disappears and ignores stale/late completion signals', async () => {

@@ -28,6 +28,7 @@ import type { FullCorrectionSession } from '../../shared/full-correction'
 import { describeAutoCaptionBackend } from '../../shared/auto-caption-ui'
 import { createDemoProject } from './demo'
 import { clampTimelineZoom, TIMELINE_ZOOM_DEFAULT } from './action-state'
+import { createPendingAsyncMutation, markPendingAsyncMutationCancelRequested, markPendingAsyncMutationConflicted, pendingAsyncMutationMatchesCurrent, type PendingAsyncMutation, type PendingAsyncMutationKind } from './pending-async-mutation'
 
 type EditTool = 'select' | 'razor'
 type Notice = { id: number; tone: 'info' | 'success' | 'warning' | 'error'; message: string }
@@ -58,14 +59,15 @@ interface EditorState {
   autoCaptionSettingsSeed: Pick<AutoCaptionSettings, 'maxChars' | 'maxLines' | 'segmentationMode'>
   savedFingerprint: string
   transactionBase: ProjectFile | null
+  pendingAsyncMutation: PendingAsyncMutation | null
   clipboard: ClipboardItem[]
   fullCorrectionSession: FullCorrectionSession | null
   fullCorrectionResult: FullCorrectionSession | null
-  applyProject(project: ProjectFile, options?: { selectClipId?: string; preserveHistory?: boolean }): void
+  applyProject(project: ProjectFile, options?: { selectClipId?: string; preserveHistory?: boolean; asyncMutationOperationId?: string }): void
   loadProject(project: ProjectFile): void
   markSaved(project?: ProjectFile): void
   beginEditTransaction(): void
-  commitEditTransaction(): void
+  commitEditTransaction(asyncMutationOperationId?: string): void
   cancelEditTransaction(): void
   selectClip(id: string | null, additive?: boolean): void
   selectAsset(id: string | null): void
@@ -146,10 +148,52 @@ const HISTORY_LIMIT = 80
 
 const cloneProject = (project: ProjectFile): ProjectFile => structuredClone(project)
 const initialProject = createDemoProject()
+const ASYNC_STALE_NOTICE = 'プロジェクトが変更されたため、自動処理結果を適用しませんでした。'
 
 /** Async product operations must never join a pointer/Inspector gesture. */
-const commitOpenTransactionBeforeAsyncMutation = (): void => {
-  if (useEditorStore.getState().transactionBase) useEditorStore.getState().commitEditTransaction()
+const commitOpenTransactionBeforeAsyncMutation = (operationId?: string): void => {
+  if (useEditorStore.getState().transactionBase) useEditorStore.getState().commitEditTransaction(operationId)
+}
+
+const cancelPendingAsyncWorker = (pending: PendingAsyncMutation, state: EditorState): void => {
+  if (!window.spectra) return
+  if (pending.kind === 'auto-caption' && state.autoCaptionJobId) void window.spectra.cancelAutoCaption(state.autoCaptionJobId)
+  if ((pending.kind === 'silence-reapply' || pending.kind === 'silence-threshold-update') && state.silenceCutReapplyJobId) void window.spectra.cancelSilenceCutReapply(state.silenceCutReapplyJobId)
+}
+
+const conflictPendingAsyncMutation = (): void => {
+  const state = useEditorStore.getState()
+  const pending = state.pendingAsyncMutation
+  if (!pending || pending.state !== 'running') return
+  useEditorStore.setState({ pendingAsyncMutation: markPendingAsyncMutationConflicted(pending) })
+  cancelPendingAsyncWorker(pending, state)
+}
+
+const beginPendingAsyncMutation = (
+  kind: PendingAsyncMutationKind,
+  project: ProjectFile,
+  projectLoadVersion: number,
+  targetClipIds: string[],
+  settingsSnapshot: unknown
+): PendingAsyncMutation | null => {
+  const state = useEditorStore.getState()
+  if (state.pendingAsyncMutation) {
+    state.showNotice('別の自動処理が実行中です。完了またはキャンセルを待ってください。', 'warning')
+    return null
+  }
+  const pending = createPendingAsyncMutation({ operationId: makeId(`async-${kind}`), kind, project, projectLoadVersion, targetClipIds, settingsSnapshot })
+  useEditorStore.setState({ pendingAsyncMutation: pending })
+  return pending
+}
+
+const clearPendingAsyncMutation = (operationId: string): void => {
+  const pending = useEditorStore.getState().pendingAsyncMutation
+  if (pending?.operationId === operationId) useEditorStore.setState({ pendingAsyncMutation: null })
+}
+
+const assertPendingAsyncMutationCanApply = (operationId: string, project: ProjectFile, projectLoadVersion: number): void => {
+  const pending = useEditorStore.getState().pendingAsyncMutation
+  if (!pending || pending.operationId !== operationId || !pendingAsyncMutationMatchesCurrent(pending, project, projectLoadVersion)) throw new Error(ASYNC_STALE_NOTICE)
 }
 
 const compatibleTrack = (_asset: MediaAsset, track: TimelineTrack): boolean => {
@@ -173,6 +217,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   lastSavedAt: null,
   savedFingerprint: projectFingerprint(initialProject),
   transactionBase: null,
+  pendingAsyncMutation: null,
   clipboard: [],
   fullCorrectionSession: null,
   fullCorrectionResult: null,
@@ -188,6 +233,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   applyProject: (project, options = {}) => {
     const current = get().project
     if (project === current) return
+    if (!options.asyncMutationOperationId && !get().transactionBase) conflictPendingAsyncMutation()
     set((state) => ({
       project,
       past: options.preserveHistory || state.transactionBase ? state.past : [...state.past, cloneProject(current)].slice(-HISTORY_LIMIT),
@@ -197,6 +243,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }))
   },
   loadProject: (project) => {
+    conflictPendingAsyncMutation()
     const normalized = validateProject(project)
     set((state) => ({
       project: normalized,
@@ -211,6 +258,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       lastSavedAt: new Date(),
       savedFingerprint: projectFingerprint(normalized),
       transactionBase: null,
+      pendingAsyncMutation: null,
       autoCaptionProgress: null,
       autoCaptionJobId: null,
       silenceCutReapplyJobId: null,
@@ -238,11 +286,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   beginEditTransaction: () => {
     if (!get().transactionBase) set({ transactionBase: cloneProject(get().project) })
   },
-  commitEditTransaction: () => {
+  commitEditTransaction: (asyncMutationOperationId) => {
     const base = get().transactionBase
     if (!base) return
     const current = get().project
     const changed = projectFingerprint(base) !== projectFingerprint(current)
+    if (changed && !asyncMutationOperationId) conflictPendingAsyncMutation()
     set((state) => ({
       past: changed ? [...state.past, base].slice(-HISTORY_LIMIT) : state.past,
       future: changed ? [] : state.future,
@@ -300,10 +349,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       get().showNotice('選択した素材の音声を利用できません。再リンクまたは音声付き素材を選択してください。', 'warning')
       return null
     }
+    const projectLoadVersion = get().projectLoadVersion
+    let operationId: string | undefined
     set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: '', state: 'preparing', ratio: 0, message: '音声準備中…' }, autoCaptionJobId: null })
     try {
       const health = await window.spectra.autoCaptionHealth()
       if (!health.available) throw new Error(health.reason ?? '自動字幕エンジンを利用できません。')
+      const pending = beginPendingAsyncMutation('auto-caption', project, projectLoadVersion, [selectedClip.id], settings ?? {})
+      if (!pending) return null
+      operationId = pending.operationId
       const completed = await new Promise<{ result: AutoCaptionResult; silenceAnalysis?: AutoCaptionSilenceAnalysis }>((resolve, reject) => {
         let startedJobId = ''
         let terminalBeforeStart: AutoCaptionProgress | undefined
@@ -339,6 +393,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           async (started) => {
             startedJobId = started.jobId
             set({ autoCaptionJobId: started.jobId })
+            if (useEditorStore.getState().pendingAsyncMutation?.state === 'conflicted') void window.spectra?.cancelAutoCaption(started.jobId)
             // IPC progress is a push notification. Reconcile once through
             // main-process state as well, so a completed result is not lost
             // when the renderer was busy, reloaded, or briefly absent.
@@ -370,7 +425,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         )
       })
       const { result, silenceAnalysis } = completed
-      if (projectFingerprint(get().project) !== projectFingerprint(project)) throw new Error('自動字幕の生成中にプロジェクトが変更されました。結果は適用されていません。')
+      if (!operationId) throw new Error(ASYNC_STALE_NOTICE)
+      assertPendingAsyncMutationCanApply(operationId, project, projectLoadVersion)
       let applyProject = project
       let captionClip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'> = selectedClip
       let sourceTimeMapper: ReturnType<typeof createSilenceCutTimeMapper> | undefined
@@ -434,10 +490,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         captionCoverageRanges,
         captionCoverageMaxGapUs: silenceAnalysis?.settings.minSilenceUs
       })
-      commitOpenTransactionBeforeAsyncMutation()
+      commitOpenTransactionBeforeAsyncMutation(operationId)
       set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 0.96, progressMode: 'indeterminate', message: '字幕をTimelineへ適用中…', result } })
       const firstCaption = applied.project.tracks.find((track) => track.id === applied.trackId)?.clips[0]
-      get().applyProject(applied.project, firstCaption ? { selectClipId: firstCaption.id } : undefined)
+      get().applyProject(applied.project, firstCaption ? { selectClipId: firstCaption.id, asyncMutationOperationId: operationId } : { asyncMutationOperationId: operationId })
       const summary: AutoCaptionApplySummary = {
         ...applied,
         fallbackUsed: result.fallback.used,
@@ -454,6 +510,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         editedDurationUs: projectDurationUs(applied.project)
       }
       set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: result.jobId, state: 'completed', ratio: 1, message: '字幕を配置しました。', result }, autoCaptionJobId: null })
+      clearPendingAsyncMutation(operationId)
       const silenceNotice = silenceCutSkipped
         ? '・既存字幕を保持するため無音の再カットなし'
         : silenceSummary
@@ -463,6 +520,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return summary
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
+      const pending = operationId ? useEditorStore.getState().pendingAsyncMutation : null
+      const stale = errorMessage === ASYNC_STALE_NOTICE || Boolean(operationId && pending?.operationId === operationId && pending?.state !== 'running')
+      if (operationId) clearPendingAsyncMutation(operationId)
       set((state) => ({
         autoCaptionProgress: state.autoCaptionProgress?.state === 'failed'
           ? state.autoCaptionProgress
@@ -471,13 +531,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             : null,
         autoCaptionJobId: null
       }))
-      get().showNotice(`自動字幕を生成できませんでした: ${errorMessage}`, 'error')
+      get().showNotice(stale ? ASYNC_STALE_NOTICE : `自動字幕を生成できませんでした: ${errorMessage}`, stale ? 'warning' : 'error')
       return null
     }
   },
   reapplySilenceCut: async (requestedProfile = DEFAULT_SILENCE_REAPPLY_PROFILE, minSilenceUs) => {
     const current = get()
-    if (current.silenceCutReapplyBusy) return false
+    if (current.silenceCutReapplyBusy || current.pendingAsyncMutation) return false
     if (!window.spectra) {
       current.showNotice('無音カットの再適用はElectron環境で利用できます。', 'warning')
       return false
@@ -488,31 +548,41 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return false
     }
     const project = current.project
+    const pending = beginPendingAsyncMutation('silence-reapply', project, current.projectLoadVersion, [selected.id], { profile: requestedProfile, minSilenceUs })
+    if (!pending) return false
+    const operationId = pending.operationId
     const jobId = makeId('silence-reapply')
     set({ silenceCutReapplyJobId: jobId, silenceCutReapplyCancelledJobId: null, silenceCutReapplyBusy: true })
     try {
       const result = minSilenceUs === undefined
         ? await window.spectra.startSilenceCutReapply(project, selected.id, jobId, requestedProfile)
         : await window.spectra.startSilenceCutReapply(project, selected.id, jobId, requestedProfile, minSilenceUs)
-      if (projectFingerprint(get().project) !== projectFingerprint(project)) throw new Error('無音解析中にプロジェクトが変更されました。結果は適用していません。')
+      assertPendingAsyncMutationCanApply(operationId, project, current.projectLoadVersion)
       if (result.selectedClipId !== selected.id || result.jobId !== jobId) throw new Error('無音再適用の結果identityが不正です。')
       if (get().silenceCutReapplyCancelledJobId === jobId) throw new Error('無音再適用をキャンセルしました。')
       if (result.analysis.removedDurationUs === 0) {
+        clearPendingAsyncMutation(operationId)
         get().showNotice('現在のクリップに再適用できる無音区間はありません。', 'info')
         return true
       }
       const applied = applySilenceCutToProject(project, selected.id, result.analysis, { protectedIntervals: result.protectedIntervals, profile: requestedProfile, minSilenceUs: result.analysis.settings.minSilenceUs })
       if (applied.summary.removedDurationUs === 0 || applied.project === project) {
+        clearPendingAsyncMutation(operationId)
         get().showNotice('現在のクリップに再適用できる無音区間はありません。', 'info')
         return true
       }
       const firstTarget = applied.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === `${selected.id}:silence:1`)
-      commitOpenTransactionBeforeAsyncMutation()
-      get().applyProject(applied.project, firstTarget ? { selectClipId: firstTarget.id } : undefined)
+      commitOpenTransactionBeforeAsyncMutation(operationId)
+      get().applyProject(applied.project, firstTarget ? { selectClipId: firstTarget.id, asyncMutationOperationId: operationId } : { asyncMutationOperationId: operationId })
+      clearPendingAsyncMutation(operationId)
       get().showNotice(`無音カットを再適用しました（${(applied.summary.removedDurationUs / 1_000_000).toFixed(2)}秒短縮）。`, 'success')
       return true
     } catch (error) {
-      get().showNotice(`無音カットを再適用できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      const currentPending = useEditorStore.getState().pendingAsyncMutation
+      const stale = errorMessage === ASYNC_STALE_NOTICE || (currentPending?.operationId === operationId && currentPending.state !== 'running')
+      clearPendingAsyncMutation(operationId)
+      get().showNotice(stale ? ASYNC_STALE_NOTICE : `無音カットを再適用できませんでした: ${errorMessage}`, stale ? 'warning' : 'error')
       return false
     } finally {
       set((state) => state.silenceCutReapplyJobId === jobId
@@ -522,7 +592,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   updateSilenceCutThreshold: async (minSilenceUs) => {
     const current = get()
-    if (current.silenceCutReapplyBusy) return false
+    if (current.silenceCutReapplyBusy || current.pendingAsyncMutation) return false
     if (!window.spectra) {
       current.showNotice('無音カットの更新はElectron環境で利用できます。', 'warning')
       return false
@@ -536,12 +606,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const requestedThresholdUs = Math.round(Math.max(0, Math.min(2_000_000, Number.isFinite(minSilenceUs) ? minSilenceUs : operation.minSilenceUs ?? 0)))
     const project = current.project
     const restored = restoreSilenceCutToProject(project, selected.id)
+    const pending = beginPendingAsyncMutation('silence-threshold-update', project, current.projectLoadVersion, [selected.id], { minSilenceUs })
+    if (!pending) return false
+    const operationId = pending.operationId
     const jobId = makeId('silence-update')
     set({ silenceCutReapplyJobId: jobId, silenceCutReapplyCancelledJobId: null, silenceCutReapplyBusy: true })
     try {
       const profile = operation.profile ?? DEFAULT_SILENCE_REAPPLY_PROFILE
       const result = await window.spectra.startSilenceCutReapply(restored.project, restored.restoredClipId, jobId, profile, requestedThresholdUs)
-      if (projectFingerprint(get().project) !== projectFingerprint(project)) throw new Error('無音閾値の解析中にプロジェクトが変更されました。結果は適用していません。')
+      assertPendingAsyncMutationCanApply(operationId, project, current.projectLoadVersion)
       if (result.jobId !== jobId || result.selectedClipId !== restored.restoredClipId) throw new Error('無音閾値更新の結果identityが不正です。')
       if (get().silenceCutReapplyCancelledJobId === jobId) throw new Error('無音閾値更新をキャンセルしました。')
       const applied = applySilenceCutToProject(restored.project, restored.restoredClipId, result.analysis, {
@@ -550,12 +623,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         minSilenceUs: result.analysis.settings.minSilenceUs
       })
       const firstTarget = applied.project.tracks.flatMap((track) => track.clips).find((clip) => clip.id.startsWith(`${restored.restoredClipId}:silence:`))
-      commitOpenTransactionBeforeAsyncMutation()
-      get().applyProject(applied.project, firstTarget ? { selectClipId: firstTarget.id } : { selectClipId: restored.restoredClipId })
+      commitOpenTransactionBeforeAsyncMutation(operationId)
+      get().applyProject(applied.project, firstTarget ? { selectClipId: firstTarget.id, asyncMutationOperationId: operationId } : { selectClipId: restored.restoredClipId, asyncMutationOperationId: operationId })
+      clearPendingAsyncMutation(operationId)
       get().showNotice(`無音カットを更新しました（最小${(result.analysis.settings.minSilenceUs / 1_000_000).toFixed(2)}秒）。`, 'success')
       return true
     } catch (error) {
-      get().showNotice(`無音カットを更新できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      const currentPending = useEditorStore.getState().pendingAsyncMutation
+      const stale = errorMessage === ASYNC_STALE_NOTICE || (currentPending?.operationId === operationId && currentPending.state !== 'running')
+      clearPendingAsyncMutation(operationId)
+      get().showNotice(stale ? ASYNC_STALE_NOTICE : `無音カットを更新できませんでした: ${errorMessage}`, stale ? 'warning' : 'error')
       return false
     } finally {
       set((state) => state.silenceCutReapplyJobId === jobId
@@ -586,11 +664,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   cancelSilenceCutReapply: async () => {
     const jobId = get().silenceCutReapplyJobId
     if (!jobId || !window.spectra) return
+    const pending = get().pendingAsyncMutation
+    if (pending) set({ pendingAsyncMutation: markPendingAsyncMutationCancelRequested(pending) })
     set({ silenceCutReapplyCancelledJobId: jobId })
     await window.spectra.cancelSilenceCutReapply(jobId)
   },
   cancelAutoCaption: async () => {
     const jobId = get().autoCaptionJobId
+    const pending = get().pendingAsyncMutation
+    if (pending) set({ pendingAsyncMutation: markPendingAsyncMutationCancelRequested(pending) })
     if (!jobId || !window.spectra) return
     const requested = await window.spectra.cancelAutoCaption(jobId)
     if (requested) set((state) => ({ autoCaptionProgress: state.autoCaptionProgress ? { ...state.autoCaptionProgress, message: 'キャンセル中…' } : null }))
@@ -887,6 +969,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     get().applyProject(project)
   },
   undo: () => {
+    conflictPendingAsyncMutation()
     if (get().transactionBase) get().commitEditTransaction()
     const { past, project } = get()
     const previous = past.at(-1)
@@ -894,6 +977,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({ project: cloneProject(previous), past: state.past.slice(0, -1), future: [cloneProject(project), ...state.future], dirty: projectFingerprint(previous) !== state.savedFingerprint, transactionBase: null }))
   },
   redo: () => {
+    conflictPendingAsyncMutation()
     if (get().transactionBase) get().commitEditTransaction()
     const { future, project } = get()
     const next = future[0]
