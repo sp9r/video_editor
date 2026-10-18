@@ -17,6 +17,9 @@ const numberValue = (value: string, fallback = 0): number => {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+export const audioPanToPercent = (pan: number): number => Math.round(pan * 100)
+export const audioPanFromPercent = (percent: number): number => Math.max(-1, Math.min(1, percent / 100))
+
 const hasTransform = (clip: TimelineClip): clip is Extract<TimelineClip, { kind: 'video' | 'image' }> =>
   clip.kind === 'video' || clip.kind === 'image'
 
@@ -81,7 +84,7 @@ function AudioEditor({ clip }: { clip: Extract<TimelineClip, { kind: 'video' | '
         <output>{clip.audio.volumeDb.toFixed(1)} dB</output>
       </div>
       <div className="field-grid">
-        <NumberField {...transaction} label="パン" min={-100} max={100} value={clip.audio.pan} onChange={(event) => patch({ pan: numberValue(event.target.value) })} />
+        <NumberField {...transaction} label="パン" suffix="%" min={-100} max={100} value={audioPanToPercent(clip.audio.pan)} onChange={(event) => patch({ pan: audioPanFromPercent(numberValue(event.target.value)) })} />
         <NumberField {...transaction} label="フェードイン" suffix="秒" min={0} step={0.1} value={clip.audio.fadeInUs / 1_000_000} onChange={(event) => patch({ fadeInUs: Math.max(0, numberValue(event.target.value) * 1_000_000) })} />
         <NumberField {...transaction} label="フェードアウト" suffix="秒" min={0} step={0.1} value={clip.audio.fadeOutUs / 1_000_000} onChange={(event) => patch({ fadeOutUs: Math.max(0, numberValue(event.target.value) * 1_000_000) })} />
       </div>

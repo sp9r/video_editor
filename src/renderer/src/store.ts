@@ -3,6 +3,7 @@ import {
   addClipToTrack,
   addMediaAssets,
   createClipForAsset,
+  createEmptyProject,
   createSubtitleClip,
   createTrack,
   makeId,
@@ -147,7 +148,8 @@ export interface AutoCaptionApplySummary {
 const HISTORY_LIMIT = 80
 
 const cloneProject = (project: ProjectFile): ProjectFile => structuredClone(project)
-const initialProject = createDemoProject()
+const desktopSession = typeof window !== 'undefined' && Boolean(window.spectra)
+const initialProject = desktopSession ? createEmptyProject() : createDemoProject()
 const ASYNC_STALE_NOTICE = 'プロジェクトが変更されたため、自動処理結果を適用しませんでした。'
 
 /** Async product operations must never join a pointer/Inspector gesture. */
@@ -207,7 +209,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   future: [],
   selectedClipIds: [],
   selectedAssetId: null,
-  playheadUs: 2_200_000,
+  playheadUs: desktopSession ? 0 : 2_200_000,
   playing: false,
   tool: 'select',
   snapping: true,

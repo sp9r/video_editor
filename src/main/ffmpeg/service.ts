@@ -31,6 +31,7 @@ import {
 } from './render-plan.js'
 import { generateAss, generateSrt } from './subtitles.js'
 import { WaveformExtractor } from './waveform.js'
+import { ExportPublishError, publishExportOutputs } from './export-publish.js'
 import type { WaveformRequest } from '../../shared/types.js'
 import { frameIndexForTime, timeUsForFrameIndex } from '../../shared/frame-time.js'
 import { subtitleVisualStateKey } from '../../shared/subtitle-render.js'
@@ -183,6 +184,7 @@ const assertInputFile = async (path: string): Promise<void> => {
 }
 
 const isNonRetryableExportError = (error: unknown): boolean => {
+  if (error instanceof ExportPublishError) return true
   const code = (error as NodeJS.ErrnoException).code
   if (code && ['EACCES', 'EPERM', 'ENOSPC', 'EROFS', 'ENOENT'].includes(code)) return true
   const message = errorMessage(error).toLowerCase()
@@ -234,6 +236,8 @@ export class FfmpegService {
   readonly workspaceRoot: string
   readonly vaapiDevice?: string
   readonly #jobs = new Map<string, ActiveJob>()
+  readonly #reservedOutputPaths = new Set<string>()
+  readonly #caseInsensitiveOutputPaths: boolean
   readonly #accurateFrames = new Map<string, Promise<AccuratePreviewFrameResult> | AccuratePreviewFrameResult>()
   readonly #subtitleOverlays = new Map<string, Promise<SubtitleOverlayResult> | SubtitleOverlayResult>()
   readonly #accurateInFlight = new Set<Promise<AccuratePreviewFrameResult>>()
@@ -243,6 +247,7 @@ export class FfmpegService {
 
   constructor(paths: FfmpegPaths, options: Omit<FfmpegServiceOptions, 'paths' | 'ffmpegPath' | 'ffprobePath'> = {}) {
     this.paths = paths
+    this.#caseInsensitiveOutputPaths = (options.platform ?? process.platform) === 'win32'
     this.executor = options.executor ?? defaultProcessExecutor
     this.workspaceRoot = resolve(options.workspaceRoot ?? join(tmpdir(), 'spectra-video-studio'))
     this.vaapiDevice = options.vaapiDevice
@@ -576,9 +581,25 @@ export class FfmpegService {
     return createRenderPlan(project, settings)
   }
 
+  #reserveOutputPaths(paths: string[]): string[] {
+    const keys = paths.map((path) => {
+      const absolute = resolve(path)
+      return this.#caseInsensitiveOutputPaths ? absolute.toLowerCase() : absolute
+    })
+    const conflict = keys.find((key) => this.#reservedOutputPaths.has(key))
+    if (conflict) throw new Error(`Export output already in use: ${conflict}`)
+    for (const key of keys) this.#reservedOutputPaths.add(key)
+    return keys
+  }
+
   async writeSrt(project: ProjectFile, outputPath: string): Promise<void> {
-    await mkdir(dirname(resolve(outputPath)), { recursive: true })
-    await writeFile(resolve(outputPath), generateSrt(project), 'utf8')
+    const reserved = this.#reserveOutputPaths([outputPath])
+    try {
+      await mkdir(dirname(resolve(outputPath)), { recursive: true })
+      await writeFile(resolve(outputPath), generateSrt(project), 'utf8')
+    } finally {
+      for (const key of reserved) this.#reservedOutputPaths.delete(key)
+    }
   }
 
   cancelExport(jobId: string): boolean {
@@ -596,10 +617,15 @@ export class FfmpegService {
     const jobId = safeJobId(options.jobId ?? randomUUID())
     if (this.#jobs.has(jobId)) throw new Error(`Export job already exists: ${jobId}`)
     const outputPath = safeOutputPath(settings.outputPath)
+    const sidecarPath = join(dirname(outputPath), `${basename(outputPath, extname(outputPath))}.srt`)
+    const reserved = this.#reserveOutputPaths([outputPath, ...(settings.exportSrt ? [sidecarPath] : [])])
     const controller = new AbortController()
     this.#jobs.set(jobId, { controller })
     const result = this.#runExport(jobId, project, { ...settings, outputPath }, controller.signal, options.onProgress)
-      .finally(() => this.#jobs.delete(jobId))
+      .finally(() => {
+        this.#jobs.delete(jobId)
+        for (const key of reserved) this.#reservedOutputPaths.delete(key)
+      })
     return { jobId, outputPath, result }
   }
 
@@ -746,15 +772,16 @@ export class FfmpegService {
             frameDurationUs: frameDurationUs(plan)
           }, this.executor, signal)
           const sidecarPath = join(dirname(outputPath), `${basename(outputPath, extname(outputPath))}.srt`)
-          if (settings.exportSrt && plan.srt.trim()) {
+          if (settings.exportSrt) {
             // Detect permission/disk errors before replacing a valid existing video.
             await writeFile(temporarySrtPath, plan.srt, 'utf8')
           }
           await mkdir(dirname(outputPath), { recursive: true })
-          await moveIntoPlace(temporaryPath, outputPath)
-          if (settings.exportSrt && plan.srt.trim()) {
-            await moveIntoPlace(temporarySrtPath, sidecarPath)
-          }
+          await publishExportOutputs({
+            temporaryPath,
+            outputPath,
+            ...(settings.exportSrt ? { temporarySrtPath, sidecarPath } : {})
+          })
           emit({
             stage: 'completed',
             ratio: 1,
@@ -770,7 +797,7 @@ export class FfmpegService {
             rm(temporaryPath, { force: true }).catch(() => undefined),
             rm(temporarySrtPath, { force: true }).catch(() => undefined)
           ])
-          if (error instanceof ProcessCancelledError || signal.aborted) throw new ProcessCancelledError()
+          if (!(error instanceof ExportPublishError) && (error instanceof ProcessCancelledError || signal.aborted)) throw new ProcessCancelledError()
           const reason = `${encoderId}: ${errorMessage(error)}`
           failures.push(reason)
           fallbackReason = reason
@@ -781,7 +808,7 @@ export class FfmpegService {
       }
       throw new Error('書き出しエンコーダーを選択できませんでした')
     } catch (error) {
-      if (error instanceof ProcessCancelledError || signal.aborted) {
+      if (!(error instanceof ExportPublishError) && (error instanceof ProcessCancelledError || signal.aborted)) {
         emit({ stage: 'cancelled', ratio: 0, encodedUs: 0, message: '書き出しをキャンセルしました' })
         throw new ProcessCancelledError('Export was cancelled')
       }

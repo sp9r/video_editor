@@ -8,6 +8,10 @@
 > [!NOTE]
 > Stage 9時点のHuman Review向けvertical slice（動画選択 → 実Whisper自動字幕 → 手動修正 → 保存／再開 → 全文修正差分 → Review Mode → 書き出し）は、生成QAメディアで受入済みです。これはself-contained portable auto-captionを意味しません。自動字幕には、設定・環境変数・兄弟repo discoveryで解決できる`clip_automation` workerと、そのPython環境・Whisper modelが必要です。fine acoustic alignmentは提供しておらず、現状は手動修正可能な推定編集境界として扱います。
 
+## 2026-10-18 ローカル確認版
+
+Windowsでは`start-preview.cmd`で修正版を起動できます。音量・左右バランス・フェード、映像と音声の再生・シーク、字幕の切替・再読込、MP4/SRTの失敗時復元を修正しています。検証結果と再作成手順、今回の未確認範囲は[HANDOFF.md](./HANDOFF.md)に記載しています。既存配布版への置換は本人レビュー後に行います。
+
 ## 現在実装されているもの
 
 - Electron + React + TypeScriptによる独自デスクトップUI

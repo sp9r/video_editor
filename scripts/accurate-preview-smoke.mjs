@@ -238,13 +238,14 @@ try {
   const fixtureOverrides = process.env.SPECTRA_SUBTITLE_FIXTURE_JSON ? JSON.parse(process.env.SPECTRA_SUBTITLE_FIXTURE_JSON) : {}
   const sourceColor = process.env.SPECTRA_PREVIEW_SOURCE_COLOR
   const realVideo = process.env.SPECTRA_REAL_VIDEO_E2E === '1'
+  const audioE2e = realVideo && process.env.SPECTRA_AUDIO_E2E === '1'
   const phaseStartedAt = Date.now()
   const phase = (name) => { if (realVideo) console.log(`[real-video] ${name} +${Date.now() - phaseStartedAt}ms`) }
   phase('fixture-start')
   const sourcePath = path.join(root, realVideo ? 'source.mp4' : 'source.png')
   const projectPath = path.join(root, 'project.json')
   await run(ffmpegPath, realVideo
-    ? ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x203040:s=1280x720:r=30:d=8', '-t', '8', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', sourcePath]
+    ? ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x203040:s=1280x720:r=30:d=8', ...(audioE2e ? ['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=8', '-c:a', 'aac'] : []), '-t', '8', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', sourcePath]
     : ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', sourceColor ? `color=c=${sourceColor}:s=1920x1080:r=30:d=1` : 'testsrc2=size=320x180:rate=30:duration=1', '-frames:v', '1', sourcePath])
   const mediaWidth = realVideo ? 1280 : sourceColor ? 1920 : 320
   const mediaHeight = realVideo ? 720 : sourceColor ? 1080 : 180
@@ -275,9 +276,9 @@ try {
     createdAt: '2026-08-14T00:00:00.000Z',
     updatedAt: '2026-08-14T00:00:00.000Z',
     sequence: { width: realVideo ? 1280 : 1920, height: realVideo ? 720 : 1080, frameRate: { numerator: 30, denominator: 1 }, sampleRate: 48000, backgroundColor: '#102030' },
-    media: [{ id: 'source', name: realVideo ? 'source.mp4' : 'source.png', path: sourcePath, kind: realVideo ? 'video' : 'image', durationUs: realVideo ? 8_000_000 : 0, width: mediaWidth, height: mediaHeight, hasAudio: false, fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false }],
+    media: [{ id: 'source', name: realVideo ? 'source.mp4' : 'source.png', path: sourcePath, kind: realVideo ? 'video' : 'image', durationUs: realVideo ? 8_000_000 : 0, width: mediaWidth, height: mediaHeight, hasAudio: audioE2e, ...(audioE2e ? { channels: 1, sampleRate: 48000 } : {}), fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false }],
     tracks: [
-      { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: realVideo ? 'video' : 'image', assetId: 'source', startUs: 0, durationUs: realVideo ? 8_000_000 : playbackDurationUs, sourceInUs: 0, enabled: true, ...(realVideo ? { audio: { volumeDb: 0, pan: 0, fadeInUs: 0, fadeOutUs: 0 } } : {}), transform: fixtureOverrides.transform ?? { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
+      { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: realVideo ? 'video' : 'image', assetId: 'source', startUs: 0, durationUs: realVideo ? 8_000_000 : playbackDurationUs, sourceInUs: 0, enabled: true, ...(realVideo ? { audio: { volumeDb: audioE2e ? 12 : 0, pan: audioE2e ? 0.25 : 0, fadeInUs: audioE2e ? 500000 : 0, fadeOutUs: audioE2e ? 1000000 : 0 } } : {}), transform: fixtureOverrides.transform ?? { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
       { id: 'subtitle', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: subtitleClips }
     ]
   }
@@ -360,6 +361,19 @@ try {
   const shadowExpected = Boolean(report.subtitleSpec?.shadowColor && !/^#(?:0{6}|0{8})$/iu.test(report.subtitleSpec.shadowColor))
   if (!productionOnly && (!report.accurateInitial || !report.fastFixture || !report.fastSubtitleOverlay || !report.fastSubtitleOverlayReady || report.initialCssFallbackCount !== 0 || report.fastCssFallbackCount !== 0 || !report.accurateFixtureAfterResume || !report.editPendingRejectsStaleOverlay || !report.editedFrameReady || !report.fastDuringPlay || !report.accurateAfterResume || report.overlayCount !== 1 || report.initialOverlaySrc === report.editedOverlaySrc || fastScreenshot.size <= 0 || accurateScreenshot.size <= 0 || overlayScreenshot.size <= 0 || subtitleOverlayMetrics.cornerAlpha !== 0 || !subtitleOverlayMetrics.white || (shadowExpected && !subtitleOverlayMetrics.red) || !subtitleOverlayMetrics.background || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone)) {
     throw new Error(`Accurate Preview DOM gate failed.\n${JSON.stringify(report)}\n${output}`)
+  }
+  if (audioE2e) {
+    const audioSamples = report.playbackFrameSample?.samples?.flatMap((sample) => sample.audio ?? []) ?? []
+    if (!report.playbackFrameSample?.interruptedAudio || !audioSamples.some((audio) => !audio.paused && audio.currentTime > 7 && audio.readyState >= 2)
+      || audioSamples.some((audio) => audio.error || audio.volume !== 1)) throw new Error('Real AAC audio did not play safely with positive dB gain')
+    report.audioE2e = { pass: true, volumeDb: 12, pan: 0.25, sampleCount: audioSamples.length }
+  }
+  if (realVideo) {
+    const videoSamples = report.playbackFrameSample?.samples?.flatMap((sample) => sample.video ?? []) ?? []
+    const video = report.realVideoE2E
+    if (!videoSamples.some((sample) => !sample.paused && sample.currentTime > 1 && sample.totalFrames >= 30)
+      || !video.staticCue1 || !video.staticCue2 || !video.animatedCue || !video.animationObservable
+      || video.staleCueCount || video.wrongCueAfterSeekCount || video.subtitleLessGapOverlayCount) throw new Error('Real video playback/subtitle gate failed')
   }
   const screenshotComparison = productionOnly ? null : analyzeScreenshots(fastBuffer, accurateBuffer, report)
   console.log(JSON.stringify({ ...report, fastScreenshotBytes: fastScreenshot.size, accurateScreenshotBytes: accurateScreenshot.size, screenshotComparison }, null, 2))

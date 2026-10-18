@@ -123,6 +123,6 @@ describe('FFmpeg render planning', () => {
     expect(preview.videoClips.map((clip) => clip.clipId)).toEqual(['clip-video', 'clip-image'])
     expect(final.graphStatements.findIndex((statement) => statement.includes('[1:v:0]')))
       .toBeLessThan(final.graphStatements.findIndex((statement) => statement.includes('[0:v:0]')))
-    expect(preview.audioClips).toEqual([expect.objectContaining({ clipId: 'clip-video', volumeDb: -3, pan: 0 })])
+    expect(preview.audioClips).toEqual([expect.objectContaining({ clipId: 'clip-video', volumeDb: -3, pan: 0, fadeInUs: 250_000, fadeOutUs: 0 })])
   })
 })

@@ -1,17 +1,10 @@
-import { stat } from 'node:fs/promises'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { fileURLToPath } from 'node:url'
-import { BrowserWindow, net, protocol, session } from 'electron'
+import { BrowserWindow, protocol, session } from 'electron'
+import { createMediaResponse } from './media-response.js'
 
 const MEDIA_SCHEME = 'spectra-media'
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
-const ALLOWED_MEDIA_EXTENSIONS = new Set([
-  '.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v',
-  '.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.opus',
-  '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff'
-])
-
 export interface RendererStartupReport {
   didFinishLoad: boolean
   rendererProcessAlive: boolean
@@ -111,29 +104,13 @@ export const registerPrivilegedSchemes = (): void => {
   protocol.registerSchemesAsPrivileged([
     {
       scheme: MEDIA_SCHEME,
-      privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: false }
+      privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true, bypassCSP: false }
     }
   ])
 }
 
 export const installMediaProtocol = (): void => {
-  protocol.handle(MEDIA_SCHEME, async (request) => {
-    try {
-      const url = new URL(request.url)
-      const filePath = decodeURIComponent(url.pathname.replace(/^\//, ''))
-      if (!path.isAbsolute(filePath) || !ALLOWED_MEDIA_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
-        return new Response('Unsupported media path', { status: 403 })
-      }
-      const info = await stat(filePath)
-      if (!info.isFile()) return new Response('Not a regular file', { status: 404 })
-      const response = await net.fetch(pathToFileURL(filePath).toString(), { headers: request.headers })
-      const headers = new Headers(response.headers)
-      headers.set('Access-Control-Allow-Origin', '*')
-      return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
-    } catch {
-      return new Response('Media not found', { status: 404 })
-    }
-  })
+  protocol.handle(MEDIA_SCHEME, createMediaResponse)
 }
 
 export const createMainWindow = (): BrowserWindow => {

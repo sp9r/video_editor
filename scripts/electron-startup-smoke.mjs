@@ -8,7 +8,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const rendererRoot = path.join(repositoryRoot, 'out', 'renderer')
 const indexPath = path.join(rendererRoot, 'index.html')
 const require = createRequire(import.meta.url)
-const electronPath = require('electron')
+const electronPath = process.env.SPECTRA_SMOKE_EXECUTABLE ?? require('electron')
 
 if (!existsSync(indexPath)) throw new Error(`Renderer build is missing: ${indexPath}`)
 const html = readFileSync(indexPath, 'utf8')

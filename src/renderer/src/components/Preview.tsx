@@ -1,10 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-react'
 import { formatTimecode, projectDurationUs, projectFingerprint } from '../../../shared/project'
 import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
 import { activeSubtitleClips, fastSubtitleAnimationStyle, subtitleVisualStateKey } from '../../../shared/subtitle-render'
 import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleOverlayResult } from '../../../shared/types'
-import { PREVIEW_AUDIO_DRIFT_TOLERANCE_SECONDS, previewAudioClipsForPlayback, previewAudioIsActive, previewAudioSourceTimeUs, previewAudioVolume } from '../preview-audio'
+import { PreviewAudioMixer, previewAudioClipsForPlayback, previewAudioIsActive, previewAudioSourceTimeUs, previewPlaybackTimeUs, syncPreviewMediaTime } from '../preview-audio'
 import { previewDiagnosticContext, previewDiagnosticStore } from '../preview-performance-diagnostics'
 import { previewQualityLabel } from '../preview-status'
 import { LatestSubtitleOverlayScheduler } from '../subtitle-overlay-scheduler'
@@ -51,7 +51,8 @@ function PreviewVisual({
   mediaSource,
   playheadUs,
   playing,
-  onSelect
+  onSelect,
+  onPlaybackError
 }: {
   clip: VisualClip
   asset?: MediaAsset
@@ -59,16 +60,20 @@ function PreviewVisual({
   playheadUs: number
   playing: boolean
   onSelect: () => void
+  onPlaybackError: (name: string) => void
 }): React.JSX.Element {
   const mediaRef = useRef<HTMLVideoElement | null>(null)
+  const [mediaReadyGeneration, setMediaReadyGeneration] = useState(0)
   useEffect(() => {
     if (clip.kind !== 'video' || !mediaRef.current || !mediaSource) return
     const media = mediaRef.current
     const expectedSeconds = (clip.sourceInUs + Math.max(0, playheadUs - clip.startUs)) / 1_000_000
-    if (Math.abs(media.currentTime - expectedSeconds) > 0.12) media.currentTime = expectedSeconds
-    if (playing) void media.play().catch(() => undefined)
+    syncPreviewMediaTime(media, expectedSeconds)
+    if (playing) { if (media.paused) void media.play().catch((error: unknown) => {
+      if (media.error || (error instanceof DOMException && error.name === 'NotAllowedError')) onPlaybackError(asset?.name ?? clip.name)
+    }) }
     else media.pause()
-  }, [clip, mediaSource, playheadUs, playing])
+  }, [clip, mediaSource, playheadUs, playing, mediaReadyGeneration, asset?.name, onPlaybackError])
 
   return (
     <button
@@ -87,10 +92,15 @@ function PreviewVisual({
           ref={mediaRef}
           key={asset.id}
           className="preview-media"
+          data-clip-id={clip.id}
           src={mediaSource}
           muted
           playsInline
           preload="metadata"
+          onLoadedMetadata={() => setMediaReadyGeneration((generation) => generation + 1)}
+          onLoadedData={() => setMediaReadyGeneration((generation) => generation + 1)}
+          onSeeked={() => setMediaReadyGeneration((generation) => generation + 1)}
+          onError={() => onPlaybackError(asset?.name ?? clip.name)}
           aria-label={asset.name}
         />
       ) : mediaSource && asset?.kind === 'image' ? (
@@ -105,14 +115,17 @@ function PreviewVisual({
 function PreviewAudio({
   item,
   asset,
-  elementRef
+  elementRef,
+  onMediaReady
 }: {
   item: PreviewPlanClip
   asset?: MediaAsset
-  elementRef: (element: HTMLAudioElement | null) => void
+  elementRef: (clipId: string, element: HTMLAudioElement | null) => void
+  onMediaReady: () => void
 }): React.JSX.Element | null {
+  const ref = useCallback((element: HTMLAudioElement | null) => elementRef(item.clipId, element), [elementRef, item.clipId])
   if (!asset || asset.offline || !window.spectra) return null
-  return <audio ref={elementRef} data-clip-id={item.clipId} src={window.spectra.mediaUrl(asset.path)} preload="auto" />
+  return <audio ref={ref} data-clip-id={item.clipId} crossOrigin="anonymous" src={window.spectra.mediaUrl(asset.path)} preload="auto" onLoadedMetadata={onMediaReady} onLoadedData={onMediaReady} onSeeked={onMediaReady} onPause={onMediaReady} />
 }
 
 function PreviewDiagnosticControls({ project, playheadUs, playing, viewportSize }: { project: Parameters<typeof previewDiagnosticContext>[0]; playheadUs: number; playing: boolean; viewportSize: { width: number; height: number } }): React.JSX.Element {
@@ -154,7 +167,7 @@ export default function Preview(): React.JSX.Element {
   previewDiagnosticStore.recordComponentRender('preview')
   const [renderPlan, setRenderPlan] = useState<PreviewPlan | null>(null)
   const [accurateFrame, setAccurateFrame] = useState<AccuratePreviewFrameResult | null>(null)
-  const [fastSubtitleOverlay, setFastSubtitleOverlay] = useState<SubtitleOverlayResult | null>(null)
+  const [fastSubtitleOverlay, setFastSubtitleOverlay] = useState<(SubtitleOverlayResult & { visualStateKey: string }) | null>(null)
   const [fastAnimatedApproximate, setFastAnimatedApproximate] = useState(false)
   const [accurateRendering, setAccurateRendering] = useState(false)
   const [accurateError, setAccurateError] = useState<string | null>(null)
@@ -164,13 +177,33 @@ export default function Preview(): React.JSX.Element {
   const lastFrameRef = useRef<number>(0)
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const audioRefs = useRef(new Map<string, HTMLAudioElement>())
+  const audioMixer = useRef<PreviewAudioMixer | null>(null)
+  const audioLifetime = useRef(0)
+  const [audioReadyGeneration, setAudioReadyGeneration] = useState(0)
+  const onAudioReady = useCallback(() => setAudioReadyGeneration((generation) => generation + 1), [])
   const audioPlayAttempted = useRef(new Set<string>())
   const accurateRequestSequence = useRef(0)
   const fastRequestSequence = useRef(0)
   const previousPlayheadUs = useRef<number | null>(null)
   const [seekGeneration, setSeekGeneration] = useState(0)
+  const onPlaybackError = useCallback((name: string): void => {
+    setPlaying(false)
+    showNotice(`「${name}」をプレビューで再生できませんでした。素材の形式とファイルを確認してください。`, 'warning')
+  }, [setPlaying, showNotice])
   const fastOverlayScheduler = useRef(new LatestSubtitleOverlayScheduler<SubtitleOverlayResult>(40))
   const durationUs = Math.max(renderPlan?.durationUs ?? projectDurationUs(project), 1_000_000)
+
+  useEffect(() => {
+    const generation = ++audioLifetime.current
+    return () => {
+      // StrictMode immediately sets the effect up again with the same DOM.
+      queueMicrotask(() => {
+        if (audioLifetime.current !== generation) return
+        audioMixer.current?.dispose()
+        audioMixer.current = null
+      })
+    }
+  }, [])
 
   const activeSubtitleStateKey = useMemo(() => subtitleVisualStateKey(project, playheadUs), [playheadUs, project])
 
@@ -210,10 +243,16 @@ export default function Preview(): React.JSX.Element {
       return
     }
     setRenderPlan(null)
+    setAccurateFrame(null)
     let active = true
     void window.spectra.createPreviewPlan(project)
       .then((plan) => { if (active) setRenderPlan(plan) })
-      .catch(() => { if (active) setRenderPlan(null) })
+      .catch((error: unknown) => {
+        if (!active) return
+        setRenderPlan(null)
+        setAccurateRendering(false)
+        setAccurateError(error instanceof Error ? error.message : 'プレビューの準備に失敗しました')
+      })
     return () => { active = false }
   }, [project])
 
@@ -235,7 +274,7 @@ export default function Preview(): React.JSX.Element {
         previewDiagnosticStore.recordSubtitleOverlayOutcome(result.cacheHit ?? !result.ffmpegStarted)
         const current = useEditorStore.getState()
         if (sequence !== fastRequestSequence.current || !current.playing || subtitleVisualStateKey(current.project, current.playheadUs) !== key) return
-        setFastSubtitleOverlay(result)
+        setFastSubtitleOverlay({ ...result, visualStateKey: key })
         setFastAnimatedApproximate(activeSubtitleClips(current.project, current.playheadUs).some(({ clip }) => clip.style.animation !== 'none'))
       }
       const onError = (error: unknown): void => {
@@ -263,6 +302,9 @@ export default function Preview(): React.JSX.Element {
       return
     }
     setAccurateRendering(true)
+    // createPreviewPlan clears the previous project's frame workspace. Wait
+    // until it completes, otherwise a reload can invalidate its own new frame.
+    if (!renderPlan) return
     const api = window.spectra
     const timeout = window.setTimeout(() => {
       if (!api) return
@@ -285,7 +327,7 @@ export default function Preview(): React.JSX.Element {
         })
     }, 180)
     return () => window.clearTimeout(timeout)
-  }, [playheadUs, playing, project])
+  }, [playheadUs, playing, project, renderPlan])
 
   useLayoutEffect(() => {
     const element = canvasRef.current
@@ -317,7 +359,17 @@ export default function Preview(): React.JSX.Element {
       const elapsedUs = (timestamp - lastFrameRef.current) * 1000
       lastFrameRef.current = timestamp
       const state = useEditorStore.getState()
-      const next = state.playheadUs + elapsedUs
+      if (!state.playing) {
+        lastFrameRef.current = 0
+        requestRef.current = null
+        return
+      }
+      const next = previewPlaybackTimeUs(renderPlan, state.playheadUs, elapsedUs, (item, kind) => {
+        if (kind === 'audio') return audioRefs.current.get(item.clipId) ?? null
+        const asset = state.project.media.find((asset) => asset.id === item.sourceMediaId)
+        if (asset?.kind !== 'video') return undefined
+        return Array.from(canvasRef.current?.querySelectorAll('video') ?? []).find((video) => video.dataset.clipId === item.clipId) ?? null
+      })
       previewDiagnosticStore.recordAnimationFrame(timestamp, next)
       if (previewDiagnosticStore.getSnapshot().active) {
         const videos = canvasRef.current?.querySelectorAll('video') ?? []
@@ -342,7 +394,7 @@ export default function Preview(): React.JSX.Element {
       if (requestRef.current !== null) cancelAnimationFrame(requestRef.current)
       lastFrameRef.current = 0
     }
-  }, [playing, renderPlan?.durationUs])
+  }, [playing, renderPlan])
 
   const plannedVideoIds = renderPlan ? new Set(renderPlan.videoClips.map((clip) => clip.clipId)) : null
   const visuals = useMemo(() => visualLayerOrder(project)
@@ -371,7 +423,8 @@ export default function Preview(): React.JSX.Element {
       if (!audio) continue
       const asset = item.sourceMediaId ? project.media.find((media) => media.id === item.sourceMediaId) : undefined
       if (!asset || asset.offline) continue
-      audio.volume = previewAudioVolume(item.volumeDb)
+      if (!audioMixer.current && playing) audioMixer.current = new PreviewAudioMixer(new AudioContext())
+      audioMixer.current?.update(audio, item, playheadUs, playing, asset.channels)
       const active = previewAudioIsActive(item, playheadUs)
       if (!active) {
         audio.pause()
@@ -380,13 +433,22 @@ export default function Preview(): React.JSX.Element {
       }
       activeIds.add(item.clipId)
       const expectedSeconds = previewAudioSourceTimeUs(item, playheadUs) / 1_000_000
-      if (Math.abs(audio.currentTime - expectedSeconds) > PREVIEW_AUDIO_DRIFT_TOLERANCE_SECONDS || !Number.isFinite(audio.currentTime)) audio.currentTime = Math.max(0, expectedSeconds)
+      syncPreviewMediaTime(audio, expectedSeconds)
       if (!playing) {
         audio.pause()
         audioPlayAttempted.current.delete(item.clipId)
       } else if (audio.paused && !audioPlayAttempted.current.has(item.clipId)) {
         audioPlayAttempted.current.add(item.clipId)
-        void audio.play().catch(() => undefined)
+        void audio.play().catch((error: unknown) => {
+          if (audioRefs.current.get(item.clipId) !== audio) return
+          audioPlayAttempted.current.delete(item.clipId)
+          if (audio.error || (error instanceof DOMException && error.name === 'NotAllowedError')) {
+            setPlaying(false)
+            showNotice('音声を再生できませんでした。素材の形式とファイルを確認してください。', 'warning')
+          }
+        }).finally(() => {
+          if (audioRefs.current.get(item.clipId) === audio) audioPlayAttempted.current.delete(item.clipId)
+        })
       }
     }
     for (const [clipId, audio] of audioRefs.current) {
@@ -395,12 +457,17 @@ export default function Preview(): React.JSX.Element {
         audioPlayAttempted.current.delete(clipId)
       }
     }
-  }, [playheadUs, playing, previewAudioClips, project])
+  }, [playheadUs, playing, previewAudioClips, project, audioReadyGeneration, setPlaying, showNotice])
 
-  const setAudioRef = (clipId: string) => (element: HTMLAudioElement | null): void => {
+  const setAudioRef = useCallback((clipId: string, element: HTMLAudioElement | null): void => {
     if (element) audioRefs.current.set(clipId, element)
-    else audioRefs.current.delete(clipId)
-  }
+    else {
+      const previous = audioRefs.current.get(clipId)
+      if (previous) audioMixer.current?.release(previous)
+      audioRefs.current.delete(clipId)
+      audioPlayAttempted.current.delete(clipId)
+    }
+  }, [])
 
   return (
     <section className="viewer-panel panel" aria-label="プログラムモニター">
@@ -426,11 +493,11 @@ export default function Preview(): React.JSX.Element {
               const asset = 'assetId' in clip ? project.media.find((item) => item.id === clip.assetId) : undefined
               const mediaSource = asset && !asset.offline && window.spectra ? window.spectra.mediaUrl(asset.path) : null
               const visualKey = 'assetId' in clip && asset?.kind === 'video' ? `video:${asset.id}` : `visual:${clip.id}`
-              return <PreviewVisual key={visualKey} clip={clip} asset={asset} mediaSource={mediaSource} playheadUs={playheadUs} playing={playing} onSelect={() => selectClip(clip.id)} />
+              return <PreviewVisual key={visualKey} clip={clip} asset={asset} mediaSource={mediaSource} playheadUs={playheadUs} playing={playing} onSelect={() => selectClip(clip.id)} onPlaybackError={onPlaybackError} />
             })}
             {visuals.length === 0 && <div className="viewer-placeholder"><Play size={34} /><span>再生位置に映像がありません</span></div>}
             <div className="safe-guides" aria-hidden="true"><i /></div>
-            {playing && fastSubtitleOverlay && window.spectra && (
+            {playing && fastSubtitleOverlay && fastSubtitleOverlay.visualStateKey === activeSubtitleStateKey && window.spectra && (
               <img
                 className="fast-authoritative-subtitle-overlay"
                 data-subtitle-authority="libass"
@@ -457,7 +524,8 @@ export default function Preview(): React.JSX.Element {
                 key={item.clipId}
                 item={item}
                 asset={item.sourceMediaId ? project.media.find((asset) => asset.id === item.sourceMediaId) : undefined}
-                elementRef={setAudioRef(item.clipId)}
+                elementRef={setAudioRef}
+                onMediaReady={onAudioReady}
               />
             ))}
           </div>

@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { mkdtempSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { createFfmpegService, createPreviewPlan, parseSrt, parseVtt, type FfmpegService } from './ffmpeg/index'
@@ -28,6 +29,15 @@ import { ThumbnailService } from './thumbnail-service'
 
 registerPrivilegedSchemes()
 app.setName('Spectra Video Studio')
+
+const smokeMode = ['SPECTRA_ACCURATE_PREVIEW_SMOKE', 'SPECTRA_STARTUP_SMOKE', 'SPECTRA_INTERACTION_SMOKE', 'SPECTRA_SUBTITLE_PARITY_SMOKE']
+  .some((key) => process.env[key] === '1')
+if (smokeMode) {
+  // Test windows must not read recovery/settings or populate the user's caches.
+  const profile = mkdtempSync(path.join(app.getPath('temp'), 'spectra-smoke-profile-'))
+  app.setPath('userData', profile)
+  app.setPath('sessionData', profile)
+}
 
 const MEDIA_FILTERS = [
   {
@@ -93,7 +103,7 @@ const registerIpcHandlers = (): void => {
       platform: process.platform,
       arch: process.arch,
       packaged: app.isPackaged,
-      smokeMode: process.env.SPECTRA_ACCURATE_PREVIEW_SMOKE === '1' || process.env.SPECTRA_STARTUP_SMOKE === '1' || process.env.SPECTRA_INTERACTION_SMOKE === '1'
+      smokeMode
     }
   })
 
@@ -447,6 +457,27 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const subtitleSpec = smokeSubtitle?.kind === 'subtitle' ? buildSubtitleRenderSpec(smokeSubtitle, project.sequence) : null
   const startup = await waitForRendererStartup(window)
   console.log('SPECTRA_ACCURATE_PREVIEW_STAGE renderer-ready')
+  await window.webContents.executeJavaScript(`(() => {
+    window.__spectraAudioContexts = []
+    window.__spectraAudioSeeks = { count: 0, last: null }
+    window.__spectraAudioPauses = []
+    const nativePause = HTMLMediaElement.prototype.pause
+    HTMLMediaElement.prototype.pause = function () {
+      if (this.tagName === 'AUDIO' && !this.paused) window.__spectraAudioPauses.push({ currentTime: this.currentTime, stack: new Error().stack })
+      return nativePause.call(this)
+    }
+    const currentTime = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')
+    Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', { ...currentTime, set(value) {
+      if (this.tagName === 'AUDIO') { window.__spectraAudioSeeks.count++; window.__spectraAudioSeeks.last = value }
+      currentTime.set.call(this, value)
+    } })
+    const NativeAudioContext = window.AudioContext
+    window.AudioContext = new Proxy(NativeAudioContext, { construct(target, args) {
+      const context = new target(...args)
+      window.__spectraAudioContexts.push(context)
+      return context
+    } })
+  })()`)
   await new Promise((resolve) => setTimeout(resolve, 100))
   const detail = JSON.stringify({ project, timeUs: 500_000 })
   await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${detail} }))`)
@@ -551,23 +582,32 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const subtitleOverlayCacheHitP95Ms = percentile(cacheHitSamplesMs, 0.95)
   const subtitleOverlayCueSwitchP50Ms = percentile(cueSwitchSamplesMs, 0.5)
   const subtitleOverlayCueSwitchP95Ms = percentile(cueSwitchSamplesMs, 0.95)
-  await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
-  const fastFixture = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.cssFallbackCount === 0 && dom.fastSubtitleOverlay && dom.fastSubtitleOverlayReady)
-  const fastFixtureDom = await readDom()
+  await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`, true)
   const playbackSampleMs = Math.max(200, Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200))
-  const playbackFrameSample = await window.webContents.executeJavaScript(process.env.SPECTRA_REAL_VIDEO_E2E === '1' ? `new Promise((resolve) => {
+  const playbackSamplePromise = window.webContents.executeJavaScript(process.env.SPECTRA_REAL_VIDEO_E2E === '1' ? `new Promise((resolve) => {
     const started = performance.now()
     const samples = []
     let lastPlayhead = -1
+    let maximumPlayhead = 0
+    let interruptedAudio = false
     const timer = setInterval(() => {
       const canvas = document.querySelector('.viewer-canvas')
       const playheadUs = Number(canvas?.getAttribute('data-playhead-us') ?? 0)
+      maximumPlayhead = Math.max(maximumPlayhead, playheadUs)
       const image = document.querySelector('.fast-authoritative-subtitle-overlay')
       const style = image ? getComputedStyle(image) : null
-      const item = { playheadUs, key: image?.getAttribute('data-subtitle-visual-key') ?? '', transform: style?.transform ?? 'none', opacity: style?.opacity ?? '1', hasOverlay: Boolean(image), fallbackCount: document.querySelectorAll('[data-subtitle-renderer="css-fallback"]').length }
+      const audio = Array.from(document.querySelectorAll('.preview-audio-pool audio')).map((element) => ({ currentTime: element.currentTime, paused: element.paused, seeking: element.seeking, volume: element.volume, readyState: element.readyState, error: element.error?.code ?? null }))
+      if (!interruptedAudio && playheadUs >= 1_200_000) {
+        const element = document.querySelector('.preview-audio-pool audio')
+        if (element && !element.paused) { interruptedAudio = true; element.pause() }
+      }
+      const audioContexts = window.__spectraAudioContexts.map((context) => ({ state: context.state, currentTime: context.currentTime }))
+      const video = Array.from(document.querySelectorAll('video')).map((element) => ({ currentTime: element.currentTime, paused: element.paused, readyState: element.readyState, totalFrames: element.getVideoPlaybackQuality?.().totalVideoFrames ?? 0 }))
+      const item = { playheadUs, audio, video, audioContexts, audioSeeks: { ...window.__spectraAudioSeeks }, audioPauses: [...window.__spectraAudioPauses], key: image?.getAttribute('data-subtitle-visual-key') ?? '', transform: style?.transform ?? 'none', opacity: style?.opacity ?? '1', hasOverlay: Boolean(image), fallbackCount: document.querySelectorAll('[data-subtitle-renderer="css-fallback"]').length }
       if (playheadUs !== lastPlayhead) samples.push(item)
       lastPlayhead = playheadUs
-      if (performance.now() - started >= ${playbackSampleMs}) { clearInterval(timer); resolve({ elapsedMs: performance.now() - started, samples }) }
+      const elapsedMs = performance.now() - started
+      if ((elapsedMs >= ${playbackSampleMs} && maximumPlayhead >= 8_900_000) || elapsedMs >= 30_000) { clearInterval(timer); resolve({ elapsedMs, samples, interruptedAudio }) }
     }, 50)
   })` : `new Promise((resolve) => {
     const started = performance.now()
@@ -580,18 +620,21 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
     }
     requestAnimationFrame(tick)
   })`)
+  const fastFixture = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.cssFallbackCount === 0 && dom.fastSubtitleOverlay && dom.fastSubtitleOverlayReady)
+  const fastFixtureDom = await readDom()
+  const fastScreenshotPath = path.join(app.getPath('temp'), `spectra-fast-preview-phase4r2${screenshotSuffix}.png`)
+  await waitForPaint()
+  await writeFile(fastScreenshotPath, (await window.webContents.capturePage()).toPNG())
+  const playbackFrameSample = await playbackSamplePromise
   const playbackQuality = await window.webContents.executeJavaScript(`(() => {
     const qualities = Array.from(document.querySelectorAll('video')).map((video) => typeof video.getVideoPlaybackQuality === 'function' ? video.getVideoPlaybackQuality() : null).filter(Boolean)
     return qualities.length ? { droppedVideoFrames: Math.max(...qualities.map((quality) => quality.droppedVideoFrames)), totalVideoFrames: Math.max(...qualities.map((quality) => quality.totalVideoFrames)), supported: true } : { droppedVideoFrames: null, totalVideoFrames: null, supported: false }
   })()`)
   if (playbackSampleMs > 2_000) {
     await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${detail} }))`)
-    await until((dom) => dom.overlay && dom.overlayReady)
+  } else {
+    await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`, true)
   }
-  const fastScreenshotPath = path.join(app.getPath('temp'), `spectra-fast-preview-phase4r2${screenshotSuffix}.png`)
-  await waitForPaint()
-  await writeFile(fastScreenshotPath, (await window.webContents.capturePage()).toPNG())
-  await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
   // A paused seek may invalidate the previous frame before the replacement
   // is ready. Wait for the current-state frame instead of requiring a stale
   // frame to remain visible during that interval.
@@ -606,10 +649,10 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
   const editPendingRejectsStaleOverlay = !pendingDom.overlay && pendingDom.quality.includes('更新中')
   const editedFrameReady = await until((dom) => dom.overlay && dom.overlayReady && dom.overlaySrc !== initialOverlaySrc && dom.quality.includes('正確プレビュー'))
   const cueSwitchStartedAt = performance.now()
-  await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
+  await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`, true)
   const fastDuringPlay = await until((dom) => !dom.overlay && dom.quality.includes('高速') && dom.cssFallbackCount === 0 && dom.fastSubtitleOverlay && dom.fastSubtitleOverlayReady)
   const subtitleOverlayCueSwitchMs = performance.now() - cueSwitchStartedAt
-  await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
+  await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`, true)
   const overlayImmediatelyAfterPause = (await readDom()).overlay
   const accurateAfterResume = await until((dom) => dom.overlay && dom.overlayReady)
   const finalDom = await readDom()
@@ -623,11 +666,11 @@ const runAccuratePreviewSmoke = async (window: BrowserWindow): Promise<Record<st
     const expectedSeekKey = animatedSamples.find((sample: RealVideoSample) => sample.playheadUs >= 7_400_000 && sample.playheadUs < 7_700_000)?.key ?? subtitleVisualStateKey(project, 7_500_000)
     await window.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: ${JSON.stringify({ project, timeUs: 7_500_000 })} }))`)
     await new Promise((resolve) => setTimeout(resolve, 300))
-    await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
+    await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`, true)
     const seekReady = await until((dom) => dom.fastSubtitleOverlay && dom.fastSubtitleOverlayReady && dom.fastSubtitleVisualKey === expectedSeekKey, 5_000)
     const seekDom = await readDom()
     if (!seekReady || seekDom.fastSubtitleVisualKey !== expectedSeekKey) wrongCueAfterSeekCount += 1
-    await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`)
+    await window.webContents.executeJavaScript(`document.querySelector('.play-button')?.click()`, true)
   }
   const report = { accurateInitial, initialQuality: initialDom.quality, viewport: initialDom.viewport, sequence: { width: project.sequence.width, height: project.sequence.height }, subtitleSpec, fastFixture, fastSubtitleOverlay: fastFixtureDom.fastSubtitleOverlay, fastSubtitleOverlayReady: fastFixtureDom.fastSubtitleOverlayReady, fastSubtitleOverlaySrc: fastFixtureDom.fastSubtitleOverlaySrc, initialCssFallbackCount: initialDom.cssFallbackCount, fastCssFallbackCount: fastFixtureDom.cssFallbackCount, playbackFrameSample, playbackQuality, realVideoE2E: process.env.SPECTRA_REAL_VIDEO_E2E === '1' ? { realVideo: true, videoResolution: `${project.media.find((media) => media.kind === 'video')?.width ?? 0}x${project.media.find((media) => media.kind === 'video')?.height ?? 0}`, videoCodec: 'H.264/libx264', sampleCount: realVideoSamples.length, staticCue1: realVideoSamples.some((sample: RealVideoSample) => sample.playheadUs >= 500_000 && sample.playheadUs < 2_500_000 && sample.hasOverlay), staticCue2: realVideoSamples.some((sample: RealVideoSample) => sample.playheadUs >= 4_000_000 && sample.playheadUs < 6_000_000 && sample.hasOverlay), animatedCue: animatedSamples.some((sample: RealVideoSample) => sample.hasOverlay), animationObservable: new Set(animatedSamples.map((sample: RealVideoSample) => `${sample.transform}/${sample.opacity}`)).size > 1, subtitleLessGapOverlayCount: gapSamples.filter((sample: RealVideoSample) => sample.hasOverlay).length, staleCueCount: gapSamples.filter((sample: RealVideoSample) => sample.hasOverlay).length, wrongCueAfterSeekCount, cueBoundaryTiming: [2_500_000, 4_000_000, 6_000_000, 7_000_000, 9_000_000], animatedCueTransforms: [...new Set(animatedSamples.map((sample: RealVideoSample) => `${sample.transform}/${sample.opacity}`))], cssFallbackCount: realVideoSamples.reduce((max: number, sample: RealVideoSample) => Math.max(max, sample.fallbackCount), 0) } : null, subtitleOverlayFramePath: reportOverlay.framePath, subtitleOverlayFrameIndex: reportOverlay.frameIndex, subtitleOverlayStateFingerprint: reportOverlay.subtitleStateFingerprint, subtitleOverlayCacheEntries: service.subtitleOverlayCacheSize, subtitleOverlayCacheBytes: service.subtitleOverlayCacheBytes, subtitleOverlayColdMs, subtitleOverlayCacheHitMs, subtitleOverlayCueSwitchMs, subtitleOverlayColdP50Ms, subtitleOverlayColdP95Ms, subtitleOverlayCacheHitP50Ms, subtitleOverlayCacheHitP95Ms, coldOverlayFramePath: coldSubtitleOverlay.framePath, accurateFixtureAfterResume, editPendingRejectsStaleOverlay, editedFrameReady, fastDuringPlay, overlayImmediatelyAfterPause, accurateAfterResume, initialOverlaySrc, editedOverlaySrc: finalDom.overlaySrc, overlayCount: finalDom.overlayCount, fastScreenshotPath, accurateScreenshotPath, fastSubtitleMain: fastFixtureDom.subtitleMain, accurateSubtitleMain: initialDom.subtitleMain, fastSubtitleStack: fastFixtureDom.subtitleStack, accurateSubtitleStack: initialDom.subtitleStack, fastVisual: fastFixtureDom.visual, accurateVisual: initialDom.visual }
   return { ...startup, ...report }
@@ -748,7 +791,7 @@ const runInteractionStateSmoke = async (window: BrowserWindow): Promise<Record<s
 const start = async (): Promise<void> => {
   installMediaProtocol()
   ffmpegService = await createFfmpegService({
-    workspaceRoot: path.join(app.getPath('temp'), 'spectra-video-studio')
+    workspaceRoot: smokeMode ? path.join(app.getPath('userData'), 'media-workspace') : path.join(app.getPath('temp'), 'spectra-video-studio')
   })
   silenceAnalysisService = new SilenceAnalysisService(ffmpegService.paths, { executor: ffmpegService.executor })
   autoCaptionService = new AutoCaptionService({ appPath: app.getAppPath(), userDataPath: app.getPath('userData') })

@@ -405,7 +405,9 @@ export const createPreviewPlan = (project: ProjectFile, settings: ExportSettings
         kind: 'audio',
         sourceMediaId: clip.assetId,
         volumeDb: clip.audio.volumeDb,
-        pan: clip.audio.pan
+        pan: clip.audio.pan,
+        fadeInUs: clip.audio.fadeInUs,
+        fadeOutUs: clip.audio.fadeOutUs
       })
     }
   }

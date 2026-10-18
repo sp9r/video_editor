@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
@@ -363,6 +363,168 @@ describe('FFmpeg export service', () => {
       expect(progress.at(-1)).toMatchObject({ stage: 'completed', ratio: 1, encoderId: 'libx264' })
       const renderingRatios = progress.filter((item) => item.stage === 'rendering' && item.encoderId === 'libx264').map((item) => item.ratio)
       expect(renderingRatios).toEqual([...renderingRatios].sort((left, right) => left - right))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([true, false])('handles the previous SRT after exporting a project with no subtitles (exportSrt: %s)', async (exportSrt) => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-empty-sidecar-'))
+    try {
+      const project = await prepareProjectFiles(root)
+      project.tracks = project.tracks.filter((track) => track.kind !== 'subtitle')
+      const outputPath = join(root, 'output.mp4')
+      const sidecarPath = join(root, 'output.srt')
+      await Promise.all([writeFile(outputPath, 'old-video'), writeFile(sidecarPath, 'old-subtitles')])
+      const executor: ProcessExecutor = {
+        async run(request) {
+          if (request.args.includes('-version')) return success(request, 'ffmpeg version 6.1.1-test\n')
+          if (request.args.includes('-encoders')) return success(request, ' V....D libx264 CPU\n')
+          if (request.command === 'ffprobe') return success(request, validationJson)
+          if (request.args.includes('-progress')) {
+            const partial = request.args.at(-1)
+            if (!partial) throw new Error('No output argument')
+            await writeFile(partial, 'new-video')
+          }
+          return success(request)
+        }
+      }
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, {
+        executor, workspaceRoot: join(root, 'workspaces')
+      })
+      const job = await service.startExport(project, { ...makeExportSettings(outputPath), encoderMode: 'software', exportSrt })
+      await job.result
+      expect(await readFile(outputPath, 'utf8')).toBe('new-video')
+      expect(await readFile(sidecarPath, 'utf8')).toBe(exportSrt ? '' : 'old-subtitles')
+      expect((await readdir(root)).some((name) => name.includes('.backup-') || name.includes('.part-'))).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves the previous video when the sidecar destination cannot be published', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-sidecar-failure-'))
+    try {
+      const project = await prepareProjectFiles(root)
+      const outputPath = join(root, 'output.mp4')
+      await writeFile(outputPath, 'previous-output')
+      await mkdir(join(root, 'output.srt'))
+      const renderEncoders: string[] = []
+      const executor: ProcessExecutor = {
+        async run(request) {
+          if (request.args.includes('-version')) return success(request, 'ffmpeg version 6.1.1-test\n')
+          if (request.args.includes('-encoders')) return success(request, ' V....D h264_nvenc NVIDIA\n V....D libx264 CPU\n')
+          if (request.command === 'ffprobe') return success(request, validationJson)
+          if (request.args.includes('-progress')) {
+            renderEncoders.push(request.args[request.args.indexOf('-c:v') + 1] ?? 'unknown')
+            const partial = request.args.at(-1)
+            if (!partial) throw new Error('No output argument')
+            await writeFile(partial, 'new-output')
+          }
+          return success(request)
+        }
+      }
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, {
+        executor, platform: 'win32', workspaceRoot: join(root, 'workspaces')
+      })
+      const progress: ExportProgress[] = []
+      const job = await service.startExport(project, makeExportSettings(outputPath), { onProgress: (item) => progress.push(item) })
+      await expect(job.result).rejects.toThrow('Export destination is not a regular file')
+      expect(await readFile(outputPath, 'utf8')).toBe('previous-output')
+      expect(await readdir(join(root, 'output.srt'))).toEqual([])
+      expect(renderEncoders).toEqual(['h264_nvenc'])
+      expect(progress.at(-1)?.stage).toBe('failed')
+      expect((await readdir(root)).some((name) => name.includes('.backup-') || name.includes('.part-'))).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['success', 'failure', 'cancel'] as const)('reserves normalized video/SRT paths until %s and permits other outputs', async (outcome) => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-output-reservation-'))
+    try {
+      const project = await prepareProjectFiles(root)
+      const outputPath = join(root, 'output.mp4')
+      let release: () => void = () => undefined
+      const gate = new Promise<void>((resolve) => { release = resolve })
+      let failing = outcome === 'failure'
+      const executor: ProcessExecutor = {
+        async run(request) {
+          if (request.args.includes('-version')) {
+            await gate
+            return success(request, 'ffmpeg version 6.1.1-test\n')
+          }
+          if (request.args.includes('-encoders')) return success(request, ' V....D libx264 CPU\n')
+          if (request.command === 'ffprobe') return success(request, validationJson)
+          if (request.args.includes('-progress')) {
+            if (failing) throw Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+            const partial = request.args.at(-1)
+            if (!partial) throw new Error('No output argument')
+            await writeFile(partial, 'new-output')
+          }
+          return success(request)
+        }
+      }
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, {
+        executor, platform: 'win32', workspaceRoot: join(root, 'workspaces')
+      })
+      const settings = { ...makeExportSettings(outputPath), encoderMode: 'software' as const }
+      const first = await service.startExport(project, settings, { jobId: 'reserved' })
+      // Both path.resolve aliases and Windows case aliases share the reservation.
+      await expect(service.startExport(project, { ...settings, outputPath: join(root, 'unused', '..', 'OUTPUT.MP4') })).rejects.toThrow('already in use')
+      await expect(service.writeSrt(project, join(root, 'OUTPUT.SRT'))).rejects.toThrow('already in use')
+      const other = await service.startExport(project, { ...settings, outputPath: join(root, 'other.mp4') }, { jobId: 'other' })
+      const settled = Promise.allSettled([first.result, other.result])
+      if (outcome === 'cancel') service.cancelExport(first.jobId)
+      release()
+      const results = await settled
+      expect(results[0]?.status).toBe(outcome === 'success' ? 'fulfilled' : 'rejected')
+      expect(results[1]?.status).toBe(outcome === 'failure' ? 'rejected' : 'fulfilled')
+      failing = false
+      // Success, render failure and cancellation all release the video and SRT.
+      await expect(service.writeSrt(project, join(root, 'output.srt'))).resolves.toBeUndefined()
+      const retry = await service.startExport(project, settings, { jobId: 'reserved' })
+      await expect(retry.result).resolves.toMatchObject({ outputPath })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a video export while its sidecar is being saved independently', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-srt-write-reservation-'))
+    try {
+      const project = await prepareProjectFiles(root)
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, {
+        platform: 'win32', workspaceRoot: join(root, 'workspaces'),
+        executor: { run: async () => { throw new Error('Must not launch FFmpeg') } }
+      })
+      const saving = service.writeSrt(project, join(root, 'output.srt'))
+      await expect(service.startExport(project, makeExportSettings(join(root, 'OUTPUT.MP4')))).rejects.toThrow('already in use')
+      await saving
+      await expect(service.writeSrt(project, join(root, 'output.srt'))).resolves.toBeUndefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reserves the sidecar even when case-sensitive video paths differ by extension case', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'spectra-sidecar-reservation-'))
+    try {
+      const project = await prepareProjectFiles(root)
+      let release: () => void = () => undefined
+      const gate = new Promise<void>((resolve) => { release = resolve })
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, {
+        platform: 'linux', workspaceRoot: join(root, 'workspaces'),
+        executor: { run: async (request) => {
+          await gate
+          throw Object.assign(new Error('disk full'), { code: 'ENOSPC' })
+        } }
+      })
+      const first = await service.startExport(project, makeExportSettings(join(root, 'output.mp4')))
+      await expect(service.startExport(project, makeExportSettings(join(root, 'output.MP4')))).rejects.toThrow('already in use')
+      const settled = first.result.catch(() => undefined)
+      release()
+      await settled
     } finally {
       await rm(root, { recursive: true, force: true })
     }

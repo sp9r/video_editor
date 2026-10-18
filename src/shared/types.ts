@@ -262,6 +262,8 @@ export interface PreviewPlanClip {
   text?: string
   volumeDb?: number
   pan?: number
+  fadeInUs?: TimeUs
+  fadeOutUs?: TimeUs
 }
 
 export interface PreviewPlan {

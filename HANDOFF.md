@@ -1,5 +1,23 @@
 # Spectra Video Studio 開発引き継ぎ
 
+## 2026-10-18 実用不具合修正と確認版
+
+確認版はルートの`start-preview.cmd`から起動する。実体は`release/local-preview/win-unpacked/Spectra Video Studio.exe`。隣接する`clip_automation`を起動プロセス限定の環境変数で解決する。既存の配布EXE、installer、インストール、ショートカットは本人レビュー前に置換しない。デスクトップ起動時は架空素材のデモではなく空プロジェクトを開く。
+
+プレビューの正のdBによる例外、未反映だったpan/fade、パン入力の百分率とモデルの単位不一致を修正。Web AudioはFinalと同じ左右ゲイン、mono→stereo係数、重複fadeの積を使う。ノードは有限poolで解放し、同じDOMへの再接続でMediaElementSourceを二重作成しない。再生中のnative pause後も、未完了のplay要求だけを排他管理して再開できる。自動再生拒否・形式エラーは停止と通知にする。
+
+素材配信を実byte-range対応へ変更し、206/416、Content-Range/Length、HEAD、MIME、CORSを返す。再生位置は読み込み済みの音声／映像時計へ追従し、連続seekでデコーダを止めない。project再読込時の古い正確プレビューとcache競合、字幕切替時の1フレーム残留も修正。字幕の表示時はリクエストkeyを照合し、サーバーSHA fingerprintと混同しない。
+
+MP4/SRTは旧出力を両方backupしてから公開する。途中失敗は両方復元し、復元不能時はbackup場所を含むエラーを返す。公開エラーでencoder fallbackを繰り返さない。同一出力先と単独SRT保存の競合をawait前にpath予約で拒否し、成功・失敗・cancelで解放。字幕0件でもSRT出力有効なら空ファイルを公開し、古い字幕を残さない。
+
+検証は74 files / 472 tests、Node/renderer型検査、build、Electron起動・編集操作。Web AudioとFFmpegのfloat PCMは増幅、左右pan、重複fade、途中seek、monoの6条件を比較し最大sample差7.75e-7。独自プロトコルの実音声出力もanalyserで確認。H.264/AAC実画面E2Eは+12dB/pan/fade、途中のnative pauseからの復帰、3字幕cueと空白区間、アニメーション、シーク、編集、再読込を検証する。古い字幕・シーク後の誤字幕・JS例外0を成功条件とし、画像のPreview/Final一致も検査する。smokeは専用一時profile/cacheへ隔離する。
+
+確認版EXEの実起動はroot/app-shell/preload/playhead正常、JS例外0。ASAR内のout全6ファイルがbuild出力とバイト一致した。最終A/V E2Eは169サンプル、音声7.96秒、動画410frames、古い字幕0、シーク後の誤字幕0、native pause復帰成功。証拠はローカルの`verification-av-recovery.log`、`verification-packaged-startup.log`、`verification-tests-local.log`。
+
+再検証は`npm.cmd run check`、`npm.cmd run build`、`npm.cmd run smoke:audio`、`SPECTRA_REAL_VIDEO_E2E=1`と`SPECTRA_AUDIO_E2E=1`を設定して`node scripts/accurate-preview-smoke.mjs`。packagingは`node node_modules/electron-builder/cli.js --win --dir --x64 --config.directories.output=release/local-preview --config.win.signAndEditExecutable=false`。`SPECTRA_SMOKE_EXECUTABLE`に確認版EXEを設定して`node scripts/electron-startup-smoke.mjs`で実packaged起動を検査する。WindowsのASAR比較ではextractFileにpath.normalize済みの内部pathを渡す。
+
+未確認範囲は実ユーザー素材の聴感、別PC・全GPU・長時間連続利用、強制終了／停電時の複数出力journal復旧、symlink/hardlink別名の排他。自動字幕は兄弟worker・Python環境・CUDA・large-v3 cache・FFmpeg・Ollamaモデルの存在を確認したが、今回は実ASR推論を行っていない。旧2026-09-17の隔離`.work/p0repo`は本体の修正完了証拠ではなく、今回は本体を更新した。
+
 ## 2026-08-16 Stage 25 Lunch Run
 
 - Subtitle Template Managerのuser templateへ、SubtitleStyle全項目（font、色、outline、shadow、background、bold/italic、spacing、line height、alignment、position、max width、animation）を直接編集できるTemplate Editorを追加した。built-inは従来どおりimmutableである。
