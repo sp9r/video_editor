@@ -9,6 +9,7 @@ const rendererRoot = path.join(repositoryRoot, 'out', 'renderer')
 const indexPath = path.join(rendererRoot, 'index.html')
 const require = createRequire(import.meta.url)
 const electronPath = process.env.SPECTRA_SMOKE_EXECUTABLE ?? require('electron')
+if (!electronPath || !existsSync(electronPath)) throw new Error(`Electron executable is missing: ${electronPath}`)
 
 if (!existsSync(indexPath)) throw new Error(`Renderer build is missing: ${indexPath}`)
 const html = readFileSync(indexPath, 'utf8')
@@ -23,7 +24,7 @@ for (const reference of references) {
 }
 
 const output = []
-const child = spawn(electronPath, ['.'], {
+const child = spawn(electronPath, process.env.SPECTRA_SMOKE_EXECUTABLE ? [] : ['.'], {
   cwd: repositoryRoot,
   env: { ...process.env, SPECTRA_STARTUP_SMOKE: '1' },
   stdio: ['ignore', 'pipe', 'pipe'],

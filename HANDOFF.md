@@ -12,9 +12,9 @@ MP4/SRTは旧出力を両方backupしてから公開する。途中失敗は両�
 
 検証は74 files / 472 tests、Node/renderer型検査、build、Electron起動・編集操作。Web AudioとFFmpegのfloat PCMは増幅、左右pan、重複fade、途中seek、monoの6条件を比較し最大sample差7.75e-7。独自プロトコルの実音声出力もanalyserで確認。H.264/AAC実画面E2Eは+12dB/pan/fade、途中のnative pauseからの復帰、3字幕cueと空白区間、アニメーション、シーク、編集、再読込を検証する。古い字幕・シーク後の誤字幕・JS例外0を成功条件とし、画像のPreview/Final一致も検査する。smokeは専用一時profile/cacheへ隔離する。
 
-確認版EXEの実起動はroot/app-shell/preload/playhead正常、JS例外0。ASAR内のout全6ファイルがbuild出力とバイト一致した。最終A/V E2Eは169サンプル、音声7.96秒、動画410frames、古い字幕0、シーク後の誤字幕0、native pause復帰成功。証拠はローカルの`verification-av-recovery.log`、`verification-packaged-startup.log`、`verification-tests-local.log`。
+確認版EXEの実起動はroot/app-shell/preload/playhead正常、JS例外0。ASAR内のout全6ファイルがbuild出力とバイト一致した。最終A/V E2Eは169サンプル、音声7.96秒、動画410frames、古い字幕0、シーク後の誤字幕0、native pause復帰成功。証拠はローカルの`verification-av-recovery.log`、`verification-packaged-startup-real.log`、`verification-tests-local.log`。
 
-再検証は`npm.cmd run check`、`npm.cmd run build`、`npm.cmd run smoke:audio`、`SPECTRA_REAL_VIDEO_E2E=1`と`SPECTRA_AUDIO_E2E=1`を設定して`node scripts/accurate-preview-smoke.mjs`。packagingは`node node_modules/electron-builder/cli.js --win --dir --x64 --config.directories.output=release/local-preview --config.win.signAndEditExecutable=false`。`SPECTRA_SMOKE_EXECUTABLE`に確認版EXEを設定して`node scripts/electron-startup-smoke.mjs`で実packaged起動を検査する。WindowsのASAR比較ではextractFileにpath.normalize済みの内部pathを渡す。
+再検証は`npm.cmd run check`、`npm.cmd run build`、`npm.cmd run smoke:audio`、`SPECTRA_REAL_VIDEO_E2E=1`と`SPECTRA_AUDIO_E2E=1`を設定して`node scripts/accurate-preview-smoke.mjs`。packagingは`node node_modules/electron-builder/cli.js --win --dir --x64 --config.directories.output=release/local-preview --config.win.signAndEditExecutable=false`。`SPECTRA_SMOKE_EXECUTABLE`に確認版EXEを設定して`node scripts/electron-startup-smoke.mjs`で実packaged起動を検査する。WindowsのASAR比較ではextractFileにpath.normalize済みの内部pathを渡す。今回の再packaging後はelectron.exe名で残ったため、同じ確認用フォルダ内でSpectra Video Studio.exeへ改名し、その実pathを存在確認して起動検証した。startup harnessは指定EXE不在を失敗にし、指定時は引数なしでpackagedアプリを起動する。
 
 未確認範囲は実ユーザー素材の聴感、別PC・全GPU・長時間連続利用、強制終了／停電時の複数出力journal復旧、symlink/hardlink別名の排他。自動字幕は兄弟worker・Python環境・CUDA・large-v3 cache・FFmpeg・Ollamaモデルの存在を確認したが、今回は実ASR推論を行っていない。旧2026-09-17の隔離`.work/p0repo`は本体の修正完了証拠ではなく、今回は本体を更新した。
 
