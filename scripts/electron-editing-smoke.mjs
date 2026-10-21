@@ -15,6 +15,8 @@ export const runEditingSmoke = async ({ repositoryRoot, electronPath, workspace 
   const port = 9300 + Math.floor(Math.random() * 500)
   const env = { ...process.env }
   for (const key of Object.keys(env)) if (key.startsWith('SPECTRA_')) delete env[key]
+  // Smoke mode gives an isolated profile and enables the spectra:e2e-project hook (used for the linked-pair drag checks).
+  env.SPECTRA_ACCURATE_PREVIEW_SMOKE = '1'
   const output = []
   const child = spawn(electronPath, ['.', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`], { cwd: repositoryRoot, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
   child.stdout.on('data', (c) => output.push(String(c)))
@@ -287,6 +289,55 @@ export const runEditingSmoke = async ({ repositoryRoot, electronPath, workspace 
     const diskClips = onDisk?.tracks.flatMap((t) => t.clips) ?? []
     check('save: .spectra written, reloadable, media resolved (not offline)', saved.path && diskClips.length === saved.clips && !saved.offline && onDisk.media[0]?.relativePath, saved)
     check('save: every clip start is an integer microsecond', diskClips.every((c) => Number.isInteger(c.startUs) && Number.isInteger(c.durationUs)), diskClips.map((c) => c.startUs))
+
+    // 14. Linked pair (video on one track, audio on another), loaded through the smoke-mode project hook.
+    await evaluate(`(async () => {
+      const project = await window.spectra.loadRecovery()
+      const track1 = project.tracks.find((t) => t.kind === 'media')
+      const video = structuredClone(track1.clips.find((c) => c.kind === 'video'))
+      Object.assign(video, { id: 'pair-v', name: 'pair-video', startUs: 2000000, durationUs: 3000000, sourceInUs: 0, linkGroupId: 'pair-g' })
+      const audio = structuredClone(video)
+      delete audio.transform
+      Object.assign(audio, { id: 'pair-a', name: 'pair-audio', kind: 'audio' })
+      const track2 = structuredClone(track1)
+      Object.assign(track2, { id: 'pair-track-2', name: 'V2', clips: [audio] })
+      track1.clips = [video]
+      project.tracks = [track1, track2, ...project.tracks.filter((t) => t !== track1 && t.kind !== 'media')]
+      window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: { project, timeUs: 500000 } }))
+    })()`)
+    await sleep(500)
+    const pair = () => evaluate(`(() => {
+      const rect = (id) => { const el = [...document.querySelectorAll('.track-lane .timeline-clip')].find((e) => e.getAttribute('aria-label')?.includes(id)); const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, left: parseFloat(el.style.left), width: parseFloat(el.style.width) } }
+      return { v: rect('pair-video'), a: rect('pair-audio'), footer: document.querySelector('.timeline-footer code')?.textContent ?? '' }
+    })()`)
+    let p0 = await pair()
+    check('linked pair: loaded as two clips on separate tracks at the same position', p0.v.left === p0.a.left && p0.v.y !== p0.a.y && /^00:00:00:/.test(p0.footer), p0)
+    const midY = p0.v.y + p0.v.h / 2
+    // (b) A small nudge with the playhead outside the clip: no playhead jump, no snap back to the old start.
+    await drag(p0.v.x + 30, midY, p0.v.x + 34, midY)
+    let p1 = await pair()
+    check('grab: dragging a clip a few px does not move the playhead', p1.footer === p0.footer, { before: p0.footer, after: p1.footer })
+    check('grab: a small nudge does not snap back to the original start', Math.abs(p1.v.left - p0.v.left) > 1.5, { before: p0.v.left, after: p1.v.left })
+    await key('z', CTRL)
+    // (a) Linked partner follows the grabbed clip while the pointer is still down.
+    let live
+    await drag(p0.v.x + 30, midY, p0.v.x + 30 + 40, midY, 0, async () => { live = await pair() })
+    check('linked move: mid-drag the partner is drawn at the grabbed clip position', Math.abs(live.a.left - live.v.left) < 0.01 && Math.abs(live.v.left - (p0.v.left + 40)) < 6, { live, start: p0.v.left })
+    p1 = await pair()
+    check('linked move: after release the partner is where the preview showed', Math.abs(p1.a.left - live.a.left) < 0.01 && Math.abs(p1.v.left - live.v.left) < 0.01, { live, p1 })
+    await key('z', CTRL)
+    // Trim: the partner narrows with the grabbed clip.
+    const endX = p0.v.x + p0.v.w - 3
+    await drag(endX, midY, endX - 36, midY, 0, async () => { live = await pair() })
+    check('linked trim: mid-drag the partner width equals the grabbed clip width', Math.abs(live.a.width - live.v.width) < 0.01 && live.v.width < p0.v.width - 20, { live, start: p0.v.width })
+    p1 = await pair()
+    check('linked trim: after release the partner width equals the preview', Math.abs(p1.a.width - live.a.width) < 0.01 && Math.abs(p1.v.width - live.v.width) < 0.01, { live, p1 })
+    await key('z', CTRL)
+    // (c) A plain click on a clip still pulls the playhead to the clip start when it is outside the clip.
+    p0 = await pair()
+    await click(p0.v.x + 40, p0.v.y + p0.v.h / 2)
+    p1 = await pair()
+    check('click: a plain click on a clip moves an outside playhead to the clip start', /^00:00:02:00/.test(p1.footer), p1.footer)
     check('no unhandled renderer error during the session', !(await snapshot()).banner)
   } finally {
     try { socket?.close() } catch { /* ignore */ }

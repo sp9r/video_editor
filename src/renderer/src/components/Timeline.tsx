@@ -23,6 +23,7 @@ import { createTrack, findSubtitleContext, formatTimecode, makeId, snapUsToFrame
 import { isSubtitleOwnershipBoundaryAvailable, isSubtitleWordBoundarySplitAvailable, nearestSubtitleOwnershipBoundaryIndex, nearestSubtitleWordBoundaryIndex } from '../../../shared/editing/operations'
 import { subtitleEditUnits } from '../../../shared/editing/edit-units'
 import { snapSubtitleTimelinePosition } from '../../../shared/editing/subtitle-snap'
+import { computeClipDragPreview } from '../../../shared/editing/drag-preview'
 import { clipSnapTargets, clipSnapThresholdUs, snapClipEdge, snapClipMove } from '../../../shared/editing/clip-snap'
 import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type SubtitleClip, type SubtitleEditUnit, type SubtitleWord, type TimelineClip, type TimelineTrack, type TimeUs } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
@@ -287,6 +288,7 @@ interface PointerEdit {
   deltaX: number
   initialStartUs: number
   initialDurationUs: number
+  initialTrackId: string
   targetTrackId: string
   /** Pointer delta in time after snapping; the live preview and the commit both use this. */
   deltaUs: number
@@ -394,6 +396,19 @@ export default function Timeline(): React.JSX.Element {
   const labelsRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [pointerEdit, setPointerEdit] = useState<PointerEdit | null>(null)
+  // Live positions of every clip the drag will change on release (the real edit run on the current project).
+  const dragPreview = useMemo(() => {
+    if (!pointerEdit || !shouldCommitPointerEdit({ mode: pointerEdit.mode, initialX: 0, pointerUpX: pointerEdit.deltaX, initialTrackId: pointerEdit.initialTrackId, targetTrackId: pointerEdit.targetTrackId })) return null
+    return computeClipDragPreview(project, {
+      clipId: pointerEdit.clipId,
+      mode: pointerEdit.mode,
+      targetTrackId: pointerEdit.targetTrackId,
+      initialStartUs: pointerEdit.initialStartUs,
+      initialDurationUs: pointerEdit.initialDurationUs,
+      deltaUs: pointerEdit.deltaUs,
+      exact: pointerEdit.snapTimeUs !== null
+    })
+  }, [pointerEdit, project])
   const [subtitleBoundaryDrag, setSubtitleBoundaryDrag] = useState<SubtitleBoundaryDrag | null>(null)
   const [razorGhost, setRazorGhost] = useState<RazorGhost | null>(null)
   const [mergeHoverKey, setMergeHoverKey] = useState<string | null>(null)
@@ -682,8 +697,8 @@ export default function Timeline(): React.JSX.Element {
     selectClip(clip.id, event.ctrlKey || event.metaKey)
     // Selecting a clip shows it in the monitor, but must not pull the playhead
     // out of the clip: "place playhead, click clip, Ctrl+K" has to split there.
-    const currentPlayheadUs = useEditorStore.getState().playheadUs
-    if (mode === 'move' && !(currentPlayheadUs >= clip.startUs && currentPlayheadUs < clip.startUs + clip.durationUs)) setPlayhead(clip.startUs)
+    // The playhead is left alone on pointerdown (a drag must not move it or make
+    // the clip's own start a snap target); a plain click moves it on release.
     const targets = clipSnapTargets(useEditorStore.getState().project, { excludeClipIds: [clip.id], playheadUs: useEditorStore.getState().playheadUs })
     const thresholdUs = clipSnapThresholdUs(zoomPxPerSecond)
     // One function for preview and commit so that what is shown before release is what is applied.
@@ -705,6 +720,7 @@ export default function Timeline(): React.JSX.Element {
       deltaX: 0,
       initialStartUs: clip.startUs,
       initialDurationUs: clip.durationUs,
+      initialTrackId: trackId,
       targetTrackId: trackId,
       deltaUs: 0,
       snapTimeUs: null
@@ -729,6 +745,8 @@ export default function Timeline(): React.JSX.Element {
         targetTrackId: latestTrackId
       })) {
         setPointerEdit(null)
+        const playheadNow = useEditorStore.getState().playheadUs
+        if (mode === 'move' && !(playheadNow >= clip.startUs && playheadNow < clip.startUs + clip.durationUs)) setPlayhead(clip.startUs)
         return
       }
       const { deltaUs, snapTimeUs } = resolve(pointerEvent.clientX, pointerEvent.altKey)
@@ -907,10 +925,10 @@ export default function Timeline(): React.JSX.Element {
                   </div>
                 })}
                 {track.clips.map((clip) => {
-                  const edit = pointerEdit?.clipId === clip.id ? pointerEdit : null
-                  const deltaPx = edit ? edit.deltaUs / 1_000_000 * zoomPxPerSecond : 0
-                  const visualLeft = clip.startUs / 1_000_000 * zoomPxPerSecond + (edit?.mode === 'move' ? deltaPx : edit?.mode === 'trim-start' ? deltaPx : 0)
-                  const visualWidth = clip.durationUs / 1_000_000 * zoomPxPerSecond + (edit?.mode === 'trim-start' ? -deltaPx : edit?.mode === 'trim-end' ? deltaPx : 0)
+                  const preview = dragPreview?.get(clip.id)
+                  const edit = preview ? pointerEdit : null
+                  const visualLeft = (preview?.startUs ?? clip.startUs) / 1_000_000 * zoomPxPerSecond
+                  const visualWidth = (preview?.durationUs ?? clip.durationUs) / 1_000_000 * zoomPxPerSecond
                   const selected = selectedClipIds.includes(clip.id)
                   const candidateSource = candidateRelationIds.has(clip.id) && candidateFocusIds.includes(clip.id)
                   const candidateRelated = candidateRelationIds.has(clip.id) && !candidateSource
