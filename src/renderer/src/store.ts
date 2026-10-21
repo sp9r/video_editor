@@ -29,6 +29,7 @@ import type { UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { FullCorrectionSession } from '../../shared/full-correction'
 import { describeAutoCaptionBackend } from '../../shared/auto-caption-ui'
 import { createDemoProject } from './demo'
+import { shareUnchangedProjectParts } from './project-sharing'
 import { clampTimelineZoom, TIMELINE_ZOOM_DEFAULT } from './action-state'
 import { createPendingAsyncMutation, markPendingAsyncMutationCancelRequested, markPendingAsyncMutationConflicted, pendingAsyncMutationMatchesCurrent, type PendingAsyncMutation, type PendingAsyncMutationKind } from './pending-async-mutation'
 
@@ -275,6 +276,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const transactionBase = get().transactionBase
     const transactionChanged = Boolean(transactionBase && projectFingerprint(transactionBase) !== nextFingerprint)
     if (!options.asyncMutationOperationId && (!transactionBase || transactionChanged)) conflictPendingAsyncMutation()
+    // Unchanged clips keep their previous identity so memoised timeline clips are not re-rendered by the commit.
+    project = shareUnchangedProjectParts(current, project)
     set((state) => ({
       project,
       past: options.preserveHistory || state.transactionBase ? state.past : [...state.past, cloneProject(current)].slice(-HISTORY_LIMIT),
@@ -1073,7 +1076,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { past, project } = get()
     const previous = past.at(-1)
     if (!previous) return
-    set((state) => ({ project: cloneProject(previous), selectedClipIds: existingSelection(previous, state.selectedClipIds), past: state.past.slice(0, -1), future: [cloneProject(project), ...state.future], dirty: projectFingerprint(previous) !== state.savedFingerprint, transactionBase: null }))
+    set((state) => ({ project: shareUnchangedProjectParts(project, cloneProject(previous)), selectedClipIds: existingSelection(previous, state.selectedClipIds), past: state.past.slice(0, -1), future: [cloneProject(project), ...state.future], dirty: projectFingerprint(previous) !== state.savedFingerprint, transactionBase: null }))
   },
   redo: () => {
     conflictPendingAsyncMutation()
@@ -1081,7 +1084,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { future, project } = get()
     const next = future[0]
     if (!next) return
-    set((state) => ({ project: cloneProject(next), selectedClipIds: existingSelection(next, state.selectedClipIds), past: [...state.past, cloneProject(project)].slice(-HISTORY_LIMIT), future: state.future.slice(1), dirty: projectFingerprint(next) !== state.savedFingerprint, transactionBase: null }))
+    set((state) => ({ project: shareUnchangedProjectParts(project, cloneProject(next)), selectedClipIds: existingSelection(next, state.selectedClipIds), past: [...state.past, cloneProject(project)].slice(-HISTORY_LIMIT), future: state.future.slice(1), dirty: projectFingerprint(next) !== state.savedFingerprint, transactionBase: null }))
   },
   showNotice: (message, tone = 'info') => set({ notice: { id: Date.now(), message, tone } }),
   clearNotice: () => set({ notice: null })

@@ -1,11 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import {
   Captions,
   ChevronDown,
   ChevronUp,
   Eye,
   EyeOff,
-  Link2,
   Lock,
   LockOpen,
   Magnet,
@@ -25,32 +25,18 @@ import { subtitleEditUnits } from '../../../shared/editing/edit-units'
 import { snapSubtitleTimelinePosition } from '../../../shared/editing/subtitle-snap'
 import { computeClipDragPreview } from '../../../shared/editing/drag-preview'
 import { clipSnapTargets, clipSnapThresholdUs, snapClipEdge, snapClipMove } from '../../../shared/editing/clip-snap'
-import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type SubtitleClip, type SubtitleEditUnit, type SubtitleWord, type TimelineClip, type TimelineTrack, type TimeUs } from '../../../shared/types'
+import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type ProjectFile, type SubtitleClip, type SubtitleEditUnit, type TimelineClip, type TimelineTrack, type TimeUs } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
 import { TIMELINE_ZOOM_MAX, TIMELINE_ZOOM_MIN, clampTimelineZoom, shortcutTargetKind, timelineZoomControlState, timelineZoomScrollLeft, trackControlState } from '../action-state'
 import { useReviewStore } from '../review-store'
 import { previewDiagnosticStore } from '../preview-performance-diagnostics'
 import { Button, IconButton } from './Controls'
-import { peakCountForPixelWidth, Waveform } from './Waveform'
+import { CUE_KEY_SEPARATOR, EMPTY_CLIP_RAIL, TimelineClipItem, subtitleWordGeometries, subtitleWordGeometry, timelineClipClassName, type ClipRailData, type SubtitleWordGeometry, type TimelineClipHandlers } from './TimelineClipItem'
+
+export { subtitleWordGeometries, subtitleWordGeometry, timelineClipClassName }
+export type { SubtitleWordGeometry }
 
 const seconds = (timeUs: number): number => timeUs / 1_000_000
-
-export interface SubtitleWordGeometry {
-  leftPercent: number
-  widthPercent: number
-}
-
-/** Maps a word's absolute timeline timing to its containing subtitle clip. */
-export const subtitleWordGeometry = (
-  clip: Pick<SubtitleClip, 'startUs' | 'durationUs'>,
-  word: Pick<SubtitleWord, 'startUs' | 'endUs'>
-): SubtitleWordGeometry => ({
-  leftPercent: ((word.startUs - clip.startUs) / clip.durationUs) * 100,
-  widthPercent: ((word.endUs - word.startUs) / clip.durationUs) * 100
-})
-
-export const subtitleWordGeometries = (clip: SubtitleClip): Array<SubtitleWordGeometry & { word: SubtitleEditUnit }> =>
-  (subtitleEditUnits(clip) ?? []).map((word) => ({ word, ...subtitleWordGeometry(clip, word) }))
 
 export interface SubtitleBoundaryPair {
   left: SubtitleClip
@@ -254,21 +240,6 @@ const trackLabel = (track: TimelineTrack, tracks: TimelineTrack[]): string => {
   return `${trackGlyph(track.kind)}${index}`
 }
 
-const clipGlyph = (clip: TimelineClip): React.JSX.Element => {
-  if (clip.kind === 'subtitle') return <Captions className="clip-type-icon" size={13} aria-hidden="true" />
-  if (clip.kind === 'audio') return <Volume2 className="clip-type-icon" size={13} aria-hidden="true" />
-  return <span className="clip-type-icon film-glyph" aria-hidden="true">▰</span>
-}
-
-/** Keeps clip kind/link/selection styling explicit without changing the clip interaction surface. */
-export const timelineClipClassName = (clip: Pick<TimelineClip, 'kind' | 'linkGroupId' | 'enabled'>, selected: boolean): string => [
-  'timeline-clip',
-  `clip-${clip.kind}`,
-  selected ? 'is-selected' : '',
-  clip.linkGroupId ? 'is-linked' : '',
-  !clip.enabled ? 'is-disabled' : ''
-].filter(Boolean).join(' ')
-
 export const ticksFor = (durationUs: number, zoom: number): number[] => {
   const durationSeconds = Math.max(0, Math.ceil(seconds(durationUs)))
   const preferredInterval = zoom >= 110 ? 1 : zoom >= 55 ? 2 : 5
@@ -355,15 +326,71 @@ function TrackControls({ track, tracks }: { track: TimelineTrack; tracks: Timeli
   )
 }
 
+/** Snap guide line; memoised so it only re-renders when the snap position or zoom changes. */
+const SnapIndicator = memo(function SnapIndicator({ snapTimeUs, zoomPxPerSecond }: { snapTimeUs: TimeUs | null; zoomPxPerSecond: number }): React.JSX.Element | null {
+  if (snapTimeUs === null) return null
+  return <i className="snap-indicator" data-snap-us={snapTimeUs} style={{ left: snapTimeUs / 1_000_000 * zoomPxPerSecond }} />
+})
+
+/** Playhead line and grab area; subscribes to the playhead itself so playback does not re-render the clip list. */
+const TimelinePlayhead = memo(function TimelinePlayhead({ project, zoomPxPerSecond, onPointerDown }: { project: ProjectFile; zoomPxPerSecond: number; onPointerDown: (event: React.PointerEvent) => void }): React.JSX.Element {
+  const playheadUs = useEditorStore((state) => state.playheadUs)
+  return <div className="playhead-hit-area" style={{ left: playheadUs / 1_000_000 * zoomPxPerSecond }} onPointerDown={onPointerDown} aria-label={`再生位置 ${formatTimecode(playheadUs, project)}`}><i className="playhead" /></div>
+})
+
+/** Keeps the playhead in view while playing; renders nothing. */
+const PlayheadFollower = memo(function PlayheadFollower({ viewportRef, timelineWidth, zoomPxPerSecond }: { viewportRef: React.RefObject<HTMLDivElement | null>; timelineWidth: number; zoomPxPerSecond: number }): null {
+  const playing = useEditorStore((state) => state.playing)
+  const playheadUs = useEditorStore((state) => state.playheadUs)
+  useLayoutEffect(() => {
+    if (!playing) return
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const nextScrollLeft = timelineFollowScrollLeft({
+      scrollLeft: viewport.scrollLeft,
+      clientWidth: viewport.clientWidth,
+      scrollWidth: viewport.scrollWidth,
+      playheadPx: (playheadUs / 1_000_000) * zoomPxPerSecond
+    })
+    if (nextScrollLeft !== null) viewport.scrollLeft = nextScrollLeft
+  }, [playing, playheadUs, timelineWidth, zoomPxPerSecond, viewportRef])
+  return null
+})
+
+const PlayheadTimecode = memo(function PlayheadTimecode({ project, durationUs }: { project: ProjectFile; durationUs: TimeUs }): React.JSX.Element {
+  const playheadUs = useEditorStore((state) => state.playheadUs)
+  return <code>{formatTimecode(playheadUs, project)} / {formatTimecode(durationUs, project)}</code>
+})
+
+const sameElements = <T,>(a: readonly T[], b: readonly T[]): boolean => a.length === b.length && a.every((element, index) => element === b[index])
+
+/** Returns the previous array while the new one holds exactly the same elements. */
+const useStableArray = <T,>(next: T[]): T[] => {
+  const ref = useRef(next)
+  if (ref.current !== next && !sameElements(ref.current, next)) ref.current = next
+  return ref.current
+}
+
+/** Same for the clip-id to boundary-pair map (pairs are rebuilt on every call, so compare their clips). */
+const useStablePairMap = (next: Map<string, SubtitleBoundaryPair>): Map<string, SubtitleBoundaryPair> => {
+  const ref = useRef(next)
+  const previous = ref.current
+  if (previous !== next) {
+    const same = previous.size === next.size && [...next].every(([id, pair]) => {
+      const old = previous.get(id)
+      return old !== undefined && old.left === pair.left && old.right === pair.right
+    })
+    if (!same) ref.current = next
+  }
+  return ref.current
+}
+
 export default function Timeline(): React.JSX.Element {
-  const state = useEditorStore()
   previewDiagnosticStore.recordComponentRender('timeline')
-  const review = useReviewStore()
+  // Narrow selection: the playhead and playback state are read by small child components, so they do not re-render the clip list.
   const {
     project,
     selectedClipIds,
-    playheadUs,
-    playing,
     zoomPxPerSecond,
     tool,
     snapping,
@@ -391,7 +418,37 @@ export default function Timeline(): React.JSX.Element {
     copySelected,
     pasteClipboard,
     duplicateSelected
-  } = state
+  } = useEditorStore(useShallow((state) => ({
+    project: state.project,
+    selectedClipIds: state.selectedClipIds,
+    zoomPxPerSecond: state.zoomPxPerSecond,
+    tool: state.tool,
+    snapping: state.snapping,
+    rippleMode: state.rippleMode,
+    setPlayhead: state.setPlayhead,
+    selectClip: state.selectClip,
+    setTool: state.setTool,
+    setSnapping: state.setSnapping,
+    setRippleMode: state.setRippleMode,
+    setZoom: state.setZoom,
+    addAssetClip: state.addAssetClip,
+    addSubtitle: state.addSubtitle,
+    addMediaTrack: state.addMediaTrack,
+    addSubtitleTrack: state.addSubtitleTrack,
+    splitSelected: state.splitSelected,
+    splitSelectedAt: state.splitSelectedAt,
+    moveSubtitleBoundary: state.moveSubtitleBoundary,
+    mergeSubtitleWithPrevious: state.mergeSubtitleWithPrevious,
+    mergeSubtitleWithNext: state.mergeSubtitleWithNext,
+    deleteSelected: state.deleteSelected,
+    moveSelected: state.moveSelected,
+    trim: state.trim,
+    showNotice: state.showNotice,
+    applyProject: state.applyProject,
+    copySelected: state.copySelected,
+    pasteClipboard: state.pasteClipboard,
+    duplicateSelected: state.duplicateSelected
+  })))
   const viewportRef = useRef<HTMLDivElement>(null)
   const labelsRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
@@ -420,10 +477,12 @@ export default function Timeline(): React.JSX.Element {
   const durationUs = editorDurationUs(project)
   const timelineWidth = Math.max(900, seconds(durationUs) * zoomPxPerSecond)
   const ticks = useMemo(() => ticksFor(durationUs, zoomPxPerSecond), [durationUs, zoomPxPerSecond])
-  const subtitleClips = useMemo(() => project.tracks
+  // Derived collections keep their identity when an edit left their contents untouched (e.g. moving a video clip),
+  // so the per-clip caption-rail cache and the candidate relations are not recomputed for nothing.
+  const subtitleClips = useStableArray(useMemo(() => project.tracks
     .filter((track) => track.kind === 'subtitle' && !track.hidden && !track.muted)
-    .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && clip.enabled)), [project])
-  const subtitleBoundaryPairsByClipId = useMemo(() => {
+    .flatMap((track) => track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle' && clip.enabled)), [project.tracks]))
+  const subtitleBoundaryPairsByClipId = useStablePairMap(useMemo(() => {
     const pairs = new Map<string, SubtitleBoundaryPair>()
     for (const track of project.tracks.filter((candidate) => candidate.kind === 'subtitle' && !candidate.hidden && !candidate.muted)) {
       for (const pair of subtitleBoundaryPairs(track)) {
@@ -432,27 +491,51 @@ export default function Timeline(): React.JSX.Element {
       }
     }
     return pairs
-  }, [project.tracks])
+  }, [project.tracks]))
   const visibleTracks = useMemo(() => showSubtitleDetails ? project.tracks : project.tracks.filter((track) => track.kind !== 'subtitle'), [project.tracks, showSubtitleDetails])
   const captionRailTrackIds = useMemo(() => new Set(project.tracks
     .filter((track) => isMediaTrack(track))
     .filter((track) => track.clips.some((clip) => clip.kind === 'video' && inlineSubtitleBlocksForVideoClip(clip, subtitleClips).length > 0))
     .map((track) => track.id)), [project.tracks, subtitleClips])
   const timelineGridRows = `26px ${visibleTracks.map((track) => captionRailTrackIds.has(track.id) ? '68px' : '56px').join(' ')}`
-  const candidateRelationClips = useMemo(() => project.tracks
+  const candidateRelationClips = useStableArray(useMemo(() => project.tracks
     .filter((track) => !track.hidden)
-    .flatMap((track) => track.clips.filter((clip) => (clip.kind === 'video' || clip.kind === 'subtitle') && clip.enabled)), [project])
-  const candidateFocusIds = hoveredClipId ? [hoveredClipId] : selectedClipIds
-  const candidateRelationIds = useMemo(() => {
+    .flatMap((track) => track.clips.filter((clip) => (clip.kind === 'video' || clip.kind === 'subtitle') && clip.enabled)), [project.tracks]))
+  // Keyed on the hovered id / selection array themselves so the sets keep their identity across drag frames.
+  const { candidateFocusIds, candidateRelationIds } = useMemo(() => {
+    const focusIds = new Set(hoveredClipId ? [hoveredClipId] : selectedClipIds)
     const related = new Set<string>()
-    for (const focusId of candidateFocusIds) {
+    for (const focusId of focusIds) {
       const focus = candidateRelationClips.find((clip) => clip.id === focusId)
       if (!focus) continue
       related.add(focus.id)
       for (const id of timelineCandidateRelationIds(focus, candidateRelationClips)) related.add(id)
     }
-    return related
-  }, [candidateFocusIds, candidateRelationClips])
+    return { candidateFocusIds: focusIds, candidateRelationIds: related }
+  }, [hoveredClipId, selectedClipIds, candidateRelationClips])
+  const selectedClipIdSet = useMemo(() => new Set(selectedClipIds), [selectedClipIds])
+  const mediaById = useMemo(() => new Map(project.media.map((asset) => [asset.id, asset])), [project.media])
+  // Caption-rail data per clip, cached by clip identity so unchanged clips keep the same prop reference between frames.
+  const railCache = useRef(new WeakMap<TimelineClip, { subtitleClips: SubtitleClip[]; pairs: Map<string, SubtitleBoundaryPair>; showDetails: boolean; visible: boolean; value: ClipRailData }>())
+  const railFor = (clip: TimelineClip, visible: boolean): ClipRailData => {
+    if (clip.kind !== 'video' || !visible) return EMPTY_CLIP_RAIL
+    const cached = railCache.current.get(clip)
+    if (cached && cached.subtitleClips === subtitleClips && cached.pairs === subtitleBoundaryPairsByClipId && cached.showDetails === showSubtitleDetails && cached.visible === visible) return cached.value
+    const cues = showSubtitleDetails ? [] : inlineSubtitleBlocksForVideoClip(clip, subtitleClips).map((block) => {
+      const subtitle = subtitleClips.find((candidate) => candidate.id === block.subtitleId)
+      const boundaryPair = subtitleBoundaryPairsByClipId.get(block.subtitleId)
+      return {
+        block,
+        units: subtitle ? captionRailUnitGeometries(block, subtitle) : [],
+        boundaryPair,
+        boundarySide: boundaryPair?.left.id === block.subtitleId ? 'end' as const : boundaryPair?.right.id === block.subtitleId ? 'start' as const : null
+      }
+    })
+    const guides = subtitleBoundaryGuidesForVideoClip(clip, subtitleClips)
+    const value: ClipRailData = guides.length === 0 && cues.length === 0 ? EMPTY_CLIP_RAIL : { guides, cues }
+    railCache.current.set(clip, { subtitleClips, pairs: subtitleBoundaryPairsByClipId, showDetails: showSubtitleDetails, visible, value })
+    return value
+  }
   const contextClip = contextMenu ? project.tracks.flatMap((track) => track.clips).find((clip) => clip.id === contextMenu.clipId) : undefined
   const contextTrack = contextClip ? project.tracks.find((track) => track.clips.some((clip) => clip.id === contextClip.id)) : undefined
   const contextSplitMenu = timelineSplitMenuState(contextClip, contextTrack?.locked ?? false)
@@ -481,7 +564,7 @@ export default function Timeline(): React.JSX.Element {
         nextContentWidth,
         oldZoom: zoomPxPerSecond,
         newZoom: nextZoom,
-        anchorTimeUs: playheadUs
+        anchorTimeUs: useEditorStore.getState().playheadUs
       })
       if (nextScrollLeft === null || Math.abs(currentViewport.scrollLeft - nextScrollLeft) <= 0.5) return
       currentViewport.scrollLeft = nextScrollLeft
@@ -544,34 +627,24 @@ export default function Timeline(): React.JSX.Element {
 
   useEffect(() => setContextMenu(null), [project.id])
 
-  useLayoutEffect(() => {
-    if (!playing) return
-    const viewport = viewportRef.current
-    if (!viewport) return
-    const nextScrollLeft = timelineFollowScrollLeft({
-      scrollLeft: viewport.scrollLeft,
-      clientWidth: viewport.clientWidth,
-      scrollWidth: viewport.scrollWidth,
-      playheadPx: (playheadUs / 1_000_000) * zoomPxPerSecond
-    })
-    if (nextScrollLeft !== null) viewport.scrollLeft = nextScrollLeft
-  }, [playing, playheadUs, timelineWidth, zoomPxPerSecond])
-
   const timeFromPointer = (clientX: number, lane: HTMLElement): number => {
     const bounds = lane.getBoundingClientRect()
     const scrollOffset = lane.classList.contains('timeline-viewport') ? lane.scrollLeft : 0
     return timelineScrubTimeUs({ clientX, laneLeft: bounds.left, scrollLeft: scrollOffset, zoomPxPerSecond })
   }
 
-  const snapTime = (atUs: TimeUs, bypass = false): TimeUs => snapSubtitleTimelinePosition({
-    project: useEditorStore.getState().project,
-    atUs,
-    selectedClipIds: useEditorStore.getState().selectedClipIds,
-    reviewEnabled: review.enabled,
-    reviewTargetId: review.enabled ? review.targetIds[review.targetIndex] : undefined,
-    snapping,
-    bypass
-  })
+  const snapTime = (atUs: TimeUs, bypass = false): TimeUs => {
+    const review = useReviewStore.getState()
+    return snapSubtitleTimelinePosition({
+      project: useEditorStore.getState().project,
+      atUs,
+      selectedClipIds: useEditorStore.getState().selectedClipIds,
+      reviewEnabled: review.enabled,
+      reviewTargetId: review.enabled ? review.targetIds[review.targetIndex] : undefined,
+      snapping,
+      bypass
+    })
+  }
 
   /** Pointer position as a timeline time: whole frames (Alt = free), or an exact caption snap target. */
   const pointerTimeUs = (clientX: number, lane: HTMLElement, bypass: boolean): TimeUs => {
@@ -606,12 +679,23 @@ export default function Timeline(): React.JSX.Element {
       }
       animationFrame = window.requestAnimationFrame(edgeScroll)
     }
+    // Pointer moves are coalesced to one playhead update per frame (the newest position wins).
+    let moveFrame: number | null = null
+    const flushMove = (): void => {
+      moveFrame = null
+      update(latestClientX)
+    }
     const move = (pointerEvent: PointerEvent): void => {
       latestClientX = pointerEvent.clientX
-      update(latestClientX)
+      if (typeof window.requestAnimationFrame !== 'function') return update(latestClientX)
+      if (moveFrame === null) moveFrame = window.requestAnimationFrame(flushMove)
     }
     const finish = (pointerEvent: PointerEvent): void => {
       active = false
+      if (moveFrame !== null) {
+        window.cancelAnimationFrame(moveFrame)
+        flushMove()
+      }
       if (animationFrame !== null) window.cancelAnimationFrame(animationFrame)
       animationFrame = null
       target.removeEventListener('pointermove', move)
@@ -648,8 +732,20 @@ export default function Timeline(): React.JSX.Element {
     try { target.setPointerCapture(event.pointerId) } catch { /* synthetic smoke events may not have an active pointer */ }
     const start: SubtitleBoundaryDrag = { leftClipId: pair.left.id, rightClipId: pair.right.id, initialX: event.clientX, currentX: event.clientX }
     setSubtitleBoundaryDrag(start)
-    const move = (pointerEvent: PointerEvent): void => setSubtitleBoundaryDrag((current) => current ? { ...current, currentX: pointerEvent.clientX } : null)
+    let latestX = event.clientX
+    let moveFrame: number | null = null
+    const flushMove = (): void => {
+      moveFrame = null
+      setSubtitleBoundaryDrag((current) => current ? { ...current, currentX: latestX } : null)
+    }
+    const move = (pointerEvent: PointerEvent): void => {
+      latestX = pointerEvent.clientX
+      if (typeof window.requestAnimationFrame !== 'function') return flushMove()
+      if (moveFrame === null) moveFrame = window.requestAnimationFrame(flushMove)
+    }
     const finish = (pointerEvent: PointerEvent): void => {
+      if (moveFrame !== null) window.cancelAnimationFrame(moveFrame)
+      moveFrame = null
       target.removeEventListener('pointermove', move)
       target.removeEventListener('pointerup', finish)
       target.removeEventListener('pointercancel', finish)
@@ -726,12 +822,32 @@ export default function Timeline(): React.JSX.Element {
       snapTimeUs: null
     }
     setPointerEdit(start)
-    const move = (pointerEvent: PointerEvent): void => {
+    const applyMove = (pointerEvent: PointerEvent): void => {
       const lane = document.elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)?.closest('.track-lane') as HTMLElement | null
       const resolved = resolve(pointerEvent.clientX, pointerEvent.altKey)
       setPointerEdit((current) => current ? { ...current, deltaX: pointerEvent.clientX - current.initialX, ...resolved, targetTrackId: lane?.dataset.trackId ?? current.targetTrackId } : null)
     }
+    // Only the newest pointer event of a frame is applied; pointerup always commits from its own position.
+    let pendingMove: PointerEvent | null = null
+    let moveFrame: number | null = null
+    const dropPendingMove = (): void => {
+      if (moveFrame !== null) window.cancelAnimationFrame(moveFrame)
+      moveFrame = null
+      pendingMove = null
+    }
+    const flushMove = (): void => {
+      moveFrame = null
+      const latest = pendingMove
+      pendingMove = null
+      if (latest) applyMove(latest)
+    }
+    const move = (pointerEvent: PointerEvent): void => {
+      if (typeof window.requestAnimationFrame !== 'function') return applyMove(pointerEvent)
+      pendingMove = pointerEvent
+      if (moveFrame === null) moveFrame = window.requestAnimationFrame(flushMove)
+    }
     const up = (pointerEvent: PointerEvent): void => {
+      dropPendingMove()
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', cancel)
@@ -757,6 +873,7 @@ export default function Timeline(): React.JSX.Element {
       setPointerEdit(null)
     }
     const cancel = (): void => {
+      dropPendingMove()
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', cancel)
@@ -768,6 +885,41 @@ export default function Timeline(): React.JSX.Element {
     window.addEventListener('pointercancel', cancel)
     window.addEventListener('blur', cancel)
   }
+
+  const razorMove = (event: React.PointerEvent, clip: TimelineClip): void => {
+    if (tool !== 'razor' || clip.kind !== 'subtitle') return
+    const units = subtitleEditUnits(clip)
+    const lane = event.currentTarget.closest('.track-lane') as HTMLElement | null
+    const index = lane && units ? nearestSubtitleWordBoundaryIndex(clip, timeFromPointer(event.clientX, lane)) : null
+    const timeUs = index === null || !units?.[index + 1] ? null : units[index + 1]!.startUs
+    setRazorGhost(timeUs === null || index === null ? null : { clipId: clip.id, timeUs, boundaryIndex: index })
+  }
+
+  // The memoised clips receive one handlers object whose methods always call the newest closures.
+  const latestHandlers = useRef<TimelineClipHandlers & { beginPlayheadDrag: (event: React.PointerEvent) => void }>(null as never)
+  latestHandlers.current = {
+    beginEdit: beginPointerEdit,
+    razorMove,
+    enter: (clip) => { if (clip.kind === 'video' || clip.kind === 'subtitle') setHoveredClipId(clip.id) },
+    leave: (clip) => {
+      setHoveredClipId((current) => current === clip.id ? null : current)
+      setRazorGhost((current) => current?.clipId === clip.id ? null : current)
+    },
+    contextMenu: showContextMenu,
+    selectClip: (clipId) => selectClip(clipId),
+    beginBoundaryDrag: beginSubtitleBoundaryDrag,
+    beginPlayheadDrag
+  }
+  const clipHandlers = useMemo<TimelineClipHandlers>(() => ({
+    beginEdit: (event, clip, mode, trackId) => latestHandlers.current.beginEdit(event, clip, mode, trackId),
+    razorMove: (event, clip) => latestHandlers.current.razorMove(event, clip),
+    enter: (clip) => latestHandlers.current.enter(clip),
+    leave: (clip) => latestHandlers.current.leave(clip),
+    contextMenu: (event, clip) => latestHandlers.current.contextMenu(event, clip),
+    selectClip: (clipId) => latestHandlers.current.selectClip(clipId),
+    beginBoundaryDrag: (event, pair) => latestHandlers.current.beginBoundaryDrag(event, pair)
+  }), [])
+  const onPlayheadPointerDown = useCallback((event: React.PointerEvent) => latestHandlers.current.beginPlayheadDrag(event), [])
 
   const importSubtitles = async (): Promise<void> => {
     if (!window.spectra) {
@@ -925,122 +1077,39 @@ export default function Timeline(): React.JSX.Element {
                   </div>
                 })}
                 {track.clips.map((clip) => {
-                  const preview = dragPreview?.get(clip.id)
-                  const edit = preview ? pointerEdit : null
-                  const visualLeft = (preview?.startUs ?? clip.startUs) / 1_000_000 * zoomPxPerSecond
-                  const visualWidth = (preview?.durationUs ?? clip.durationUs) / 1_000_000 * zoomPxPerSecond
-                  const selected = selectedClipIds.includes(clip.id)
-                  const candidateSource = candidateRelationIds.has(clip.id) && candidateFocusIds.includes(clip.id)
-                  const candidateRelated = candidateRelationIds.has(clip.id) && !candidateSource
-                  const clipKindLabel = clip.kind === 'subtitle' ? '字幕' : clip.kind === 'audio' ? '音声' : '映像'
+                  const dragRect = dragPreview?.get(clip.id)
+                  const visualLeft = (dragRect?.startUs ?? clip.startUs) / 1_000_000 * zoomPxPerSecond
+                  const visualWidth = (dragRect?.durationUs ?? clip.durationUs) / 1_000_000 * zoomPxPerSecond
                   const viewportWidth = viewportWindow.clientWidth > 0 ? viewportWindow.clientWidth : 900
                   const clipVisible = visualLeft + visualWidth >= viewportWindow.scrollLeft - 128 && visualLeft <= viewportWindow.scrollLeft + viewportWidth + 128
-                  const subtitleGuides = clip.kind === 'video' && !edit && clipVisible
-                    ? subtitleBoundaryGuidesForVideoClip(clip, subtitleClips)
-                    : []
-                  const inlineSubtitleBlocks = !showSubtitleDetails && clip.kind === 'video' && !edit && clipVisible
-                    ? inlineSubtitleBlocksForVideoClip(clip, subtitleClips)
-                    : []
-                  const hasCaptionRail = inlineSubtitleBlocks.length > 0
+                  // A clip that is being dragged shows no guides or caption rail, as before.
+                  const rail = dragRect ? EMPTY_CLIP_RAIL : railFor(clip, clipVisible)
+                  const candidateSource = candidateRelationIds.has(clip.id) && candidateFocusIds.has(clip.id)
                   return (
-                    <div
+                    <TimelineClipItem
                       key={clip.id}
-                      className={`${timelineClipClassName(clip, selected)}${edit ? ' is-dragging' : ''}${hasCaptionRail ? ' has-caption-rail' : ''}${candidateSource ? ' is-candidate-source' : ''}${candidateRelated ? ' is-candidate-related' : ''}`}
-                      style={{ left: Math.max(0, visualLeft), width: Math.max(8, visualWidth) }}
-                      onPointerDown={(event) => beginPointerEdit(event, clip, 'move', track.id)}
-                      onPointerMove={(event) => {
-                        if (tool !== 'razor' || clip.kind !== 'subtitle') return
-                        const units = subtitleEditUnits(clip)
-                        const lane = event.currentTarget.closest('.track-lane') as HTMLElement | null
-                        const index = lane && units ? nearestSubtitleWordBoundaryIndex(clip, timeFromPointer(event.clientX, lane)) : null
-                        const timeUs = index === null || !units?.[index + 1] ? null : units[index + 1]!.startUs
-                        setRazorGhost(timeUs === null || index === null ? null : { clipId: clip.id, timeUs, boundaryIndex: index })
-                      }}
-                      onPointerEnter={() => {
-                        if (clip.kind === 'video' || clip.kind === 'subtitle') setHoveredClipId(clip.id)
-                      }}
-                      onPointerLeave={() => {
-                        setHoveredClipId((current) => current === clip.id ? null : current)
-                        setRazorGhost((current) => current?.clipId === clip.id ? null : current)
-                      }}
-                      onContextMenu={(event) => showContextMenu(event, clip)}
-                      title={`${clip.name}\n${seconds(clip.durationUs).toFixed(2)} 秒\n右クリックで編集操作`}
-                      aria-label={`${clipKindLabel}: ${clip.kind === 'subtitle' ? clip.text : clip.name}${clip.linkGroupId ? '（リンク済み）' : ''}`}
-                    >
-                      <button type="button" className="trim-handle trim-start" aria-label="開始位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-start', track.id)} />
-                      {clip.kind === 'subtitle' && clip.words?.length ? (
-                        <div className="subtitle-word-layer" aria-hidden="true">
-                          {subtitleWordGeometries(clip).map(({ word, leftPercent, widthPercent }) => (
-                            <span
-                              key={word.id}
-                              className="subtitle-word-unit"
-                              data-word-id={word.id}
-                              style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
-                              title={`${word.text}\n${seconds(word.startUs).toFixed(3)}–${seconds(word.endUs).toFixed(3)} 秒`}
-                            >
-                              {word.text}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {subtitleGuides.map((guide) => <span
-                        key={`${guide.subtitleId}:${guide.side}`}
-                        className={`subtitle-boundary-guide is-${guide.side}`}
-                        style={{ left: `${guide.leftPercent}%` }}
-                        data-subtitle-id={guide.subtitleId}
-                        data-boundary-side={guide.side}
-                        aria-hidden="true"
-                      />)}
-                      {hasCaptionRail ? <div className="timeline-caption-rail" aria-label="キャプションレール">
-                        {inlineSubtitleBlocks.map((block) => {
-                          const subtitle = subtitleClips.find((candidate) => candidate.id === block.subtitleId)
-                          const units = subtitle ? captionRailUnitGeometries(block, subtitle) : []
-                          const boundaryPair = subtitleBoundaryPairsByClipId.get(block.subtitleId)
-                          const boundarySide = boundaryPair?.left.id === block.subtitleId ? 'end' : boundaryPair?.right.id === block.subtitleId ? 'start' : null
-                          return <div
-                            key={`caption-rail:${block.subtitleId}`}
-                            className={`caption-rail-cue${selectedClipIds.includes(block.subtitleId) ? ' is-selected' : ''}`}
-                            style={{ left: `${block.leftPercent}%`, width: `${block.widthPercent}%` }}
-                          >
-                            <button
-                              type="button"
-                              className="caption-rail-cue-button"
-                              title={block.text}
-                              aria-label={`字幕: ${block.text}`}
-                              onPointerDown={(event) => { event.preventDefault(); event.stopPropagation() }}
-                              onClick={(event) => { event.preventDefault(); event.stopPropagation(); selectClip(block.subtitleId) }}
-                            >{block.text}</button>
-                            <span className="caption-rail-unit-layer" aria-hidden="true">
-                              {units.map(({ unit, leftPercent, widthPercent }) => <i key={unit.id} style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }} title={unit.text} />)}
-                            </span>
-                            {boundaryPair && boundarySide ? <button
-                              type="button"
-                              className={`caption-rail-boundary-handle is-${boundarySide}`}
-                              aria-label="字幕の編集境界を移動"
-                              title="字幕の編集境界をドラッグ"
-                              onPointerDown={(event) => beginSubtitleBoundaryDrag(event, boundaryPair)}
-                            /> : null}
-                          </div>
-                        })}
-                      </div> : null}
-                      <span className="clip-content">{clipGlyph(clip)}{clip.linkGroupId ? <Link2 className="clip-link-icon" size={12} aria-label="リンクされたクリップ" /> : null}<strong>{clip.kind === 'subtitle' ? clip.text : clip.name}</strong></span>
-                      {razorGhost?.clipId === clip.id ? <span
-                        className="subtitle-razor-ghost"
-                        style={{ left: `${((razorGhost.timeUs - clip.startUs) / clip.durationUs) * 100}%` }}
-                        aria-label="字幕の分割候補"
-                        title="ここで字幕を分割"
-                      /> : null}
-                      {clip.kind === 'audio' || clip.kind === 'video' ? <Waveform asset={project.media.find((asset) => asset.id === clip.assetId)} clip={clip} peakCount={peakCountForPixelWidth(visualWidth)} /> : null}
-                      <button type="button" className="trim-handle trim-end" aria-label="終了位置をトリム" onPointerDown={(event) => beginPointerEdit(event, clip, 'trim-end', track.id)} />
-                    </div>
+                      clip={clip}
+                      trackId={track.id}
+                      selected={selectedClipIdSet.has(clip.id)}
+                      zoomPxPerSecond={zoomPxPerSecond}
+                      dragRect={dragRect}
+                      candidateSource={candidateSource}
+                      candidateRelated={candidateRelationIds.has(clip.id) && !candidateSource}
+                      rail={rail}
+                      selectedCueKey={rail.cues.length ? rail.cues.filter((cue) => selectedClipIdSet.has(cue.block.subtitleId)).map((cue) => cue.block.subtitleId).join(CUE_KEY_SEPARATOR) : ''}
+                      razorGhostTimeUs={razorGhost?.clipId === clip.id ? razorGhost.timeUs : null}
+                      asset={clip.kind === 'audio' || clip.kind === 'video' ? mediaById.get(clip.assetId) : undefined}
+                      handlers={clipHandlers}
+                    />
                   )
                 })}
               </div>
             ))}
-            {pointerEdit?.snapTimeUs != null ? <i className="snap-indicator" data-snap-us={pointerEdit.snapTimeUs} style={{ left: pointerEdit.snapTimeUs / 1_000_000 * zoomPxPerSecond }} /> : null}
-            <div className="playhead-hit-area" style={{ left: playheadUs / 1_000_000 * zoomPxPerSecond }} onPointerDown={beginPlayheadDrag} aria-label={`再生位置 ${formatTimecode(playheadUs, project)}`}><i className="playhead" /></div>
+            <SnapIndicator snapTimeUs={pointerEdit?.snapTimeUs ?? null} zoomPxPerSecond={zoomPxPerSecond} />
+            <TimelinePlayhead project={project} zoomPxPerSecond={zoomPxPerSecond} onPointerDown={onPlayheadPointerDown} />
           </div>
         </div>
+        <PlayheadFollower viewportRef={viewportRef} timelineWidth={timelineWidth} zoomPxPerSecond={zoomPxPerSecond} />
       </div>
       {contextMenu && (
         <div ref={contextMenuRef} className="timeline-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
@@ -1068,7 +1137,7 @@ export default function Timeline(): React.JSX.Element {
       <footer className="timeline-footer">
         <span><i className="status-dot" />自動保存オン</span>
         <span>選択: {selectedClipIds.length} クリップ</span>
-        <code>{formatTimecode(playheadUs, project)} / {formatTimecode(durationUs, project)}</code>
+        <PlayheadTimecode project={project} durationUs={durationUs} />
       </footer>
     </section>
   )
