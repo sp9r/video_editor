@@ -164,11 +164,26 @@ export const formatTimecode = (timeUs: TimeUs, project: ProjectFile): string => 
   return [hours, minutes, seconds, frames].map((value) => String(value).padStart(2, '0')).join(':')
 }
 
-export const addMediaAssets = (project: ProjectFile, assets: MediaAsset[]): ProjectFile => ({
-  ...clone(project),
-  updatedAt: new Date().toISOString(),
-  media: [...project.media.filter((item) => !assets.some((asset) => asset.path === item.path)), ...assets]
-})
+/**
+ * Adds imported files to the media bin. Re-importing a file that is already in
+ * the bin refreshes its metadata but keeps the original asset ID, so clips that
+ * already reference it do not become orphaned.
+ */
+export const addMediaAssets = (project: ProjectFile, assets: MediaAsset[]): ProjectFile => {
+  const existingByPath = new Map(project.media.map((item) => [item.path, item]))
+  const incoming = new Map<string, MediaAsset>()
+  for (const asset of assets) {
+    const existing = existingByPath.get(asset.path)
+    incoming.set(asset.path, existing ? { ...clone(asset), id: existing.id } : clone(asset))
+  }
+  const refreshed = project.media.map((item) => incoming.get(item.path) ?? item)
+  const added = [...incoming.values()].filter((asset) => !existingByPath.has(asset.path))
+  return {
+    ...clone(project),
+    updatedAt: new Date().toISOString(),
+    media: [...clone(refreshed), ...added]
+  }
+}
 
 /**
  * Replaces an offline asset's file metadata without changing its identity.
@@ -294,19 +309,28 @@ export const trimClip = (
   updateClip(project, clipId, (clip) => {
     const snapped = snapUsToFrame(timelineUs, project)
     const frameUs = framesToUs(1, project.sequence.frameRate.numerator, project.sequence.frameRate.denominator)
+    if (!Number.isFinite(snapped)) return clip
     if (edge === 'start') {
       if (!subtitleTrimKeepsWordTiming(project, clip, edge, timelineUs)) throw new Error('単語タイミングより内側には字幕を縮められません。')
-      const delta = Math.min(clip.durationUs - frameUs, Math.max(-clip.sourceInUs, snapped - clip.startUs))
+      // Video/audio can only be extended back to the start of their source;
+      // images and captions have no source range, so only the timeline start
+      // (0) limits them. A clip can never start before the timeline origin.
+      const sourceless = clip.kind === 'image' || clip.kind === 'subtitle'
+      const earliestDelta = sourceless ? -clip.startUs : Math.max(-clip.sourceInUs, -clip.startUs)
+      const delta = Math.min(clip.durationUs - frameUs, Math.max(earliestDelta, snapped - clip.startUs))
       return {
         ...clip,
         startUs: clip.startUs + delta,
-        sourceInUs: clip.sourceInUs + delta,
+        sourceInUs: sourceless ? Math.max(0, clip.sourceInUs + delta) : clip.sourceInUs + delta,
         durationUs: clip.durationUs - delta
       }
     }
     if (!subtitleTrimKeepsWordTiming(project, clip, edge, timelineUs)) throw new Error('単語タイミングより内側には字幕を縮められません。')
     const asset = 'assetId' in clip ? project.media.find((item) => item.id === clip.assetId) : undefined
-    const maximumDuration = asset && asset.kind !== 'image' ? asset.durationUs - clip.sourceInUs : Number.MAX_SAFE_INTEGER
+    // An unknown (0) duration must not clamp the clip to a negative length.
+    const maximumDuration = asset && asset.kind !== 'image' && asset.durationUs > 0
+      ? Math.max(frameUs, asset.durationUs - clip.sourceInUs)
+      : Number.MAX_SAFE_INTEGER
     return { ...clip, durationUs: Math.min(maximumDuration, Math.max(frameUs, snapped - clip.startUs)) }
   })
 

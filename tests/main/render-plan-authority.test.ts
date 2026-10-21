@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { buildAccurateFrameFilterGraph, buildAuthoritativeVideoGraph, buildRenderFilterGraph, buildSubtitleOverlayFilterGraph } from '../../src/main/ffmpeg/render-plan'
+import { buildAccurateFrameFilterGraph, buildAuthoritativeVideoGraph, buildRenderFilterGraph } from '../../src/main/ffmpeg/render-plan'
 import type { RenderPlan } from '../../src/main/ffmpeg/render-plan'
 
 const plan = {
   durationUs: 1_000_000,
   width: 320,
   height: 180,
+  compositionWidth: 320,
+  compositionHeight: 180,
+  backgroundColor: '0x000000',
   frameRateNumerator: 30,
   frameRateDenominator: 1,
   sampleRate: 48_000,
@@ -32,21 +35,12 @@ describe('authoritative render graph', () => {
 
     expect(finalGraph.startsWith(shared)).toBe(true)
     expect(frameGraph.startsWith(shared)).toBe(true)
-    expect(finalGraph).toContain('[subtitled]format=yuv420p[vout]')
-    expect(frameGraph).toContain("[subtitled]select='eq(n\\,7)',setpts=PTS-STARTPTS,format=rgba[vout]")
+    expect(finalGraph).toContain('[subtitled]scale=out_color_matrix=bt709:out_range=tv:flags=bicubic,format=yuv420p[vout]')
+    expect(frameGraph).toContain("[subtitled]select='eq(n\\,7)',setpts=PTS-STARTPTS,scale=out_color_matrix=bt709:out_range=tv:flags=bicubic,format=yuv420p,scale=in_color_matrix=bt709:in_range=tv:flags=bicubic,format=rgba[vout]")
   })
 
   it('allows a unique safe ASS filename for concurrent frame requests', () => {
     expect(buildAccurateFrameFilterGraph(plan, 0, 'frame-abc.ass')).toContain("ass=filename='frame-abc.ass'")
     expect(() => buildAccurateFrameFilterGraph(plan, 0, '../captions.ass')).toThrow(/safe workspace basename/u)
-  })
-
-  it('builds a transparent sequence-sized libass subtitle overlay graph with alpha processing', () => {
-    const graph = buildSubtitleOverlayFilterGraph(1920, 1080, 30, 1, 500_000, 'overlay.ass')
-    expect(graph).toContain('color=c=black@0.0:s=1920x1080:r=30/1')
-    expect(graph).toContain("ass=filename='overlay.ass':alpha=1")
-    expect(graph).toContain('setpts=PTS+0.500000/TB')
-    expect(graph).toContain('[vout]')
-    expect(() => buildSubtitleOverlayFilterGraph(1920, 1080, 30, 1, 0, '../overlay.ass')).toThrow(/safe workspace basename/u)
   })
 })

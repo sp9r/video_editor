@@ -192,3 +192,18 @@ describe('timeline interaction guards', () => {
     ])
   })
 })
+
+describe('shortcut targets', () => {
+  it('keeps editor shortcuts alive after a slider or checkbox was touched', async () => {
+    const { shortcutTargetKind, controlOwnsKey } = await import('../../src/renderer/src/action-state')
+    const input = (type: string): HTMLInputElement => Object.assign(document.createElement('input'), { type })
+    expect(shortcutTargetKind(input('range'))).toBe('control')
+    expect(shortcutTargetKind(input('checkbox'))).toBe('control')
+    expect(shortcutTargetKind(input('number'))).toBe('text')
+    expect(shortcutTargetKind(document.createElement('textarea'))).toBe('text')
+    expect(shortcutTargetKind(document.createElement('div'))).toBe('none')
+    expect(controlOwnsKey(' ')).toBe(true)
+    expect(controlOwnsKey('Delete')).toBe(false)
+    expect(isTextEditingTarget(input('range'))).toBe(false)
+  })
+})

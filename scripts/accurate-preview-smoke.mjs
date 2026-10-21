@@ -1,9 +1,13 @@
+// Real Electron parity check: the paused/playing canvas preview against FFmpeg's
+// own frame for the same project. Drives the built app over the DevTools
+// protocol; the app runs in smoke mode with an isolated temp profile.
+//
+//   npm run build
+//   SPECTRA_REAL_VIDEO_E2E=1 SPECTRA_AUDIO_E2E=1 node scripts/accurate-preview-smoke.mjs
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { aggregateOwnedProcessSample, diffRoleCpuPercent } from './process-tree-metrics.mjs'
+import os from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -11,26 +15,24 @@ import { inflateSync } from 'node:zlib'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
-const execFileAsync = promisify(execFile)
 const electronPath = require('electron')
 const ffmpegPath = require('ffmpeg-static')
-const rendererIndex = path.join(repositoryRoot, 'out', 'renderer', 'index.html')
-if (!existsSync(rendererIndex)) throw new Error(`Renderer build is missing: ${rendererIndex}`)
+if (!existsSync(path.join(repositoryRoot, 'out', 'renderer', 'index.html'))) throw new Error('Renderer build is missing: run npm run build')
 
+const maxMae = Number(process.env.SPECTRA_PARITY_MAX_MAE ?? 4)
+const minSsim = Number(process.env.SPECTRA_PARITY_MIN_SSIM ?? 0.95)
+const audioE2e = process.env.SPECTRA_AUDIO_E2E === '1'
+const port = 9300 + Math.floor(Math.random() * 500)
+
+// ---------- image helpers ----------
 const paeth = (a, b, c) => {
   const p = a + b - c
-  const pa = Math.abs(p - a)
-  const pb = Math.abs(p - b)
-  const pc = Math.abs(p - c)
+  const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c)
   return pa <= pb && pa <= pc ? a : pb <= pc ? b : c
 }
-
 const decodePng = (buffer) => {
   if (!buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error('Expected PNG')
-  let offset = 8
-  let width = 0
-  let height = 0
-  let colorType = 0
+  let offset = 8, width = 0, height = 0, colorType = 0
   const idat = []
   while (offset < buffer.length) {
     const length = buffer.readUInt32BE(offset)
@@ -38,348 +40,311 @@ const decodePng = (buffer) => {
     const data = buffer.subarray(offset + 8, offset + 8 + length)
     offset += length + 12
     if (type === 'IHDR') {
-      width = data.readUInt32BE(0)
-      height = data.readUInt32BE(4)
+      width = data.readUInt32BE(0); height = data.readUInt32BE(4)
       if (data[8] !== 8 || ![2, 6].includes(data[9])) throw new Error('Only 8-bit RGB/RGBA PNG is supported')
       colorType = data[9]
     } else if (type === 'IDAT') idat.push(data)
     else if (type === 'IEND') break
   }
-  const bytesPerPixel = colorType === 6 ? 4 : 3
-  const sourceStride = width * bytesPerPixel
+  const bpp = colorType === 6 ? 4 : 3
+  const stride = width * bpp
   const pixels = Buffer.alloc(width * height * 4)
   const raw = inflateSync(Buffer.concat(idat))
   let source = 0
-  let previousRow = Buffer.alloc(sourceStride)
+  let previous = Buffer.alloc(stride)
   for (let y = 0; y < height; y += 1) {
     const filter = raw[source++]
-    const row = Buffer.alloc(sourceStride)
-    for (let x = 0; x < sourceStride; x += 1) {
-      const left = x >= bytesPerPixel ? row[x - bytesPerPixel] : 0
-      const above = y > 0 ? previousRow[x] : 0
-      const upperLeft = y > 0 && x >= bytesPerPixel ? previousRow[x - bytesPerPixel] : 0
+    const row = Buffer.alloc(stride)
+    for (let x = 0; x < stride; x += 1) {
+      const left = x >= bpp ? row[x - bpp] : 0
+      const above = y > 0 ? previous[x] : 0
+      const upperLeft = y > 0 && x >= bpp ? previous[x - bpp] : 0
       const value = raw[source++]
       row[x] = (value + (filter === 1 ? left : filter === 2 ? above : filter === 3 ? Math.floor((left + above) / 2) : filter === 4 ? paeth(left, above, upperLeft) : 0)) & 255
     }
     for (let x = 0; x < width; x += 1) {
-      const from = x * bytesPerPixel
       const to = (y * width + x) * 4
-      pixels[to] = row[from]
-      pixels[to + 1] = row[from + 1]
-      pixels[to + 2] = row[from + 2]
-      pixels[to + 3] = colorType === 6 ? row[from + 3] : 255
+      pixels[to] = row[x * bpp]; pixels[to + 1] = row[x * bpp + 1]; pixels[to + 2] = row[x * bpp + 2]
+      pixels[to + 3] = colorType === 6 ? row[x * bpp + 3] : 255
     }
-    previousRow = row
+    previous = row
   }
   return { width, height, pixels }
 }
 
-const findBox = (image, predicate, region) => {
-  let left = region.x + region.width
-  let top = region.y + region.height
-  let right = -1
-  let bottom = -1
-  for (let y = Math.max(0, Math.floor(region.y)); y < Math.min(image.height, Math.ceil(region.y + region.height)); y += 1) {
-    for (let x = Math.max(0, Math.floor(region.x)); x < Math.min(image.width, Math.ceil(region.x + region.width)); x += 1) {
-      const offset = (y * image.width + x) * 4
-      if (!predicate(image.pixels[offset], image.pixels[offset + 1], image.pixels[offset + 2], image.pixels[offset + 3])) continue
-      left = Math.min(left, x)
-      top = Math.min(top, y)
-      right = Math.max(right, x)
-      bottom = Math.max(bottom, y)
+/** Box-filter resample to a fixed comparison grid, composited over black. */
+const resample = (image, width, height) => {
+  const out = new Float64Array(width * height * 3)
+  for (let y = 0; y < height; y += 1) {
+    const y0 = Math.floor(y * image.height / height), y1 = Math.max(y0 + 1, Math.floor((y + 1) * image.height / height))
+    for (let x = 0; x < width; x += 1) {
+      const x0 = Math.floor(x * image.width / width), x1 = Math.max(x0 + 1, Math.floor((x + 1) * image.width / width))
+      let r = 0, g = 0, b = 0, n = 0
+      for (let yy = y0; yy < y1; yy += 1) for (let xx = x0; xx < x1; xx += 1) {
+        const o = (yy * image.width + xx) * 4
+        const a = image.pixels[o + 3] / 255
+        r += image.pixels[o] * a; g += image.pixels[o + 1] * a; b += image.pixels[o + 2] * a; n += 1
+      }
+      const o = (y * width + x) * 3
+      out[o] = r / n; out[o + 1] = g / n; out[o + 2] = b / n
     }
   }
-  return right < 0 ? null : { left, top, right, bottom, width: right - left + 1, height: bottom - top + 1, centerX: (left + right) / 2, centerY: (top + bottom) / 2 }
+  return out
+}
+const luma = (rgb) => {
+  const out = new Float64Array(rgb.length / 3)
+  for (let i = 0; i < out.length; i += 1) out[i] = 0.2126 * rgb[i * 3] + 0.7152 * rgb[i * 3 + 1] + 0.0722 * rgb[i * 3 + 2]
+  return out
+}
+const GRID = { width: 320, height: 180 }
+const compare = (a, b) => {
+  let sum = 0
+  for (let i = 0; i < a.length; i += 1) sum += Math.abs(a[i] - b[i])
+  const mae = sum / a.length
+  // Signed mean per channel (canvas - FFmpeg): a constant offset means colour, not geometry.
+  const bias = [0, 0, 0]
+  for (let i = 0; i < a.length; i += 1) bias[i % 3] += (a[i] - b[i]) / (a.length / 3)
+  let debiased = 0
+  for (let i = 0; i < a.length; i += 1) debiased += Math.abs(a[i] - b[i] - bias[i % 3])
+  const la = luma(a), lb = luma(b)
+  const c1 = (0.01 * 255) ** 2, c2 = (0.03 * 255) ** 2
+  let total = 0, windows = 0
+  for (let by = 0; by + 8 <= GRID.height; by += 8) for (let bx = 0; bx + 8 <= GRID.width; bx += 8) {
+    let ma = 0, mb = 0
+    for (let y = 0; y < 8; y += 1) for (let x = 0; x < 8; x += 1) { const i = (by + y) * GRID.width + bx + x; ma += la[i]; mb += lb[i] }
+    ma /= 64; mb /= 64
+    let va = 0, vb = 0, cov = 0
+    for (let y = 0; y < 8; y += 1) for (let x = 0; x < 8; x += 1) { const i = (by + y) * GRID.width + bx + x; va += (la[i] - ma) ** 2; vb += (lb[i] - mb) ** 2; cov += (la[i] - ma) * (lb[i] - mb) }
+    va /= 63; vb /= 63; cov /= 63
+    total += ((2 * ma * mb + c1) * (2 * cov + c2)) / ((ma * ma + mb * mb + c1) * (va + vb + c2))
+    windows += 1
+  }
+  return { mae: Number(mae.toFixed(3)), ssim: Number((total / windows).toFixed(4)), colourBiasRGB: bias.map((v) => Number(v.toFixed(2))), maeWithoutBias: Number((debiased / a.length).toFixed(3)) }
 }
 
-const whiteGlyph = (r, g, b, a) => a > 180 && r > 150 && g > 150 && b > 150
-const redShadow = (r, g, b, a) => a > 120 && r > g + 5 && r > b + 2
-const darkBackground = (r, g, b, a) => a > 180 && r < 45 && g < 45 && b < 45
-const outlinePixel = (r, g, b, a) => a > 120 && Math.abs(r - 17) + Math.abs(g - 19) + Math.abs(b - 24) <= 45
-
-const anchorPoint = (box, anchor) => {
-  if (!box) return null
-  return { x: box.centerX, y: anchor === 'top' ? box.top : anchor === 'middle' ? box.centerY : box.bottom }
-}
-
-const thickness = (white, outline) => white && outline ? {
-  left: Math.max(0, white.left - outline.left),
-  right: Math.max(0, outline.right - white.right),
-  top: Math.max(0, white.top - outline.top),
-  bottom: Math.max(0, outline.bottom - white.bottom),
-  horizontal: (Math.max(0, white.left - outline.left) + Math.max(0, outline.right - white.right)) / 2,
-  vertical: (Math.max(0, white.top - outline.top) + Math.max(0, outline.bottom - white.bottom)) / 2
-} : null
-
-const analyzeTransparentOverlay = (buffer) => {
-  const image = decodePng(buffer)
-  const visible = findBox(image, (_r, _g, _b, a) => a > 0, { x: 0, y: 0, width: image.width, height: image.height })
-  const white = findBox(image, whiteGlyph, { x: 0, y: 0, width: image.width, height: image.height })
-  const red = findBox(image, redShadow, { x: 0, y: 0, width: image.width, height: image.height })
-  const background = findBox(image, darkBackground, { x: 0, y: 0, width: image.width, height: image.height })
-  const cornerAlpha = image.pixels[3] ?? 0
-  return {
-    width: image.width,
-    height: image.height,
-    cornerAlpha,
-    visiblePixels: visible ? visible.width * visible.height : 0,
-    visible,
-    white,
-    red,
-    background
-  }
-}
-
-const analyzeScreenshots = (fastBuffer, accurateBuffer, report) => {
-  const fast = decodePng(fastBuffer)
-  const accurate = decodePng(accurateBuffer)
-  const scaleX = fast.width / report.viewport.width
-  const scaleY = fast.height / report.viewport.height
-  const scene = {
-    x: report.fastVisual.x * scaleX,
-    y: report.fastVisual.y * scaleY,
-    width: report.fastVisual.width * scaleX,
-    height: report.fastVisual.height * scaleY
-  }
-  const fastWhite = findBox(fast, whiteGlyph, scene)
-  const accurateWhite = findBox(accurate, whiteGlyph, scene)
-  const ring = (box) => box ? { x: box.left - 80 * scaleX, y: box.top - 80 * scaleY, width: box.width + 160 * scaleX, height: box.height + 160 * scaleY } : scene
-  const outlineRing = (box) => box ? { x: box.left - 18 * scaleX, y: box.top - 18 * scaleY, width: box.width + 36 * scaleX, height: box.height + 36 * scaleY } : scene
-  const fastShadow = findBox(fast, redShadow, ring(fastWhite))
-  const accurateShadow = findBox(accurate, redShadow, ring(accurateWhite))
-  const fastBackground = findBox(fast, darkBackground, ring(fastWhite))
-  const accurateBackground = findBox(accurate, darkBackground, ring(accurateWhite))
-  const fastOutline = findBox(fast, outlinePixel, outlineRing(fastWhite))
-  const accurateOutline = findBox(accurate, outlinePixel, outlineRing(accurateWhite))
-  const widthDeltaRatio = fastWhite && accurateWhite ? Math.abs(fastWhite.width - accurateWhite.width) / Math.max(1, accurateWhite.width) : Infinity
-  const heightDeltaRatio = fastWhite && accurateWhite ? Math.abs(fastWhite.height - accurateWhite.height) / Math.max(1, accurateWhite.height) : Infinity
-  const centerDeltaPx = fastWhite && accurateWhite ? Math.hypot(fastWhite.centerX - accurateWhite.centerX, fastWhite.centerY - accurateWhite.centerY) : Infinity
-  const fastAnchor = anchorPoint(fastWhite, report.subtitleSpec?.anchor)
-  const accurateAnchor = anchorPoint(accurateWhite, report.subtitleSpec?.anchor)
-  const anchorDeltaX = fastAnchor && accurateAnchor ? Math.abs(fastAnchor.x - accurateAnchor.x) : Infinity
-  const anchorDeltaY = fastAnchor && accurateAnchor ? Math.abs(fastAnchor.y - accurateAnchor.y) : Infinity
-  const expectedAnchor = report.subtitleSpec && report.sequence ? {
-    x: scene.x + report.subtitleSpec.xPx / report.sequence.width * scene.width,
-    y: scene.y + report.subtitleSpec.yPx / report.sequence.height * scene.height
-  } : null
-  const fastAnchorToSpec = fastAnchor && expectedAnchor ? { x: fastAnchor.x - expectedAnchor.x, y: fastAnchor.y - expectedAnchor.y } : null
-  const accurateAnchorToSpec = accurateAnchor && expectedAnchor ? { x: accurateAnchor.x - expectedAnchor.x, y: accurateAnchor.y - expectedAnchor.y } : null
-  const shadowWithinLimit = Boolean(fastShadow && accurateShadow && fastWhite && accurateWhite && fastShadow.width <= fastWhite.width * 2 && accurateShadow.width <= accurateWhite.width * 2)
-  const heightTolerance = Number(report.subtitleSpec?.fontSizePx ?? 0) < 64 ? 0.25 : 0.15
-  const result = {
-    scene,
-    fast: { white: fastWhite, outline: fastOutline, outlineThickness: thickness(fastWhite, fastOutline), shadow: fastShadow, background: fastBackground },
-    accurate: { white: accurateWhite, outline: accurateOutline, outlineThickness: thickness(accurateWhite, accurateOutline), shadow: accurateShadow, background: accurateBackground },
-    centerDeltaPx,
-    widthDeltaRatio,
-    heightDeltaRatio,
-    heightTolerance,
-    anchorDeltaX,
-    anchorDeltaY,
-    expectedAnchor,
-    fastAnchorToSpec,
-    accurateAnchorToSpec,
-    outlineThicknessDelta: fastOutline && accurateOutline && thickness(fastWhite, fastOutline) && thickness(accurateWhite, accurateOutline) ? {
-      horizontal: Math.abs(thickness(fastWhite, fastOutline).horizontal - thickness(accurateWhite, accurateOutline).horizontal),
-      vertical: Math.abs(thickness(fastWhite, fastOutline).vertical - thickness(accurateWhite, accurateOutline).vertical)
-    } : null,
-    backgroundExpected: Number(report.subtitleSpec?.backgroundOpacity ?? 0) > 0,
-    shadowExpected: Boolean(report.subtitleSpec?.shadowColor && !/^#(?:0{6}|0{8})$/iu.test(report.subtitleSpec.shadowColor)),
-    shadowPresent: Boolean(fastShadow && accurateShadow),
-    shadowWithinLimit,
-    backgroundPresent: Boolean(fastBackground && accurateBackground),
-    videoGeometryStable: JSON.stringify(report.fastVisual) === JSON.stringify(report.accurateVisual)
-  }
-  const outlineGate = Number(report.subtitleSpec?.fontSizePx ?? 0) >= 64 ? Boolean(fastOutline && accurateOutline) : true
-  const shadowGate = result.shadowExpected ? Boolean(report.subtitleOverlayMetrics?.red) : true
-  // During playback Fast Preview uses the same libass/FFmpeg layout authority
-  // as Accurate/Final through a transparent PNG image overlay.
-  const fastUsesCss = false
-  const geometryGate = fastUsesCss
-    ? centerDeltaPx <= 20 && anchorDeltaX <= 10 && anchorDeltaY <= 20
-    : centerDeltaPx <= 20 && widthDeltaRatio <= 0.1 && heightDeltaRatio <= heightTolerance && anchorDeltaX <= 10 && anchorDeltaY <= 10
-  if (!fastWhite || !accurateWhite || !geometryGate || !outlineGate || !shadowGate || (result.backgroundExpected && !result.backgroundPresent) || !result.videoGeometryStable) {
-    throw new Error(`Fast/accurate screenshot parity gate failed: ${JSON.stringify(result)}`)
-  }
-  return result
-}
-
-const run = (command, args, options = {}) => new Promise((resolve, reject) => {
-  const child = spawn(command, args, { ...options, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
-  let stdout = ''
+// ---------- process helpers ----------
+const run = (command, args) => new Promise((resolve, reject) => {
+  const child = spawn(command, args, { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
   let stderr = ''
-  child.stdout.setEncoding('utf8')
-  child.stderr.setEncoding('utf8')
-  child.stdout.on('data', (chunk) => { stdout += chunk })
   child.stderr.on('data', (chunk) => { stderr += chunk })
   child.once('error', reject)
-  child.once('exit', (code) => code === 0 ? resolve({ stdout, stderr }) : reject(new Error(`${command} exited ${code}: ${stderr}`)))
+  child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`${command} exited ${code}: ${stderr}`)))
 })
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-const readProcessMetrics = async (pid) => {
-  if (!pid) return null
-  try {
-    if (process.platform === 'win32') {
-      const command = `$root=${Number(pid)}; $cim=@{}; Get-CimInstance Win32_Process | ForEach-Object { $cim[[int]$_.ProcessId]=$_.ParentProcessId }; $owned=@($root); $changed=$true; while($changed){$changed=$false; foreach($item in $cim.GetEnumerator()){if($owned -contains [int]$item.Value -and $owned -notcontains [int]$item.Key){$owned+=[int]$item.Key;$changed=$true}}}; $rows=@(); foreach($id in $owned){try{$p=Get-Process -Id $id -ErrorAction Stop; $w=Get-CimInstance Win32_Process -Filter \"ProcessId=$id\"; $rows+=[pscustomobject]@{pid=$id;parentPid=[int]$w.ParentProcessId;name=$w.Name;commandLine=$w.CommandLine;cpuSeconds=$p.CPU;workingSetBytes=$p.WorkingSet64;privateBytes=$p.PrivateMemorySize64}}catch{}}; $rows | ConvertTo-Json -Compress`
-      const result = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', command], { windowsHide: true, maxBuffer: 1024 * 1024 })
-      const parsed = JSON.parse(result.stdout.trim() || '[]')
-      return aggregateOwnedProcessSample(pid, Array.isArray(parsed) ? parsed : [parsed])
+class Cdp {
+  #socket; #next = 1; #pending = new Map(); errors = []
+  static async connect(url) {
+    const cdp = new Cdp()
+    cdp.#socket = new WebSocket(url)
+    await new Promise((resolve, reject) => { cdp.#socket.onopen = resolve; cdp.#socket.onerror = reject })
+    cdp.#socket.onmessage = (event) => {
+      const message = JSON.parse(event.data)
+      if (message.id && cdp.#pending.has(message.id)) {
+        const { resolve, reject } = cdp.#pending.get(message.id)
+        cdp.#pending.delete(message.id)
+        message.error ? reject(new Error(message.error.message)) : resolve(message.result)
+      } else if (message.method === 'Runtime.exceptionThrown') cdp.errors.push(`exception: ${message.params.exceptionDetails.exception?.description ?? message.params.exceptionDetails.text}`)
+      else if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') cdp.errors.push(`console.error: ${message.params.args.map((arg) => arg.value ?? arg.description).join(' ')}`)
     }
-    const result = await execFileAsync('ps', ['-o', 'cputime=,rss=', '-p', String(pid)])
-    const [cpuTime, rss] = result.stdout.trim().split(/\s+/u)
-    return aggregateOwnedProcessSample(pid, [{ pid, parentPid: 0, name: 'electron', commandLine: '', cpuSeconds: cpuTime ? cpuTime.split(':').reduce((total, value) => total * 60 + Number(value), 0) : 0, workingSetBytes: rss ? Number(rss) * 1024 : 0 }])
-  } catch {
-    return null
+    return cdp
   }
+  send(method, params = {}) {
+    const id = this.#next++
+    return new Promise((resolve, reject) => { this.#pending.set(id, { resolve, reject }); this.#socket.send(JSON.stringify({ id, method, params })) })
+  }
+  async eval(expression) {
+    const result = await this.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+    if (result.exceptionDetails) throw new Error(`page eval failed: ${result.exceptionDetails.exception?.description ?? result.exceptionDetails.text}`)
+    return result.result.value
+  }
+  close() { this.#socket.close() }
 }
 
-const root = await mkdtemp(path.join(require('node:os').tmpdir(), 'spectra-accurate-preview-smoke-'))
+const root = await mkdtemp(path.join(os.tmpdir(), 'spectra-parity-smoke-'))
+let child
 try {
-  const fixtureOverrides = process.env.SPECTRA_SUBTITLE_FIXTURE_JSON ? JSON.parse(process.env.SPECTRA_SUBTITLE_FIXTURE_JSON) : {}
-  const sourceColor = process.env.SPECTRA_PREVIEW_SOURCE_COLOR
-  const realVideo = process.env.SPECTRA_REAL_VIDEO_E2E === '1'
-  const audioE2e = realVideo && process.env.SPECTRA_AUDIO_E2E === '1'
-  const phaseStartedAt = Date.now()
-  const phase = (name) => { if (realVideo) console.log(`[real-video] ${name} +${Date.now() - phaseStartedAt}ms`) }
-  phase('fixture-start')
-  const sourcePath = path.join(root, realVideo ? 'source.mp4' : 'source.png')
-  const projectPath = path.join(root, 'project.json')
-  await run(ffmpegPath, realVideo
-    ? ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x203040:s=1280x720:r=30:d=8', ...(audioE2e ? ['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=8', '-c:a', 'aac'] : []), '-t', '8', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', sourcePath]
-    : ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', sourceColor ? `color=c=${sourceColor}:s=1920x1080:r=30:d=1` : 'testsrc2=size=320x180:rate=30:duration=1', '-frames:v', '1', sourcePath])
-  const mediaWidth = realVideo ? 1280 : sourceColor ? 1920 : 320
-  const mediaHeight = realVideo ? 720 : sourceColor ? 1080 : 180
-  const defaultSubtitleStyle = { fontFamily: 'Noto Sans JP', fontSize: 123, color: '#ffffff', outlineColor: '#111318', outlineWidth: 14, shadowColor: '#ff0000', shadowBlur: 24, backgroundColor: '#000000', backgroundOpacity: 0.15, bold: true, italic: false, letterSpacing: 0, lineHeight: 1.15, alignment: 'bottom', positionX: 50, positionY: 86, maxWidthPercent: 80, animation: 'none', animationDurationUs: 0 }
-  const subtitleStyle = { ...defaultSubtitleStyle, ...(fixtureOverrides.style ?? {}) }
-  const subtitleText = typeof fixtureOverrides.text === 'string' ? fixtureOverrides.text : '字幕を入力'
-  const fixtureTag = typeof fixtureOverrides.tag === 'string' ? fixtureOverrides.tag : 'base'
-  const playbackMs = realVideo ? 8_500 : Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200)
-  const longPlayback = Number.isFinite(playbackMs) && playbackMs > 2_000
-  const playbackDurationUs = longPlayback ? Math.ceil(playbackMs * 1_000) + 2_000_000 : 1_000_000
-  const subtitleClips = realVideo
-    ? [
-        { id: 'caption-1', name: 'Cue 1', kind: 'subtitle', text: '実動画 cue 1', startUs: 500_000, durationUs: 2_000_000, sourceInUs: 0, enabled: true, style: subtitleStyle },
-        { id: 'caption-2', name: 'Cue 2', kind: 'subtitle', text: '実動画 cue 2', startUs: 4_000_000, durationUs: 2_000_000, sourceInUs: 0, enabled: true, style: subtitleStyle },
-        { id: 'caption-3', name: 'Cue 3', kind: 'subtitle', text: '実動画 animated cue', startUs: 7_000_000, durationUs: 2_000_000, sourceInUs: 0, enabled: true, style: { ...subtitleStyle, animation: 'pop', animationDurationUs: 500_000 } }
-      ]
-    : longPlayback
-    ? Array.from({ length: Math.ceil(playbackDurationUs / 2_000_000) }, (_, index) => ({
-        id: `caption-${index + 1}`, name: 'Caption', kind: 'subtitle', text: `${subtitleText} ${index + 1}`,
-        startUs: 200_000 + index * 2_000_000, durationUs: 1_200_000, sourceInUs: 0, enabled: true, style: subtitleStyle
-      }))
-    : [{ id: 'caption-1', name: 'Caption', kind: 'subtitle', text: subtitleText, startUs: 200000, durationUs: 2000000, sourceInUs: 0, enabled: true, ...(Number.isSafeInteger(fixtureOverrides.maxLines) ? { maxLines: fixtureOverrides.maxLines } : {}), style: subtitleStyle }]
+  // ---------- fixture: two visual layers + subtitles with a fade ----------
+  const bottomPath = path.join(root, 'bottom.mp4')
+  const topPath = path.join(root, 'top.mp4')
+  await run(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30:duration=8',
+    ...(audioE2e ? ['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=8', '-c:a', 'aac'] : []),
+    '-t', '8', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-g', '15', bottomPath])
+  await run(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=30:duration=8',
+    '-t', '8', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-g', '15', topPath])
+  const style = { fontFamily: 'Noto Sans JP', fontSize: 72, color: '#ffffff', outlineColor: '#111318', outlineWidth: 6, shadowColor: '#ff0000', shadowBlur: 8, backgroundColor: '#000000', backgroundOpacity: 0.15, bold: true, italic: false, letterSpacing: 0, lineHeight: 1.15, alignment: 'bottom', positionX: 50, positionY: 86, maxWidthPercent: 80, animation: 'none', animationDurationUs: 0 }
+  const media = (id, file, width, height, hasAudio) => ({ id, name: path.basename(file), path: file, kind: 'video', durationUs: 8_000_000, width, height, hasAudio, ...(hasAudio ? { channels: 1, sampleRate: 48000 } : {}), fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false })
+  const subtitle = (id, text, startUs, durationUs, patch = {}) => ({ id, name: id, kind: 'subtitle', text, startUs, durationUs, sourceInUs: 0, enabled: true, style: { ...style, ...patch } })
   const project = {
-    schemaVersion: 1,
-    appVersion: '0.1.0',
-    id: `accurate-preview-smoke-${fixtureTag}`,
-    name: `Accurate Preview Smoke ${fixtureTag}`,
-    createdAt: '2026-08-14T00:00:00.000Z',
-    updatedAt: '2026-08-14T00:00:00.000Z',
-    sequence: { width: realVideo ? 1280 : 1920, height: realVideo ? 720 : 1080, frameRate: { numerator: 30, denominator: 1 }, sampleRate: 48000, backgroundColor: '#102030' },
-    media: [{ id: 'source', name: realVideo ? 'source.mp4' : 'source.png', path: sourcePath, kind: realVideo ? 'video' : 'image', durationUs: realVideo ? 8_000_000 : 0, width: mediaWidth, height: mediaHeight, hasAudio: audioE2e, ...(audioE2e ? { channels: 1, sampleRate: 48000 } : {}), fileSize: 0, modifiedAt: '2026-08-14T00:00:00.000Z', offline: false }],
+    schemaVersion: 1, appVersion: '0.1.0', id: 'preview-parity-smoke', name: 'Preview Parity Smoke',
+    createdAt: '2026-08-14T00:00:00.000Z', updatedAt: '2026-08-14T00:00:00.000Z',
+    sequence: { width: 1280, height: 720, frameRate: { numerator: 30, denominator: 1 }, sampleRate: 48000, backgroundColor: '#102030' },
+    media: [media('bottom', bottomPath, 1280, 720, audioE2e), media('top', topPath, 640, 360, false)],
     tracks: [
-      { id: 'video', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'video-1', name: 'Source', kind: realVideo ? 'video' : 'image', assetId: 'source', startUs: 0, durationUs: realVideo ? 8_000_000 : playbackDurationUs, sourceInUs: 0, enabled: true, ...(realVideo ? { audio: { volumeDb: audioE2e ? 12 : 0, pan: audioE2e ? 0.25 : 0, fadeInUs: audioE2e ? 500000 : 0, fadeOutUs: audioE2e ? 1000000 : 0 } } : {}), transform: fixtureOverrides.transform ?? { positionX: 12, positionY: -8, scale: 0.9, rotation: 7, opacity: 0.82, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
-      { id: 'subtitle', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: subtitleClips }
+      { id: 'v2', name: 'V2', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'top-1', name: 'Top', kind: 'video', assetId: 'top', startUs: 0, durationUs: 8_000_000, sourceInUs: 0, enabled: true, audio: { volumeDb: 0, pan: 0, fadeInUs: 0, fadeOutUs: 0 }, transform: { positionX: 180, positionY: -70, scale: 0.8, rotation: 7, opacity: 0.9, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
+      { id: 'v1', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'bottom-1', name: 'Bottom', kind: 'video', assetId: 'bottom', startUs: 0, durationUs: 8_000_000, sourceInUs: 0, enabled: true, audio: { volumeDb: audioE2e ? 6 : 0, pan: audioE2e ? 0.25 : 0, fadeInUs: 0, fadeOutUs: 0 }, transform: { positionX: 0, positionY: 0, scale: 1, rotation: 0, opacity: 1, crop: { left: 0, top: 0, right: 0, bottom: 0 } } }] },
+      { id: 'sub', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: [
+        subtitle('cue-static', '静的な字幕 cue 1', 500_000, 2_000_000),
+        subtitle('cue-fade', 'フェードする字幕', 3_000_000, 2_000_000, { animation: 'fade', animationDurationUs: 500_000 }),
+        subtitle('cue-pop', 'ポップする字幕', 5_500_000, 2_000_000, { animation: 'pop', animationDurationUs: 500_000 })
+      ] }
     ]
   }
-  await writeFile(projectPath, JSON.stringify(project), 'utf8')
-  phase('fixture-written')
-  const child = spawn(electronPath, ['.'], {
+
+  // ---------- launch ----------
+  const output = []
+  child = spawn(electronPath, ['.', `--remote-debugging-port=${port}`], {
     cwd: repositoryRoot,
-    env: { ...process.env, SPECTRA_ACCURATE_PREVIEW_SMOKE: '1', SPECTRA_PREVIEW_E2E_PROJECT: projectPath, SPECTRA_PREVIEW_PLAYBACK_MS: realVideo ? '8500' : process.env.SPECTRA_PREVIEW_PLAYBACK_MS, SPECTRA_REAL_VIDEO_E2E: realVideo ? '1' : undefined },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-    shell: false
+    env: { ...process.env, SPECTRA_ACCURATE_PREVIEW_SMOKE: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, shell: false
   })
-  phase('electron-spawned')
-  let output = ''
-  const processMetricSamples = []
-  let metricReadInFlight = false
-  const sampleProcessMetrics = async () => {
-    if (metricReadInFlight) return
-    metricReadInFlight = true
-    try {
-      const sample = await readProcessMetrics(child.pid)
-      if (sample) processMetricSamples.push({ atMs: Date.now(), ...sample })
-    } finally {
-      metricReadInFlight = false
+  child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8')
+  child.stdout.on('data', (chunk) => output.push(chunk)); child.stderr.on('data', (chunk) => output.push(chunk))
+  const waitFor = async (predicate, timeoutMs, label) => {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const value = await predicate().catch(() => null)
+      if (value) return value
+      await sleep(100)
     }
+    throw new Error(`Timed out: ${label}\n${output.join('')}`)
   }
-  child.stdout.setEncoding('utf8')
-  child.stderr.setEncoding('utf8')
-  child.stdout.on('data', (chunk) => { output += chunk; if (realVideo) process.stdout.write(chunk) })
-  child.stderr.on('data', (chunk) => { output += chunk; if (realVideo) process.stdout.write(chunk) })
-  const exitCodePromise = new Promise((resolve, reject) => {
-    const playbackMs = Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200)
-    const timer = setTimeout(() => { child.kill(); reject(new Error(`Accurate Preview smoke timed out.\n${output}`)) }, Math.max(60_000, playbackMs + 60_000))
-    child.once('error', (error) => { clearTimeout(timer); reject(error) })
-    child.once('exit', async (code, signal) => { clearTimeout(timer); await sampleProcessMetrics(); signal ? reject(new Error(`Electron exited by ${signal}\n${output}`)) : resolve(code ?? 1) })
-  })
-  await sampleProcessMetrics()
-  const metricTimer = setInterval(() => { void sampleProcessMetrics() }, 500)
-  const exitCode = await exitCodePromise
-  clearInterval(metricTimer)
-  const line = output.split(/\r?\n/u).find((item) => item.startsWith('SPECTRA_ACCURATE_PREVIEW_REPORT '))
-  if (!line) throw new Error(`Accurate Preview report was not emitted.\n${output}`)
-  const report = JSON.parse(line.slice('SPECTRA_ACCURATE_PREVIEW_REPORT '.length))
-  const productionOnly = Number(process.env.SPECTRA_PREVIEW_PLAYBACK_MS ?? 200) > 2_000
-  if (exitCode !== 0 || report.error) throw new Error(`Accurate Preview smoke failed.\n${JSON.stringify(report)}\n${output}`)
-  const [fastScreenshot, accurateScreenshot, overlayScreenshot, fastBuffer, accurateBuffer, overlayBuffer] = await Promise.all([
-    stat(report.fastScreenshotPath),
-    stat(report.accurateScreenshotPath),
-    stat(report.subtitleOverlayFramePath),
-    readFile(report.fastScreenshotPath),
-    readFile(report.accurateScreenshotPath),
-    readFile(report.subtitleOverlayFramePath)
-  ])
-  const subtitleOverlayMetrics = analyzeTransparentOverlay(overlayBuffer)
-  report.subtitleOverlayMetrics = subtitleOverlayMetrics
-  const elapsedSeconds = processMetricSamples.length > 1 ? (processMetricSamples.at(-1).atMs - processMetricSamples[0].atMs) / 1000 : 0
-  const logicalCpus = Math.max(1, Number(require('node:os').cpus().length))
-  const firstMetrics = processMetricSamples.find((sample) => sample.cpuSeconds > 0 || sample.workingSetBytes > 0) ?? processMetricSamples[0]
-  const peakMetrics = processMetricSamples.reduce((peak, sample) => !peak || sample.cpuSeconds > peak.cpuSeconds ? sample : peak, null)
-  const memoryByRole = processMetricSamples.reduce((peak, sample) => {
-    for (const [role, value] of Object.entries(sample.workingSetBytesByRole ?? {})) peak[role] = Math.max(peak[role] ?? 0, Number(value) || 0)
-    return peak
-  }, {})
-  const privateBytesByRole = processMetricSamples.reduce((peak, sample) => {
-    for (const [role, value] of Object.entries(sample.privateBytesByRole ?? {})) peak[role] = Math.max(peak[role] ?? 0, Number(value) || 0)
-    return peak
-  }, {})
-  const cpuPercentByRole = firstMetrics && peakMetrics ? diffRoleCpuPercent(firstMetrics.cpuByRole, peakMetrics.cpuByRole, elapsedSeconds, logicalCpus) : null
-  report.productionMetrics = {
-    cpuPercentByRole,
-    cpuPercentTotal: cpuPercentByRole ? Object.values(cpuPercentByRole).reduce((total, value) => total + value, 0) : null,
-    memoryWorkingSetBytesByRole: memoryByRole,
-    memoryWorkingSetBytesTotal: Object.values(memoryByRole).reduce((total, value) => total + value, 0),
-    privateBytesByRole,
-    privateBytesTotal: Object.values(privateBytesByRole).reduce((total, value) => total + value, 0),
-    ownedFfmpegProcessCountMax: Math.max(0, ...processMetricSamples.map((sample) => Number(sample.ffmpegProcessCount) || 0)),
-    ownedProcessCountMax: Math.max(0, ...processMetricSamples.map((sample) => sample.ownedProcessIds?.length ?? 0)),
-    samples: processMetricSamples.length
+  await waitFor(async () => output.join('').includes('SPECTRA_ACCURATE_PREVIEW_READY'), 60_000, 'app ready')
+  const target = await waitFor(async () => {
+    const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
+    return list.find((item) => item.type === 'page')
+  }, 20_000, 'devtools page')
+  const cdp = await Cdp.connect(target.webSocketDebuggerUrl)
+  await cdp.send('Runtime.enable')
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1500, height: 900, deviceScaleFactor: Number(process.env.SPECTRA_PARITY_DPR ?? 2), mobile: false })
+  await cdp.eval(`window.dispatchEvent(new Event('resize')); true`)
+  await cdp.eval(`window.__project = ${JSON.stringify(project)};
+    window.__goto = (frame) => window.dispatchEvent(new CustomEvent('spectra:e2e-project', { detail: { project: window.__project, timeUs: Math.floor(frame * 1000000 / 30) + 1 } }));
+    window.__canvas = () => document.querySelector('canvas.preview-canvas');
+    window.__state = () => { const c = window.__canvas(); return { frame: c?.dataset.drawnFrame, subtitleExact: c?.dataset.subtitleExact, layersReady: c?.dataset.layersReady, width: c?.width, height: c?.height } };
+    true`)
+  const goto = async (frame) => {
+    await cdp.eval(`window.__goto(${frame})`)
+    await waitFor(async () => {
+      const state = await cdp.eval('window.__state()')
+      return state.frame === String(frame) && state.subtitleExact === 'true' && state.layersReady === 'true'
+    }, 20_000, `canvas settled at frame ${frame}`).catch(async (error) => {
+      const detail = await cdp.eval(`(async () => { window.__goto(6); await new Promise((r) => setTimeout(r, 500)); const t = document.body.innerText; const i = t.indexOf('E2E'); return JSON.stringify({ info: await window.spectra.getAppInfo(), e2e: i >= 0 ? t.slice(i, i + 200) : null, state: window.__state(), pool: document.querySelector('.preview-source-pool')?.children.length }) })()`)
+      throw new Error(`${error.message.slice(0, 60)} ${detail} errors=${cdp.errors.join("|")}`)
+    })
+    await sleep(250)
+    // A late subtitle image or seek must not have changed the frame.
+    const state = await cdp.eval('window.__state()')
+    if (state.frame !== String(frame)) throw new Error(`frame drifted at ${frame}: ${JSON.stringify(state)}`)
   }
-  const shadowExpected = Boolean(report.subtitleSpec?.shadowColor && !/^#(?:0{6}|0{8})$/iu.test(report.subtitleSpec.shadowColor))
-  if (!productionOnly && (!report.accurateInitial || !report.fastFixture || !report.fastSubtitleOverlay || !report.fastSubtitleOverlayReady || report.initialCssFallbackCount !== 0 || report.fastCssFallbackCount !== 0 || !report.accurateFixtureAfterResume || !report.editPendingRejectsStaleOverlay || !report.editedFrameReady || !report.fastDuringPlay || !report.accurateAfterResume || report.overlayCount !== 1 || report.initialOverlaySrc === report.editedOverlaySrc || fastScreenshot.size <= 0 || accurateScreenshot.size <= 0 || overlayScreenshot.size <= 0 || subtitleOverlayMetrics.cornerAlpha !== 0 || !subtitleOverlayMetrics.white || (shadowExpected && !subtitleOverlayMetrics.red) || !subtitleOverlayMetrics.background || report.consoleErrors?.length || report.loadFailure || report.renderProcessGone)) {
-    throw new Error(`Accurate Preview DOM gate failed.\n${JSON.stringify(report)}\n${output}`)
+  const grabCanvas = async () => {
+    const url = await cdp.eval(`window.__canvas().toDataURL('image/png')`)
+    return decodePng(Buffer.from(url.split(',')[1], 'base64'))
   }
-  if (audioE2e) {
-    const audioSamples = report.playbackFrameSample?.samples?.flatMap((sample) => sample.audio ?? []) ?? []
-    if (!report.playbackFrameSample?.interruptedAudio || !audioSamples.some((audio) => !audio.paused && audio.currentTime > 7 && audio.readyState >= 2)
-      || audioSamples.some((audio) => audio.error || audio.volume !== 1)) throw new Error('Real AAC audio did not play safely with positive dB gain')
-    report.audioE2e = { pass: true, volumeDb: 12, pan: 0.25, sampleCount: audioSamples.length }
+  const accurate = async (frame) => {
+    const result = await cdp.eval(`window.spectra.renderAccuratePreviewFrame(window.__project, ${Math.floor(frame * 1_000_000 / 30) + 1}).then((r) => ({ framePath: r.framePath, frameIndex: r.frameIndex }))`)
+    if (result.frameIndex !== frame) throw new Error(`FFmpeg rendered frame ${result.frameIndex}, expected ${frame}`)
+    return { image: decodePng(await readFile(result.framePath)), framePath: result.framePath }
   }
-  if (realVideo) {
-    const videoSamples = report.playbackFrameSample?.samples?.flatMap((sample) => sample.video ?? []) ?? []
-    const video = report.realVideoE2E
-    if (!videoSamples.some((sample) => !sample.paused && sample.currentTime > 1 && sample.totalFrames >= 30)
-      || !video.staticCue1 || !video.staticCue2 || !video.animatedCue || !video.animationObservable
-      || video.staleCueCount || video.wrongCueAfterSeekCount || video.subtitleLessGapOverlayCount) throw new Error('Real video playback/subtitle gate failed')
+  const check = async (label, frame) => {
+    await goto(frame)
+    const canvasUrl = await cdp.eval(`window.__canvas().toDataURL('image/png')`)
+    const canvas = resample(decodePng(Buffer.from(canvasUrl.split(',')[1], 'base64')), GRID.width, GRID.height)
+    const ffmpegResult = await accurate(frame)
+    const ffmpeg = resample(ffmpegResult.image, GRID.width, GRID.height)
+    if (process.env.SPECTRA_PARITY_DUMP) {
+      await writeFile(path.join(process.env.SPECTRA_PARITY_DUMP, `f${frame}-canvas.png`), Buffer.from(canvasUrl.split(',')[1], 'base64'))
+      await copyFile(ffmpegResult.framePath, path.join(process.env.SPECTRA_PARITY_DUMP, `f${frame}-ffmpeg.png`))
+    }
+    return { label, frame, timeSec: Number((frame / 30).toFixed(3)), ...compare(canvas, ffmpeg) }
   }
-  const screenshotComparison = productionOnly ? null : analyzeScreenshots(fastBuffer, accurateBuffer, report)
-  console.log(JSON.stringify({ ...report, fastScreenshotBytes: fastScreenshot.size, accurateScreenshotBytes: accurateScreenshot.size, screenshotComparison }, null, 2))
+
+  // ---------- 1. paused canvas vs FFmpeg ----------
+  await cdp.eval(`window.__goto(0)`)
+  await waitFor(async () => (await cdp.eval('window.__state()')).frame === '0', 30_000, 'first frame')
+  const plan = [
+    ['before any cue', 6], ['static cue', 30], ['gap after static cue', 87],
+    ['fade-in start', 91], ['fade-in mid', 98], ['fade static', 120], ['fade-out mid', 142], ['fade-out end', 148],
+    ['pop start', 166], ['pop mid', 172], ['after pop', 230]
+  ]
+  const paused = []
+  for (const [label, frame] of plan) paused.push(await check(label, frame))
+  // Rapid seeks must end on the right cue, not a stale one.
+  for (const frame of [30, 87, 98, 240, 120, 6, 172]) await cdp.eval(`window.__goto(${frame})`)
+  paused.push(await check('after rapid seeks (frame 172)', 172))
+  paused.push(await check('step +1 (frame 173)', 173))
+  paused.push(await check('step -2 (frame 171)', 171))
+
+  // ---------- 2. playing vs paused ----------
+  await cdp.eval(`window.__goto(84)`)
+  await waitFor(async () => (await cdp.eval('window.__state()')).frame === '84', 20_000, 'frame 84')
+  const playingSamples = await cdp.eval(`new Promise((resolve) => {
+    document.querySelector('.play-button').click()
+    const samples = []
+    const started = performance.now()
+    const timer = setInterval(() => {
+      const c = window.__canvas(); const frame = Number(c.dataset.drawnFrame)
+      if (c.dataset.layersReady === 'true' && c.dataset.subtitleExact === 'true' && !samples.some((s) => s.frame === frame)) samples.push({ frame, url: c.toDataURL('image/png') })
+      if (performance.now() - started > 3500) { clearInterval(timer); document.querySelector('.play-button').click(); resolve(samples) }
+    }, 40)
+  })`)
+  const audio = audioE2e ? await cdp.eval(`Array.from(document.querySelectorAll('.preview-audio-pool audio')).map((a) => ({ paused: a.paused, currentTime: a.currentTime, error: !!a.error }))`) : null
+  const playing = []
+  const picked = playingSamples.filter((_, index) => index % Math.max(1, Math.floor(playingSamples.length / 8)) === 0).slice(0, 8)
+  for (const sample of picked) {
+    const playingGrid = resample(decodePng(Buffer.from(sample.url.split(',')[1], 'base64')), GRID.width, GRID.height)
+    await goto(sample.frame)
+    const pausedGrid = resample(await grabCanvas(), GRID.width, GRID.height)
+    const ffmpegGrid = resample((await accurate(sample.frame)).image, GRID.width, GRID.height)
+    playing.push({ frame: sample.frame, playingVsPaused: compare(playingGrid, pausedGrid), playingVsFfmpeg: compare(playingGrid, ffmpegGrid) })
+  }
+
+  // ---------- overlay probe: does the transparent libass PNG keep the cue background box? ----------
+  const overlayPath = await cdp.eval(`window.spectra.renderSubtitleOverlay(window.__project, 4000001, { animationMode: 'full' }).then((r) => r.framePath)`)
+  const overlay = decodePng(await readFile(overlayPath))
+  let faint = 0
+  for (let i = 3; i < overlay.pixels.length; i += 4) if (overlay.pixels[i] > 0 && overlay.pixels[i] < 90) faint += 1
+  const probeOffset = (Math.round(0.78 * overlay.height) * overlay.width + Math.round(0.36 * overlay.width)) * 4
+  const overlayProbe = { width: overlay.width, height: overlay.height, faintAlphaPixels: faint, boxPixelRGBA: [...overlay.pixels.subarray(probeOffset, probeOffset + 4)] }
+
+  // ---------- 3. hit test ----------
+  await goto(30)
+  const rect = await cdp.eval(`(() => { const r = window.__canvas().getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height } })()`)
+  const click = async (fx, fy) => {
+    for (const type of ['mousePressed', 'mouseReleased']) await cdp.send('Input.dispatchMouseEvent', { type, x: rect.x + rect.w * fx, y: rect.y + rect.h * fy, button: 'left', clickCount: 1 })
+    await sleep(250)
+    return await cdp.eval(`(() => { const t = document.body.innerText; const i = t.indexOf('インスペクタ'); return t.slice(i, i + 40).replace(/\s+/g, ' ') })()`)
+  }
+  const hit = { bottomCorner: await click(0.03, 0.9), topLayer: await click(0.78, 0.4) }
+
+  const failures = []
+  for (const row of paused) if (row.mae > maxMae || row.ssim < minSsim) failures.push(`paused ${row.label} (frame ${row.frame}): mae ${row.mae}, ssim ${row.ssim}`)
+  for (const row of playing) if (row.playingVsPaused.mae > maxMae || row.playingVsPaused.ssim < minSsim) failures.push(`playing vs paused frame ${row.frame}: ${JSON.stringify(row.playingVsPaused)}`)
+  if (playingSamples.length < 20) failures.push(`only ${playingSamples.length} distinct frames were drawn during 3.5 s of playback`)
+  if (audioE2e && !(audio?.some((a) => a.currentTime > 0.5) && audio.every((a) => !a.error))) failures.push(`audio did not play: ${JSON.stringify(audio)}`)
+  if (!hit.bottomCorner.includes('Bottom') || !hit.topLayer.includes('Top')) failures.push(`canvas click did not select the layer under the pointer: ${JSON.stringify(hit)}`)
+  if (cdp.errors.length) failures.push(`JS errors: ${cdp.errors.join(' | ')}`)
+
+  const report = {
+    thresholds: { maxMae, minSsim },
+    canvas: await cdp.eval(`({ ...window.__state(), dpr: window.devicePixelRatio, innerWidth: window.innerWidth })`),
+    paused,
+    pausedSummary: { maxMae: Math.max(...paused.map((row) => row.mae)), minSsim: Math.min(...paused.map((row) => row.ssim)) },
+    playing,
+    playingFramesDrawn: playingSamples.length,
+    audio,
+    overlayProbe,
+    hit,
+    jsErrors: cdp.errors,
+    failures
+  }
+  console.log(JSON.stringify(report, null, 2))
+  cdp.close()
+  if (failures.length) process.exitCode = 1
 } finally {
-  await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 }).catch((error) => {
-    if (error?.code !== 'EBUSY') throw error
-    console.warn(`Accurate Preview smoke fixture cleanup deferred: ${root}`)
-  })
+  if (child && child.exitCode === null) {
+    child.kill()
+    await sleep(1000)
+  }
+  await rm(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 }).catch(() => undefined)
 }

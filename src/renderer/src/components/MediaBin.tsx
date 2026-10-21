@@ -50,8 +50,14 @@ export default function MediaBin(): React.JSX.Element {
       const results = await window.spectra.pickMedia()
       const valid = results.filter((item) => !item.error).map(toAsset)
       if (valid.length) addAssets(valid)
-      const failures = results.length - valid.length
-      showNotice(`${valid.length}件の素材を読み込みました${failures ? `（${failures}件失敗）` : ''}。`, failures ? 'warning' : 'success')
+      const failed = results.filter((item) => item.error)
+      if (!results.length) return
+      showNotice(
+        valid.length
+          ? `${valid.length}件の素材を読み込みました${failed.length ? `（${failed.length}件失敗）` : ''}。`
+          : `素材を読み込めませんでした${failed[0]?.error ? `: ${failed[0].error}` : '。'}`,
+        failed.length ? 'warning' : 'success'
+      )
     } catch (error) {
       showNotice(`素材を読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
     }
@@ -65,10 +71,20 @@ export default function MediaBin(): React.JSX.Element {
     }
     try {
       const paths = Array.from(files).map((file) => window.spectra!.getPathForFile(file)).filter(Boolean)
+      if (!paths.length) {
+        showNotice('ドロップしたものからファイルの場所を取得できませんでした。「+」ボタンからファイルを選んでください。', 'warning')
+        return
+      }
       const results = await window.spectra.probeMedia(paths)
       const valid = results.filter((item) => !item.error).map(toAsset)
-      addAssets(valid)
-      showNotice(`${valid.length}件の素材を読み込みました。`, valid.length ? 'success' : 'warning')
+      const failures = results.filter((item) => item.error)
+      if (valid.length) addAssets(valid)
+      showNotice(
+        valid.length
+          ? `${valid.length}件の素材を読み込みました${failures.length ? `（${failures.length}件は読み込めませんでした）` : ''}。`
+          : `素材を読み込めませんでした${failures[0]?.error ? `: ${failures[0].error}` : '。'}`,
+        failures.length ? 'warning' : 'success'
+      )
     } catch (error) {
       showNotice(`ドロップした素材を読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
     }
@@ -167,7 +183,9 @@ export default function MediaBin(): React.JSX.Element {
                 disabled={mediaAddControlState({ offline: asset.offline, hasMediaTrack: project.tracks.some(isMediaTrack) }).disabled}
                 title={mediaAddControlState({ offline: asset.offline, hasMediaTrack: project.tracks.some(isMediaTrack) }).label}
                 onClick={() => {
-                  const track = project.tracks.find((candidate) => isMediaTrack(candidate))
+                  // First unlocked media track; a locked V1 must not swallow the click silently.
+                  const mediaTracks = project.tracks.filter((candidate) => isMediaTrack(candidate))
+                  const track = mediaTracks.find((candidate) => !candidate.locked) ?? mediaTracks[0]
                   if (track) addAssetClip(asset.id, track.id, playheadUs)
                 }}
               >

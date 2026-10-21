@@ -1,41 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Maximize2, Pause, Play, SkipBack, SkipForward, Volume2 } from 'lucide-react'
+import { frameIndexForTime, timeUsForFrameIndex } from '../../../shared/frame-time'
 import { formatTimecode, projectDurationUs, projectFingerprint } from '../../../shared/project'
-import { visualLayerOrder, type VisualClip } from '../../../shared/render-order'
-import { activeSubtitleClips, fastSubtitleAnimationStyle, subtitleVisualStateKey } from '../../../shared/subtitle-render'
-import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip, SubtitleOverlayResult } from '../../../shared/types'
+import { visualLayerOrder } from '../../../shared/render-order'
+import { subtitleVisualStateKey } from '../../../shared/subtitle-render'
+import type { AccuratePreviewFrameResult, MediaAsset, PreviewPlan, PreviewPlanClip } from '../../../shared/types'
 import { PreviewAudioMixer, previewAudioClipsForPlayback, previewAudioIsActive, previewAudioSourceTimeUs, previewPlaybackTimeUs, syncPreviewMediaTime } from '../preview-audio'
+import { PreviewCompositor } from '../preview-compositor'
+import { previewFrameIndex } from '../preview-geometry'
 import { previewDiagnosticContext, previewDiagnosticStore } from '../preview-performance-diagnostics'
 import { previewQualityLabel } from '../preview-status'
-import { LatestSubtitleOverlayScheduler } from '../subtitle-overlay-scheduler'
 import { useEditorStore } from '../store'
 import { IconButton } from './Controls'
 
 const activeAt = (clip: { startUs: number; durationUs: number; enabled: boolean }, timeUs: number): boolean =>
   clip.enabled && clip.startUs <= timeUs && clip.startUs + clip.durationUs > timeUs
-
-const nextSubtitleVisualStates = (project: Parameters<typeof subtitleVisualStateKey>[0], timeUs: number): Array<{ timeUs: number; key: string }> => {
-  const boundaries = project.tracks
-    .filter((track) => track.kind === 'subtitle' && !track.hidden && !track.muted)
-    .flatMap((track) => track.clips)
-    .filter((clip) => clip.kind === 'subtitle' && clip.enabled)
-    .flatMap((clip) => [clip.startUs, clip.startUs + clip.durationUs])
-    .filter((boundary) => boundary > timeUs && boundary <= timeUs + 6_000_000)
-    .sort((left, right) => left - right)
-  const states: Array<{ timeUs: number; key: string }> = []
-  let previous = subtitleVisualStateKey(project, timeUs)
-  for (const boundary of boundaries) {
-    const key = subtitleVisualStateKey(project, boundary)
-    if (key === previous || !activeSubtitleClips(project, boundary).length) {
-      previous = key
-      continue
-    }
-    states.push({ timeUs: boundary, key })
-    previous = key
-    if (states.length >= 2) break
-  }
-  return states
-}
 
 export const accuratePreviewFrameMatchesCurrent = (
   frame: Pick<AccuratePreviewFrameResult, 'projectFingerprint' | 'requestedTimeUs'>,
@@ -44,73 +23,6 @@ export const accuratePreviewFrameMatchesCurrent = (
   frameDurationUs: number
 ): boolean => frame.projectFingerprint === currentProjectFingerprint
   && Math.abs(frame.requestedTimeUs - currentPlayheadUs) <= frameDurationUs
-
-function PreviewVisual({
-  clip,
-  asset,
-  mediaSource,
-  playheadUs,
-  playing,
-  onSelect,
-  onPlaybackError
-}: {
-  clip: VisualClip
-  asset?: MediaAsset
-  mediaSource: string | null
-  playheadUs: number
-  playing: boolean
-  onSelect: () => void
-  onPlaybackError: (name: string) => void
-}): React.JSX.Element {
-  const mediaRef = useRef<HTMLVideoElement | null>(null)
-  const [mediaReadyGeneration, setMediaReadyGeneration] = useState(0)
-  useEffect(() => {
-    if (clip.kind !== 'video' || !mediaRef.current || !mediaSource) return
-    const media = mediaRef.current
-    const expectedSeconds = (clip.sourceInUs + Math.max(0, playheadUs - clip.startUs)) / 1_000_000
-    syncPreviewMediaTime(media, expectedSeconds)
-    if (playing) { if (media.paused) void media.play().catch((error: unknown) => {
-      if (media.error || (error instanceof DOMException && error.name === 'NotAllowedError')) onPlaybackError(asset?.name ?? clip.name)
-    }) }
-    else media.pause()
-  }, [clip, mediaSource, playheadUs, playing, mediaReadyGeneration, asset?.name, onPlaybackError])
-
-  return (
-    <button
-      type="button"
-      className="preview-visual"
-      onClick={onSelect}
-      style={{
-        transform: `translate(${clip.transform.positionX}px, ${clip.transform.positionY}px) rotate(${clip.transform.rotation}deg) scale(${clip.transform.scale})`,
-        opacity: clip.transform.opacity,
-        clipPath: `inset(${clip.transform.crop.top * 100}% ${clip.transform.crop.right * 100}% ${clip.transform.crop.bottom * 100}% ${clip.transform.crop.left * 100}%)`
-      }}
-      aria-label={`${clip.name}を選択`}
-    >
-      {mediaSource && asset?.kind === 'video' ? (
-        <video
-          ref={mediaRef}
-          key={asset.id}
-          className="preview-media"
-          data-clip-id={clip.id}
-          src={mediaSource}
-          muted
-          playsInline
-          preload="metadata"
-          onLoadedMetadata={() => setMediaReadyGeneration((generation) => generation + 1)}
-          onLoadedData={() => setMediaReadyGeneration((generation) => generation + 1)}
-          onSeeked={() => setMediaReadyGeneration((generation) => generation + 1)}
-          onError={() => onPlaybackError(asset?.name ?? clip.name)}
-          aria-label={asset.name}
-        />
-      ) : mediaSource && asset?.kind === 'image' ? (
-        <img className="preview-media" src={mediaSource} alt={asset.name} />
-      ) : (
-        <span className="preview-visual-placeholder">{asset?.name ?? clip.name}</span>
-      )}
-    </button>
-  )
-}
 
 function PreviewAudio({
   item,
@@ -162,36 +74,44 @@ function PreviewDiagnosticControls({ project, playheadUs, playing, viewportSize 
   )
 }
 
+interface ExactFrame {
+  image: HTMLImageElement
+  projectFingerprint: string
+  frameIndex: number
+}
+
 export default function Preview(): React.JSX.Element {
   const { project, playheadUs, setPlayhead, playing, setPlaying, selectClip, showNotice } = useEditorStore()
   previewDiagnosticStore.recordComponentRender('preview')
   const [renderPlan, setRenderPlan] = useState<PreviewPlan | null>(null)
-  const [accurateFrame, setAccurateFrame] = useState<AccuratePreviewFrameResult | null>(null)
-  const [fastSubtitleOverlay, setFastSubtitleOverlay] = useState<(SubtitleOverlayResult & { visualStateKey: string }) | null>(null)
-  const [fastAnimatedApproximate, setFastAnimatedApproximate] = useState(false)
-  const [accurateRendering, setAccurateRendering] = useState(false)
-  const [accurateError, setAccurateError] = useState<string | null>(null)
+  const [exactCheck, setExactCheck] = useState(false)
+  const [exactFrame, setExactFrame] = useState<ExactFrame | null>(null)
+  const [exactRendering, setExactRendering] = useState(false)
+  const [exactError, setExactError] = useState<string | null>(null)
   const [fullscreen, setFullscreen] = useState(false)
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
+  const [compositor, setCompositor] = useState<PreviewCompositor | null>(null)
   const requestRef = useRef<number | null>(null)
   const lastFrameRef = useRef<number>(0)
-  const canvasRef = useRef<HTMLDivElement | null>(null)
+  const viewerRef = useRef<HTMLDivElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const sourcePoolRef = useRef<HTMLDivElement | null>(null)
+  const compositorRef = useRef<PreviewCompositor | null>(null)
   const audioRefs = useRef(new Map<string, HTMLAudioElement>())
   const audioMixer = useRef<PreviewAudioMixer | null>(null)
   const audioLifetime = useRef(0)
   const [audioReadyGeneration, setAudioReadyGeneration] = useState(0)
   const onAudioReady = useCallback(() => setAudioReadyGeneration((generation) => generation + 1), [])
   const audioPlayAttempted = useRef(new Set<string>())
-  const accurateRequestSequence = useRef(0)
-  const fastRequestSequence = useRef(0)
-  const previousPlayheadUs = useRef<number | null>(null)
-  const [seekGeneration, setSeekGeneration] = useState(0)
+  const exactRequestSequence = useRef(0)
   const onPlaybackError = useCallback((name: string): void => {
     setPlaying(false)
     showNotice(`「${name}」をプレビューで再生できませんでした。素材の形式とファイルを確認してください。`, 'warning')
   }, [setPlaying, showNotice])
-  const fastOverlayScheduler = useRef(new LatestSubtitleOverlayScheduler<SubtitleOverlayResult>(40))
   const durationUs = Math.max(renderPlan?.durationUs ?? projectDurationUs(project), 1_000_000)
+  const fps = project.sequence.frameRate
+  const frameIndex = previewFrameIndex(playheadUs, fps, null)
+  const currentProjectFingerprint = useMemo(() => projectFingerprint(project), [project])
 
   useEffect(() => {
     const generation = ++audioLifetime.current
@@ -218,7 +138,7 @@ export default function Preview(): React.JSX.Element {
   }, [])
 
   const toggleFullscreen = (): void => {
-    const panel = canvasRef.current?.closest('.viewer-panel') as HTMLElement | null
+    const panel = viewerRef.current?.closest('.viewer-panel') as HTMLElement | null
     if (!panel) return
     if (document.fullscreenElement) {
       void document.exitFullscreen().catch(() => showNotice('全画面表示を終了できませんでした。', 'warning'))
@@ -232,112 +152,102 @@ export default function Preview(): React.JSX.Element {
   }
 
   useEffect(() => {
-    const previous = previousPlayheadUs.current
-    if (playing && previous !== null && Math.abs(playheadUs - previous) > 500_000) setSeekGeneration((generation) => generation + 1)
-    previousPlayheadUs.current = playheadUs
-  }, [playheadUs, playing])
-
-  useEffect(() => {
     if (!window.spectra) {
       setRenderPlan(null)
       return
     }
     setRenderPlan(null)
-    setAccurateFrame(null)
+    setExactFrame(null)
     let active = true
     void window.spectra.createPreviewPlan(project)
       .then((plan) => { if (active) setRenderPlan(plan) })
       .catch((error: unknown) => {
         if (!active) return
         setRenderPlan(null)
-        setAccurateRendering(false)
-        setAccurateError(error instanceof Error ? error.message : 'プレビューの準備に失敗しました')
+        setExactRendering(false)
+        setExactError(error instanceof Error ? error.message : 'プレビューの準備に失敗しました')
       })
     return () => { active = false }
   }, [project])
 
-  useEffect(() => {
-    const sequence = ++fastRequestSequence.current
-    const scheduler = fastOverlayScheduler.current
-    scheduler.cancel()
-    setFastSubtitleOverlay(null)
-    setFastAnimatedApproximate(false)
-    if (!playing || !window.spectra || !activeSubtitleClips(project, playheadUs).length) return
-    const api = window.spectra
-    const currentKey = activeSubtitleStateKey
-    const request = (timeUs: number, key: string, prefetch: boolean): void => {
-      const run = (): Promise<SubtitleOverlayResult> => {
-        previewDiagnosticStore.recordSubtitleOverlayRequest(key)
-        return api.renderSubtitleOverlay(project, timeUs, { animationMode: 'base' })
-      }
-      const onCommit = (result: SubtitleOverlayResult): void => {
-        previewDiagnosticStore.recordSubtitleOverlayOutcome(result.cacheHit ?? !result.ffmpegStarted)
-        const current = useEditorStore.getState()
-        if (sequence !== fastRequestSequence.current || !current.playing || subtitleVisualStateKey(current.project, current.playheadUs) !== key) return
-        setFastSubtitleOverlay({ ...result, visualStateKey: key })
-        setFastAnimatedApproximate(activeSubtitleClips(current.project, current.playheadUs).some(({ clip }) => clip.style.animation !== 'none'))
-      }
-      const onError = (error: unknown): void => {
-        if (!prefetch && sequence === fastRequestSequence.current) setFastSubtitleOverlay(null)
-        if (!prefetch) previewDiagnosticStore.recordSubtitleOverlayOutcome(false)
-        void error
-      }
-      const item = { key, run, onCommit, onError }
-      if (prefetch) scheduler.schedulePrefetch(item)
-      else scheduler.schedule(item)
-    }
-    request(playheadUs, currentKey, false)
-    for (const next of nextSubtitleVisualStates(project, playheadUs)) request(next.timeUs, next.key, true)
+  // The canvas compositor lives as long as the viewer; StrictMode recreates it.
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current
+    const pool = sourcePoolRef.current
+    if (!canvas || !pool || !window.spectra) return
+    const created = new PreviewCompositor(canvas, pool, window.spectra, {
+      onPlaybackError,
+      onSubtitleRequest: (key) => previewDiagnosticStore.recordSubtitleOverlayRequest(key),
+      onSubtitleOutcome: (cacheHit) => previewDiagnosticStore.recordSubtitleOverlayOutcome(cacheHit)
+    })
+    compositorRef.current = created
+    setCompositor(created)
     return () => {
-      fastRequestSequence.current += 1
-      scheduler.cancel()
+      created.dispose()
+      if (compositorRef.current === created) compositorRef.current = null
+      setCompositor(null)
     }
-  }, [activeSubtitleStateKey, playing, project, seekGeneration])
+  }, [onPlaybackError])
 
+  useLayoutEffect(() => {
+    const element = viewerRef.current
+    if (!element) return
+    const update = (): void => {
+      setViewportSize({ width: element.clientWidth, height: element.clientHeight })
+      compositorRef.current?.resize(element.clientWidth, element.clientHeight, window.devicePixelRatio || 1)
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    // Moving the window to another monitor changes devicePixelRatio without resizing the box.
+    window.addEventListener('resize', update)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', update)
+    }
+  }, [compositor])
+
+  // "Export-quality check": request FFmpeg's own frame only when asked for.
   useEffect(() => {
-    const sequence = ++accurateRequestSequence.current
-    setAccurateError(null)
-    if (playing || !window.spectra) {
-      setAccurateRendering(false)
+    const sequence = ++exactRequestSequence.current
+    setExactError(null)
+    if (!exactCheck || playing || !window.spectra) {
+      setExactRendering(false)
       return
     }
-    setAccurateRendering(true)
+    setExactRendering(true)
     // createPreviewPlan clears the previous project's frame workspace. Wait
     // until it completes, otherwise a reload can invalidate its own new frame.
     if (!renderPlan) return
     const api = window.spectra
+    const requestedFrame = frameIndexForTime(playheadUs + 1, project.sequence.frameRate)
     const timeout = window.setTimeout(() => {
-      if (!api) return
       previewDiagnosticStore.recordAccurateRequest()
-      void api.renderAccuratePreviewFrame(project, playheadUs)
-        .then((result) => {
+      void api.renderAccuratePreviewFrame(project, timeUsForFrameIndex(requestedFrame, project.sequence.frameRate) + 1)
+        .then(async (result) => {
           previewDiagnosticStore.recordAccurateOutcome(result.cacheHit ?? !result.ffmpegStarted, Boolean(result.ffmpegStarted))
           const current = useEditorStore.getState()
-          const frameDurationUs = Math.ceil(1_000_000 * current.project.sequence.frameRate.denominator / current.project.sequence.frameRate.numerator)
-          if (sequence !== accurateRequestSequence.current
-            || current.playing
-            || !accuratePreviewFrameMatchesCurrent(result, projectFingerprint(current.project), current.playheadUs, frameDurationUs)) return
-          setAccurateFrame(result)
-          setAccurateRendering(false)
+          if (sequence !== exactRequestSequence.current || current.playing || projectFingerprint(current.project) !== result.projectFingerprint) return
+          const image = new Image()
+          image.crossOrigin = 'anonymous'
+          image.src = api.mediaUrl(result.framePath)
+          await image.decode()
+          if (sequence !== exactRequestSequence.current) return
+          setExactFrame({ image, projectFingerprint: result.projectFingerprint, frameIndex: result.frameIndex })
+          setExactRendering(false)
         })
         .catch((error: unknown) => {
-          if (sequence !== accurateRequestSequence.current || useEditorStore.getState().playing) return
-          setAccurateRendering(false)
-          setAccurateError(error instanceof Error ? error.message : '正確プレビューを生成できませんでした')
+          if (sequence !== exactRequestSequence.current || useEditorStore.getState().playing) return
+          setExactRendering(false)
+          setExactError(error instanceof Error ? error.message : '書き出し画質のフレームを生成できませんでした')
         })
-    }, 180)
+    }, 120)
     return () => window.clearTimeout(timeout)
-  }, [playheadUs, playing, project, renderPlan])
+  }, [exactCheck, playheadUs, playing, project, renderPlan])
 
-  useLayoutEffect(() => {
-    const element = canvasRef.current
-    if (!element) return
-    const update = (): void => setViewportSize({ width: element.clientWidth, height: element.clientHeight })
-    update()
-    const observer = new ResizeObserver(update)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
+  const exactShown = Boolean(exactCheck && !playing && exactFrame
+    && exactFrame.projectFingerprint === currentProjectFingerprint
+    && exactFrame.frameIndex === frameIndex)
 
   useEffect(() => {
     previewDiagnosticStore.updateContext(previewDiagnosticContext(project, {
@@ -368,12 +278,11 @@ export default function Preview(): React.JSX.Element {
         if (kind === 'audio') return audioRefs.current.get(item.clipId) ?? null
         const asset = state.project.media.find((asset) => asset.id === item.sourceMediaId)
         if (asset?.kind !== 'video') return undefined
-        return Array.from(canvasRef.current?.querySelectorAll('video') ?? []).find((video) => video.dataset.clipId === item.clipId) ?? null
+        return compositorRef.current?.videoForClip(item.clipId) ?? null
       })
       previewDiagnosticStore.recordAnimationFrame(timestamp, next)
       if (previewDiagnosticStore.getSnapshot().active) {
-        const videos = canvasRef.current?.querySelectorAll('video') ?? []
-        for (const video of videos) {
+        for (const video of compositorRef.current?.videos() ?? []) {
           const quality = typeof video.getVideoPlaybackQuality === 'function' ? video.getVideoPlaybackQuality() : null
           previewDiagnosticStore.recordVideoPlaybackQuality(quality ? {
             droppedVideoFrames: quality.droppedVideoFrames,
@@ -396,25 +305,14 @@ export default function Preview(): React.JSX.Element {
     }
   }, [playing, renderPlan])
 
-  const plannedVideoIds = renderPlan ? new Set(renderPlan.videoClips.map((clip) => clip.clipId)) : null
-  const visuals = useMemo(() => visualLayerOrder(project)
-    .map(({ clip }) => clip)
-    .filter((clip) => activeAt(clip, playheadUs) && (!plannedVideoIds || plannedVideoIds.has(clip.id))), [playheadUs, plannedVideoIds, project])
-  const currentProjectFingerprint = useMemo(() => projectFingerprint(project), [project])
-  const accurateFrameMatchesCurrent = Boolean(accurateFrame && accuratePreviewFrameMatchesCurrent(
-    accurateFrame,
-    currentProjectFingerprint,
-    playheadUs,
-    Math.ceil(1_000_000 * project.sequence.frameRate.denominator / project.sequence.frameRate.numerator)
-  ))
+  // Compose the current frame; the compositor redraws itself when media or
+  // subtitle images arrive.
+  useEffect(() => {
+    compositor?.update({ project, playheadUs, playing, exactImage: exactShown ? exactFrame?.image ?? null : null })
+  }, [compositor, exactFrame, exactShown, playheadUs, playing, project])
+
+  const hasVisual = useMemo(() => visualLayerOrder(project).some(({ clip }) => activeAt(clip, playheadUs)), [playheadUs, project])
   const previewAudioClips = useMemo(() => previewAudioClipsForPlayback(renderPlan?.audioClips ?? [], playheadUs), [playheadUs, renderPlan])
-  const scale = viewportSize.width > 0 && viewportSize.height > 0
-    ? Math.min(viewportSize.width / project.sequence.width, viewportSize.height / project.sequence.height)
-    : 1
-  const fastAnimationStyle = useMemo(() => {
-    const active = activeSubtitleClips(project, playheadUs).find(({ clip }) => clip.style.animation !== 'none')?.clip
-    return active ? fastSubtitleAnimationStyle(active, playheadUs) : { opacity: 1, transform: 'none' }
-  }, [playheadUs, project])
 
   useEffect(() => {
     const activeIds = new Set<string>()
@@ -469,55 +367,38 @@ export default function Preview(): React.JSX.Element {
     }
   }, [])
 
+  const onCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>): void => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const clipId = compositorRef.current?.hitTest(event.clientX - rect.left, event.clientY - rect.top)
+    if (clipId) selectClip(clipId)
+  }
+
+  const stepFrame = (direction: -1 | 1): void => {
+    const target = Math.max(0, frameIndex + direction)
+    setPlayhead(Math.min(durationUs, timeUsForFrameIndex(target, fps)))
+  }
+
   return (
     <section className="viewer-panel panel" aria-label="プログラムモニター">
       <header className="viewer-tabs">
         <span className="viewer-tab is-active">完成映像</span>
+        <label className="viewer-exact-toggle">
+          <input type="checkbox" checked={exactCheck} onChange={(event) => setExactCheck(event.target.checked)} />
+          書き出し画質で確認
+        </label>
         <span className="viewer-quality" aria-live="polite">
-          <i />{previewQualityLabel({ playing, accurateFrameMatchesCurrent, accurateRendering, accurateError })}
-          {accurateError && <small className="preview-accurate-error" title={accurateError}>取得失敗</small>}
+          <i />{previewQualityLabel({ playing, exactCheck, exactShown, exactRendering, exactError })}
+          {exactError && <small className="preview-accurate-error" title={exactError}>取得失敗</small>}
         </span>
         <PreviewDiagnosticControls project={project} playheadUs={playheadUs} playing={playing} viewportSize={viewportSize} />
       </header>
       <div className="viewer-stage">
-        <div ref={canvasRef} className="viewer-canvas" data-playhead-us={playheadUs} data-playing={playing ? 'true' : 'false'} style={{ background: project.sequence.backgroundColor, aspectRatio: `${project.sequence.width} / ${project.sequence.height}` }}>
-          <div
-            className="preview-scene"
-            style={{
-              width: project.sequence.width,
-              height: project.sequence.height,
-              transform: `translate(-50%, -50%) scale(${scale})`
-            }}
-          >
-            {visuals.map((clip) => {
-              const asset = 'assetId' in clip ? project.media.find((item) => item.id === clip.assetId) : undefined
-              const mediaSource = asset && !asset.offline && window.spectra ? window.spectra.mediaUrl(asset.path) : null
-              const visualKey = 'assetId' in clip && asset?.kind === 'video' ? `video:${asset.id}` : `visual:${clip.id}`
-              return <PreviewVisual key={visualKey} clip={clip} asset={asset} mediaSource={mediaSource} playheadUs={playheadUs} playing={playing} onSelect={() => selectClip(clip.id)} onPlaybackError={onPlaybackError} />
-            })}
-            {visuals.length === 0 && <div className="viewer-placeholder"><Play size={34} /><span>再生位置に映像がありません</span></div>}
-            <div className="safe-guides" aria-hidden="true"><i /></div>
-            {playing && fastSubtitleOverlay && fastSubtitleOverlay.visualStateKey === activeSubtitleStateKey && window.spectra && (
-              <img
-                className="fast-authoritative-subtitle-overlay"
-                data-subtitle-authority="libass"
-                data-fast-animation-approximate={fastAnimatedApproximate ? 'true' : 'false'}
-                data-subtitle-visual-key={fastSubtitleOverlay.subtitleStateFingerprint}
-                src={window.spectra.mediaUrl(fastSubtitleOverlay.framePath)}
-                alt=""
-                draggable={false}
-                style={fastAnimatedApproximate ? fastAnimationStyle : undefined}
-              />
-            )}
-            {!playing && accurateFrameMatchesCurrent && accurateFrame && window.spectra && (
-              <img
-                className="accurate-preview-overlay"
-                src={window.spectra.mediaUrl(accurateFrame.framePath)}
-                alt=""
-                draggable={false}
-              />
-            )}
-          </div>
+        <div ref={viewerRef} className="viewer-canvas" data-playhead-us={playheadUs} data-playing={playing ? 'true' : 'false'} data-frame-index={frameIndex} style={{ background: project.sequence.backgroundColor, aspectRatio: `${project.sequence.width} / ${project.sequence.height}` }}>
+          <canvas ref={canvasRef} className="preview-canvas" data-exact-shown={exactShown ? 'true' : 'false'} aria-label="プレビュー映像" onClick={onCanvasClick} />
+          {!hasVisual && <div className="viewer-placeholder"><Play size={34} /><span>再生位置に映像がありません</span></div>}
+          <div className="safe-guides" aria-hidden="true"><i /></div>
+          {exactShown && <span className="preview-exact-badge">書き出し画質（FFmpeg）</span>}
+          <div ref={sourcePoolRef} className="preview-source-pool" aria-hidden="true" />
           <div className="preview-audio-pool" aria-hidden="true">
             {previewAudioClips.map((item) => (
               <PreviewAudio
@@ -534,9 +415,9 @@ export default function Preview(): React.JSX.Element {
       <div className="transport">
         <code>{formatTimecode(playheadUs, project)}</code>
         <div className="transport-buttons">
-          <IconButton label="1フレーム戻る（←）" onClick={() => setPlayhead(Math.max(0, playheadUs - 1_000_000 / 30))}><SkipBack size={17} /></IconButton>
+          <IconButton label="1フレーム戻る（←）" onClick={() => stepFrame(-1)}><SkipBack size={17} /></IconButton>
           <IconButton label={playing ? '停止（Space）' : '再生（Space）'} className="play-button" onClick={() => setPlaying(!playing)}>{playing ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" />}</IconButton>
-          <IconButton label="1フレーム進む（→）" onClick={() => setPlayhead(Math.min(durationUs, playheadUs + 1_000_000 / 30))}><SkipForward size={17} /></IconButton>
+          <IconButton label="1フレーム進む（→）" onClick={() => stepFrame(1)}><SkipForward size={17} /></IconButton>
         </div>
         <div className="transport-right">
           <Volume2 size={15} />

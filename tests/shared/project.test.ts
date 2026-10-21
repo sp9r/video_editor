@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   addClipToTrack,
+  addMediaAssets,
   createClipForAsset,
   createEmptyProject,
   deleteClips,
@@ -147,5 +148,17 @@ describe('media relinking', () => {
     })
     expect(relinked.media[0]).toMatchObject({ id: asset.id, name: 'moved-video.mp4', path: 'D:\\移動先\\moved-video.mp4', offline: false })
     expect(relinked.tracks.find((item) => item.id === track.id)?.clips[0]).toMatchObject({ assetId: asset.id })
+  })
+})
+
+describe('media re-import and trim limits', () => {
+  it('keeps the asset id when the same file is imported again', () => {
+    const base = createEmptyProject('reimport')
+    const first = { id: 'asset-1', name: 'a.mp4', path: 'C:\a.mp4', kind: 'video', durationUs: 1_000_000, hasAudio: true, fileSize: 1, modifiedAt: '', offline: false } as never
+    const again = { ...(first as object), id: 'asset-2', durationUs: 2_000_000 } as never
+    const once = addMediaAssets(base, [first])
+    const twice = addMediaAssets(once, [again])
+    expect(twice.media).toHaveLength(1)
+    expect(twice.media[0]).toMatchObject({ id: 'asset-1', durationUs: 2_000_000 })
   })
 })

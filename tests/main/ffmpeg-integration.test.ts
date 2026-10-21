@@ -286,7 +286,7 @@ describe('bundled FFmpeg integration', () => {
         command: paths.ffmpegPath,
         args: [
           '-hide_banner', '-loglevel', 'error', '-y', '-i', outputPath,
-          '-vf', `select=eq(n\\,${accurate.frameIndex})`, '-frames:v', '1', finalFramePath
+          '-vf', `select=eq(n\\,${accurate.frameIndex}),scale=in_color_matrix=bt709:in_range=tv,format=rgb24`, '-frames:v', '1', finalFramePath
         ],
         timeoutMs: 30_000
       })
@@ -307,7 +307,7 @@ describe('bundled FFmpeg integration', () => {
       })
       const report = `${comparison.stdout}\n${comparison.stderr}`
       const all = /All:([0-9.]+)/u.exec(report)?.[1]
-      expect(Number(all), report).toBeGreaterThan(0.9)
+      expect(Number(all), report).toBeGreaterThan(0.94)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

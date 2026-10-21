@@ -426,11 +426,15 @@ export const moveLinkedClip = (project: ProjectFile, clipId: string, targetTrack
   if (!compatibleTrack(location.clip, targetTrack)) throw new EditingOperationError('track_incompatible', 'クリップ種別と移動先トラックの種類が一致しません。', [clipId])
   const ids = linkedClipIds(project, clipId)
   assertEditable(project, ids, targetTrack)
+  if (!Number.isFinite(atUs)) return project
   const next = clone(project)
   const selected = locateClip(next, clipId)
   if (!selected) return project
   const nextStart = Math.max(0, snapUsToFrame(atUs, project))
-  applyTimeDelta(next, ids, nextStart - selected.clip.startUs)
+  // Linked clips move by the same delta; none of them may cross the timeline
+  // origin, otherwise a partial clamp would silently desynchronize the group.
+  const earliestStartUs = Math.min(...locations(next, ids).map(({ clip }) => clip.startUs))
+  applyTimeDelta(next, ids, Math.max(nextStart - selected.clip.startUs, -earliestStartUs))
   moveTrack(next, clipId, targetTrackId)
   for (const track of next.tracks) assertSubtitleTrackHasNoOverlap(track)
   updateTimestamp(next)
@@ -453,12 +457,29 @@ export const trimLinkedClip = (project: ProjectFile, clipId: string, edge: 'star
   const selectedLocationAfter = locateClip(selectedAfter, clipId)
   if (!selectedLocationAfter) return project
   const next = clone(project)
-  const deltaStart = selectedLocationAfter.clip.startUs - selectedBefore.startUs
-  const nextDuration = selectedLocationAfter.clip.durationUs
-  for (const id of ids) {
-    updateClipInProject(next, id, (clip) => edge === 'start'
-      ? { ...clip, startUs: clip.startUs + deltaStart, sourceInUs: clip.sourceInUs + deltaStart, durationUs: nextDuration }
-      : { ...clip, durationUs: nextDuration })
+  const frameUs = framesToUs(1, project.sequence.frameRate.numerator, project.sequence.frameRate.denominator)
+  const linked = locations(project, ids).map(({ clip }) => clip)
+  if (edge === 'start') {
+    // Every linked clip shifts its start by the same amount. Clamp that amount
+    // so that no peer starts before 0 / before its own source, or collapses.
+    const requested = selectedLocationAfter.clip.startUs - selectedBefore.startUs
+    const earliest = Math.max(...linked.map((clip) => Math.max(-clip.sourceInUs, -clip.startUs)))
+    const latest = Math.min(...linked.map((clip) => clip.durationUs - frameUs))
+    const delta = Math.min(latest, Math.max(earliest, requested))
+    for (const id of ids) {
+      updateClipInProject(next, id, (clip) => ({ ...clip, startUs: clip.startUs + delta, sourceInUs: clip.sourceInUs + delta, durationUs: clip.durationUs - delta }))
+    }
+  } else {
+    const requested = selectedLocationAfter.clip.durationUs - selectedBefore.durationUs
+    for (const id of ids) {
+      updateClipInProject(next, id, (clip) => {
+        const asset = 'assetId' in clip ? project.media.find((item) => item.id === clip.assetId) : undefined
+        const limit = asset && asset.kind !== 'image' && asset.durationUs > 0
+          ? Math.max(frameUs, asset.durationUs - clip.sourceInUs)
+          : Number.MAX_SAFE_INTEGER
+        return { ...clip, durationUs: Math.min(limit, Math.max(frameUs, clip.durationUs + requested)) }
+      })
+    }
   }
   for (const track of next.tracks) assertSubtitleTrackHasNoOverlap(track)
   updateTimestamp(next)
@@ -539,7 +560,8 @@ const deleteExpandedClips = (project: ProjectFile, ids: string[], ripple: boolea
     }, [])
   for (const track of next.tracks) {
     track.clips = track.clips.filter((clip) => !selected.has(clip.id))
-    if (ripple) {
+    // A locked track must not be modified at all, ripple included.
+    if (ripple && !track.locked) {
       for (const clip of track.clips) {
         const shift = intervals.reduce((total, [start, end]) => total + (clip.startUs >= end ? end - start : 0), 0)
         if (shift > 0) {

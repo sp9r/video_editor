@@ -59,5 +59,6 @@ describe('ThumbnailService', () => {
       await service.extractCandidates({ mediaPath: media, sourceInUs: index * 1_000_000, durationUs: 60_000_000 })
     }
     expect((await readdir(path.join(root, 'cache'))).filter((entry) => !entry.startsWith('.'))).toHaveLength(64)
-  }, 15_000)
+    // 66 cache directories on Windows disk; slow while FFmpeg tests run in parallel.
+  }, 60_000)
 })

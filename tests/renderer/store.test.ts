@@ -363,7 +363,7 @@ describe('editor history and linked selection', () => {
     useEditorStore.getState().redo()
     expect(useEditorStore.getState().dirty).toBe(true)
     useEditorStore.getState().undo()
-    useEditorStore.getState().patchClip('video', (clip) => clip.kind === 'video' ? { ...clip, enabled: true } : clip)
+    useEditorStore.getState().patchClip('video', (clip) => clip.kind === 'video' ? { ...clip, name: '編集後' } : clip)
     expect(useEditorStore.getState().future).toHaveLength(0)
   })
 
@@ -664,5 +664,64 @@ describe('editor history and linked selection', () => {
     const tracks = useEditorStore.getState().project.tracks
     expect(tracks.filter((track) => track.kind === 'media')).toHaveLength(11)
     expect(tracks.filter((track) => track.kind === 'subtitle')).toHaveLength(11)
+  })
+
+  it('keeps editing sane: no empty undo entries, pruned selection, locked and unselected splits', () => {
+    const store = useEditorStore
+    store.getState().loadProject(fixture())
+    const pastBefore = store.getState().past.length
+    store.getState().moveSelected('video', store.getState().project.tracks.find((t) => t.clips.some((c) => c.id === 'video'))!.id, 0)
+    expect(store.getState().past.length).toBe(pastBefore)
+
+    store.getState().selectClip('video')
+    store.getState().deleteSelected()
+    expect(store.getState().selectedClipIds).toEqual([])
+    store.getState().selectClip('video')
+    store.getState().undo()
+    store.getState().selectClip('video')
+    store.getState().redo()
+    expect(store.getState().selectedClipIds).toEqual([])
+
+    store.getState().undo()
+    store.getState().selectClip(null)
+    store.getState().setPlayhead(2_000_000)
+    store.getState().splitSelected()
+    const clips = store.getState().project.tracks.flatMap((t) => t.clips)
+    expect(clips.filter((c) => c.kind === 'video')).toHaveLength(2)
+    expect(clips.filter((c) => c.kind === 'audio')).toHaveLength(2)
+
+    const lockedId = store.getState().project.tracks.find((t) => t.kind === 'media')!.id
+    store.getState().patchTrack({ ...store.getState().project.tracks.find((t) => t.id === lockedId)!, locked: true })
+    store.getState().selectClip('video')
+    expect(() => store.getState().splitSelectedAt(1_000_000)).not.toThrow()
+    expect(store.getState().notice?.tone).toBe('warning')
+    store.getState().showNotice('x')
+    store.getState().patchClip('video', (clip) => ({ ...clip, name: 'blocked' }))
+    expect(store.getState().notice?.message).toContain('ロック')
+  })
+
+  it('places dropped media on whole frames and refuses locked tracks', () => {
+    const store = useEditorStore
+    store.getState().loadProject({ ...createEmptyProject('drop'), media: [asset] })
+    const track = store.getState().project.tracks.find((t) => t.kind === 'media')!
+    store.getState().addAssetClip(asset.id, track.id, 1_234_567.89)
+    const clip = store.getState().project.tracks.flatMap((t) => t.clips)[0]!
+    expect(Number.isInteger(clip.startUs)).toBe(true)
+    expect(clip.startUs).toBe(1_233_333)
+    store.getState().patchTrack({ ...store.getState().project.tracks.find((t) => t.id === track.id)!, locked: true })
+    store.getState().addAssetClip(asset.id, track.id, 0)
+    expect(store.getState().project.tracks.flatMap((t) => t.clips)).toHaveLength(1)
+    expect(store.getState().notice?.message).toContain('ロック')
+  })
+
+  it('keeps edits made while a save is in flight', () => {
+    const store = useEditorStore
+    store.getState().loadProject(fixture())
+    const sent = store.getState().project
+    store.getState().patchClip('video', (clip) => ({ ...clip, name: 'edited during save' }))
+    store.getState().markSaved({ ...sent, projectPath: 'C:\p.spectra' }, sent)
+    expect(store.getState().project.tracks.flatMap((t) => t.clips).find((c) => c.id === 'video')!.name).toBe('edited during save')
+    expect(store.getState().project.projectPath).toBe('C:\p.spectra')
+    expect(store.getState().dirty).toBe(true)
   })
 })

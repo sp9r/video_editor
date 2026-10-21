@@ -26,6 +26,7 @@ const api: DesktopApi = {
   createPreviewPlan: (project: ProjectFile) => ipcRenderer.invoke(IPC.previewPlan, project),
   renderAccuratePreviewFrame: (project: ProjectFile, timeUs: TimeUs) => ipcRenderer.invoke(IPC.previewAccurateFrame, project, timeUs),
   renderSubtitleOverlay: (project: ProjectFile, timeUs: TimeUs, options?: SubtitleOverlayRequestOptions) => ipcRenderer.invoke(IPC.previewSubtitleOverlay, project, timeUs, options),
+  renderSubtitleOverlaySequence: (project: ProjectFile, startFrame: number, frameCount: number) => ipcRenderer.invoke(IPC.previewSubtitleOverlaySequence, project, startFrame, frameCount),
   startSilenceCutReapply: (project: ProjectFile, selectedClipId: string, jobId: string, profile: SilenceReapplyProfile, minSilenceUs?: number) => ipcRenderer.invoke(IPC.silenceCutReapply, project, selectedClipId, jobId, profile, minSilenceUs),
   cancelSilenceCutReapply: (jobId: string) => ipcRenderer.invoke(IPC.silenceCutCancel, jobId),
   autoCaptionHealth: () => ipcRenderer.invoke(IPC.autoCaptionHealth),

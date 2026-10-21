@@ -550,12 +550,10 @@ select {
 .preview-diagnostic-result pre { max-height: min(60vh, 520px); margin: 8px 0; overflow: auto; color: #cbd3d7; font: 10px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .viewer-stage { display: flex; align-items: center; justify-content: center; min-height: 0; padding: 12px 24px 8px; background: radial-gradient(ellipse at center, #242a31, #101318 67%); }
 .viewer-canvas { position: relative; height: 100%; max-height: 100%; aspect-ratio: 16 / 9; max-width: 100%; overflow: hidden; box-shadow: 0 8px 25px rgb(0 0 0 / 0.55); }
-.preview-scene { position: absolute; top: 50%; left: 50%; overflow: hidden; transform-origin: center; background: transparent; }
-.accurate-preview-overlay { position: absolute; z-index: 30; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; }
-.fast-authoritative-subtitle-overlay { position: absolute; z-index: 20; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; }
-.preview-visual { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; padding: 0; background: transparent; border: 0; cursor: default; transform-origin: center; }
-.preview-media { display: block; width: 100%; height: 100%; object-fit: contain; background: transparent; }
-.preview-visual-placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: rgb(255 255 255 / .5); font-size: 18px; background: rgb(255 255 255 / .03); }
+.preview-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; cursor: default; }
+.preview-source-pool { position: absolute; z-index: 0; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+.preview-exact-badge { position: absolute; z-index: 40; top: 8px; left: 8px; padding: 2px 7px; color: #101318; font-size: 10px; background: var(--mint); border-radius: 3px; pointer-events: none; }
+.viewer-exact-toggle { display: flex; align-items: center; gap: 5px; margin-left: 14px; color: var(--text-dim); font-size: 10px; cursor: pointer; }
 .preview-audio-pool { position: absolute; z-index: 0; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
 .composite-frame { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; background-size: cover; border: 0; cursor: default; transform-origin: center; }
 .frame-skyline { position: absolute; right: 0; bottom: 0; left: 0; height: 55%; opacity: 0.5; }

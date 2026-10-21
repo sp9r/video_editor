@@ -40,12 +40,7 @@ import ProjectQaPanel from './components/ProjectQaPanel'
 import { previewDiagnosticStore } from './preview-performance-diagnostics'
 import { useEditorStore, type AutoCaptionApplySummary } from './store'
 import { useReviewStore } from './review-store'
-import { autoCaptionControlState } from './action-state'
-
-const isTypingTarget = (target: EventTarget | null): boolean => {
-  const element = target as HTMLElement | null
-  return Boolean(element?.closest('input, textarea, select, [contenteditable="true"]'))
-}
+import { autoCaptionControlState, controlOwnsKey, shortcutTargetKind } from './action-state'
 
 export default function App(): React.JSX.Element {
   const {
@@ -188,9 +183,10 @@ export default function App(): React.JSX.Element {
     }
     setSaving(true)
     try {
-      const result = await window.spectra.saveProject(useEditorStore.getState().project, saveAs)
+      const sent = useEditorStore.getState().project
+      const result = await window.spectra.saveProject(sent, saveAs)
       if (!result.cancelled) {
-        markSaved(result.project)
+        markSaved(result.project, sent)
         showNotice(`プロジェクトを保存しました${result.projectPath ? `: ${result.projectPath}` : ''}`, 'success')
       }
     } catch (error) {
@@ -215,6 +211,7 @@ export default function App(): React.JSX.Element {
     try {
       const result = await window.spectra.openProject()
       if (!result.cancelled && result.project) {
+        if (useEditorStore.getState().dirty && !window.confirm('未保存の変更があります。破棄して別のプロジェクトを開きますか？')) return
         loadProject(result.project)
         showNotice(
           result.warnings.length ? `プロジェクトを開きました。${result.warnings.length}件の素材がオフラインです。` : 'プロジェクトを開きました。',
@@ -327,7 +324,8 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     const keyboard = (event: KeyboardEvent): void => {
-      const typing = isTypingTarget(event.target)
+      const targetKind = shortcutTargetKind(event.target)
+      const typing = targetKind === 'text'
       const command = event.ctrlKey || event.metaKey
       if (command && event.key.toLocaleLowerCase() === 's') {
         event.preventDefault(); void save(event.shiftKey); return
@@ -336,6 +334,9 @@ export default function App(): React.JSX.Element {
         event.preventDefault(); void open(); return
       }
       if (typing) return
+      // A focused slider/checkbox keeps Space and the arrow keys for itself, but
+      // Undo, Delete, split etc. must keep working after the user touched it.
+      if (targetKind === 'control' && controlOwnsKey(event.key)) return
       if (useReviewStore.getState().enabled && ['a', 'b', 'c', 'd'].includes(event.key.toLocaleLowerCase())) return
       if (command && event.key.toLocaleLowerCase() === 'z') {
         event.preventDefault(); event.shiftKey ? redo() : undo(); return
@@ -347,17 +348,22 @@ export default function App(): React.JSX.Element {
         event.preventDefault(); splitSelected(); return
       }
       if (event.key === ' ') {
-        event.preventDefault(); setPlaying(!useEditorStore.getState().playing); return
+        event.preventDefault(); if (!event.repeat) setPlaying(!useEditorStore.getState().playing); return
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
-        event.preventDefault(); deleteSelected(event.shiftKey); return
+        // Shift forces a ripple delete; otherwise the "auto close gap" toggle decides.
+        event.preventDefault(); deleteSelected(event.shiftKey ? true : undefined); return
       }
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         event.preventDefault()
         const direction = event.key === 'ArrowLeft' ? -1 : 1
-        setPlayhead(Math.max(0, useEditorStore.getState().playheadUs + direction * 1_000_000 / 30))
+        const { playheadUs, project: current } = useEditorStore.getState()
+        const frameUs = 1_000_000 * current.sequence.frameRate.denominator / current.sequence.frameRate.numerator
+        setPlayhead(Math.max(0, (Math.round(playheadUs / frameUs) + direction) * frameUs))
         return
       }
+      // Single-key tool shortcuts must not fire for Ctrl+C / Ctrl+V / Alt+S etc.
+      if (command || event.altKey || event.repeat) return
       if (event.key.toLocaleLowerCase() === 'v') setTool('select')
       if (event.key.toLocaleLowerCase() === 'c') setTool('razor')
       if (event.key.toLocaleLowerCase() === 's') setSnapping(!useEditorStore.getState().snapping)

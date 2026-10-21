@@ -5,7 +5,8 @@ import {
   buildRenderFilterGraph,
   createPreviewPlan,
   createRenderPlan,
-  ffmpegSupportsFileBackedOptions
+  ffmpegSupportsFileBackedOptions,
+  inputColorMatrix
 } from '../../src/main/ffmpeg/render-plan.js'
 import { makeExportSettings, makeProject } from './ffmpeg-fixtures.js'
 
@@ -21,11 +22,19 @@ describe('FFmpeg render planning', () => {
     expect(plan.inputs).toHaveLength(2)
     expect(plan.inputArgs).toEqual([
       '-loop', '1', '-framerate', '30/1', '-t', '3.000000', '-i', project.media[1]?.path,
-      '-ss', '1.000000', '-t', '5.000000', '-i', project.media[0]?.path
+      '-ss', '0.998000', '-t', '5.000000', '-i', project.media[0]?.path
     ])
-    expect(plan.graphStatements[0]).toContain('color=c=0x102030:s=1280x720:r=30/1:d=5.000000')
-    expect(plan.graphStatements.join('\n')).toContain("crop=w='max(2\\,trunc(iw*0.7/2)*2)'")
-    expect(plan.graphStatements.join('\n')).toContain("overlay=x='(W-w)/2+120':y='(H-h)/2+-30'")
+    // Layout is composed at the sequence size and resized to the export size at the end.
+    expect(plan.compositionWidth).toBe(1920)
+    expect(plan.compositionHeight).toBe(1080)
+    expect(plan.graphStatements[0]).toContain('color=c=0x102030:s=1920x1080:r=30/1:d=5.000000')
+    expect(plan.filterGraph).toContain('scale=w=1280:h=720:force_original_aspect_ratio=decrease')
+    // Image: 800x600 fitted into 1920x1080 (x1.8), then scale 0.4, gives a 576x432 box.
+    const graph = plan.graphStatements.join('\n')
+    expect(graph).toContain('scale=w=576:h=432:flags=bicubic,setsar=1')
+    expect(graph).toContain('drawbox=x=0:y=0:w=58:h=432:color=black@0:t=fill:replace=1')
+    expect(graph).toContain('drawbox=x=461:y=0:w=115:h=432:color=black@0:t=fill:replace=1')
+    expect(graph).toContain('overlay=x=792:y=294:eof_action=pass')
     expect(plan.graphStatements.join('\n')).toContain('adelay=0:all=1')
     expect(plan.graphStatements.join('\n')).toContain('amix=inputs=1:duration=longest:normalize=0')
     expect(plan.srt).toContain('日本語')
@@ -42,10 +51,40 @@ describe('FFmpeg render planning', () => {
 
     expect(cpu).toContain("ass=filename='captions.ass'")
     expect(plan.subtitleCueCount).toBe(1)
-    expect(cpu).toMatch(/\]format=yuv420p\[vout\]$/u)
-    expect(vaapi).toMatch(/\]format=nv12,hwupload\[vout\]$/u)
+    expect(cpu).toMatch(/\]scale=out_color_matrix=bt709:out_range=tv:flags=bicubic,format=yuv420p\[vout\]$/u)
+    expect(vaapi).toMatch(/\]scale=out_color_matrix=bt709:out_range=tv:flags=bicubic,format=nv12,hwupload\[vout\]$/u)
     expect(cpu).not.toContain(project.media[0]?.path ?? 'missing')
     expect(cpu).not.toContain(project.media[1]?.path ?? 'missing')
+  })
+
+  it('names the input colour matrix and tags the output as BT.709', () => {
+    expect(inputColorMatrix({ colorSpace: 'bt709', height: 480 })).toBe('bt709')
+    expect(inputColorMatrix({ colorSpace: 'smpte170m', height: 1080 })).toBe('bt601')
+    expect(inputColorMatrix({ colorSpace: 'bt2020nc', height: 2160 })).toBe('bt2020')
+    expect(inputColorMatrix({ height: 1080 })).toBe('bt709')
+    expect(inputColorMatrix({ height: 480 })).toBe('bt601')
+
+    const project = makeProject()
+    const asset = project.media[0]
+    if (asset) Object.assign(asset, { colorSpace: 'bt470bg', colorRange: 'pc' })
+    const plan = createRenderPlan(project, makeExportSettings(join(process.cwd(), 'out.mp4')))
+    expect(plan.graphStatements.join(';')).toContain('scale=w=1920:h=1080:flags=bicubic:in_color_matrix=bt601:in_range=pc')
+    const args = buildRenderCommandArgs(plan, {
+      filterGraphPath: 'g.ffgraph', outputPath: 'o.mp4', encoderId: 'libx264', videoBitrate: 8_000_000, audioBitrate: 192_000
+    })
+    expect(args.join(' ')).toContain('-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv')
+  })
+
+  it('lays rotated and cropped clips out in sequence pixels from the shared layout', () => {
+    const project = makeProject()
+    const image = project.tracks[0]?.clips[0]
+    if (image?.kind !== 'image') throw new Error('fixture')
+    image.transform = { ...image.transform, rotation: 90, scale: 0.5, positionX: 0, positionY: 0, crop: { left: 0, top: 0, right: 0, bottom: 0 } }
+    const graph = createRenderPlan(project, makeExportSettings(join(process.cwd(), 'out.mp4'))).graphStatements.join(';')
+    // 800x600 fits as 1440x1080 at x1.8, scale 0.5 gives 720x540; rotated 90 degrees the box is 540x720, centred.
+    expect(graph).toContain('scale=w=720:h=540:flags=bicubic')
+    expect(graph).toContain('rotate=1.570796:ow=540:oh=720:c=black@0')
+    expect(graph).toContain('overlay=x=690:y=180:eof_action=pass')
   })
 
   it('uses an argv array and a graph file for unsafe Unicode media paths', () => {

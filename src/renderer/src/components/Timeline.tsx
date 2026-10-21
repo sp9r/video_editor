@@ -19,13 +19,13 @@ import {
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
-import { findSubtitleContext, formatTimecode, layoutSubtitleTracks, makeId } from '../../../shared/project'
+import { createTrack, findSubtitleContext, formatTimecode, makeId, snapUsToFrame, subtitleOverlaps } from '../../../shared/project'
 import { isSubtitleOwnershipBoundaryAvailable, isSubtitleWordBoundarySplitAvailable, nearestSubtitleOwnershipBoundaryIndex, nearestSubtitleWordBoundaryIndex } from '../../../shared/editing/operations'
 import { subtitleEditUnits } from '../../../shared/editing/edit-units'
 import { snapSubtitleTimelinePosition } from '../../../shared/editing/subtitle-snap'
 import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type SubtitleClip, type SubtitleEditUnit, type SubtitleWord, type TimelineClip, type TimelineTrack, type TimeUs } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
-import { TIMELINE_ZOOM_MAX, TIMELINE_ZOOM_MIN, clampTimelineZoom, timelineZoomControlState, timelineZoomScrollLeft, trackControlState } from '../action-state'
+import { TIMELINE_ZOOM_MAX, TIMELINE_ZOOM_MIN, clampTimelineZoom, shortcutTargetKind, timelineZoomControlState, timelineZoomScrollLeft, trackControlState } from '../action-state'
 import { useReviewStore } from '../review-store'
 import { previewDiagnosticStore } from '../preview-performance-diagnostics'
 import { Button, IconButton } from './Controls'
@@ -238,10 +238,8 @@ export const timelineScrubTimeUs = (input: TimelineScrubMappingInput): number =>
   return Math.max(0, ((clientX - laneLeft + scrollLeft) / zoomPxPerSecond) * 1_000_000)
 }
 
-export const isTextEditingTarget = (target: EventTarget | null): boolean => {
-  const element = target as HTMLElement | null
-  return element?.matches('input, textarea, select, [contenteditable="true"]') ?? false
-}
+/** True when the focused element needs native clipboard/typing keys (text, number, textarea, select). */
+export const isTextEditingTarget = (target: EventTarget | null): boolean => shortcutTargetKind(target) === 'text'
 
 export const isOutsideContextMenu = (menu: HTMLElement | null, target: EventTarget | null): boolean =>
   !menu?.contains(target as Node)
@@ -556,6 +554,13 @@ export default function Timeline(): React.JSX.Element {
     bypass
   })
 
+  /** Pointer position as a timeline time: whole frames (Alt = free), or an exact caption snap target. */
+  const pointerTimeUs = (clientX: number, lane: HTMLElement, bypass: boolean): TimeUs => {
+    const rawUs = timeFromPointer(clientX, lane)
+    const snappedUs = snapTime(rawUs, bypass)
+    return snappedUs !== rawUs || bypass ? snappedUs : snapUsToFrame(rawUs, useEditorStore.getState().project)
+  }
+
   const beginTimelineScrub = (event: React.PointerEvent, lane: HTMLElement, enableEdgeAutoScroll = false): void => {
     event.preventDefault()
     event.stopPropagation()
@@ -565,7 +570,7 @@ export default function Timeline(): React.JSX.Element {
     let latestClientX = event.clientX
     let animationFrame: number | null = null
     try { target.setPointerCapture(event.pointerId) } catch { /* synthetic smoke events may not have an active pointer */ }
-    const update = (clientX: number): void => setPlayhead(snapTime(timeFromPointer(clientX, lane), bypass))
+    const update = (clientX: number): void => setPlayhead(pointerTimeUs(clientX, lane, bypass))
     update(event.clientX)
     const edgeScroll = (): void => {
       if (!active) return
@@ -651,7 +656,15 @@ export default function Timeline(): React.JSX.Element {
     event.stopPropagation()
     if (tool === 'razor' && mode === 'move') {
       const lane = event.currentTarget.closest('.track-lane') as HTMLElement | null
-      if (!lane || clip.kind !== 'subtitle') return
+      if (!lane) return
+      if (clip.kind !== 'subtitle') {
+        // Razor on a video/audio/image clip cuts it (and its linked partners) at the click position.
+        const atUs = pointerTimeUs(event.clientX, lane, event.altKey)
+        selectClip(clip.id)
+        setPlayhead(atUs)
+        useEditorStore.getState().splitSelectedAt(atUs)
+        return
+      }
       const units = subtitleEditUnits(clip)
       const boundaryIndex = units ? nearestSubtitleWordBoundaryIndex(clip, timeFromPointer(event.clientX, lane)) : null
       const boundaryTimeUs = boundaryIndex === null || !units?.[boundaryIndex + 1] ? null : units[boundaryIndex + 1]!.startUs
@@ -663,7 +676,10 @@ export default function Timeline(): React.JSX.Element {
       return
     }
     selectClip(clip.id, event.ctrlKey || event.metaKey)
-    if (mode === 'move') setPlayhead(clip.startUs)
+    // Selecting a clip shows it in the monitor, but must not pull the playhead
+    // out of the clip: "place playhead, click clip, Ctrl+K" has to split there.
+    const currentPlayheadUs = useEditorStore.getState().playheadUs
+    if (mode === 'move' && !(currentPlayheadUs >= clip.startUs && currentPlayheadUs < clip.startUs + clip.durationUs)) setPlayhead(clip.startUs)
     const start: PointerEdit = {
       clipId: clip.id,
       mode,
@@ -718,27 +734,47 @@ export default function Timeline(): React.JSX.Element {
       showNotice('デスクトップ版ではSRT/VTTを読み込めます。')
       return
     }
-    const cues = await window.spectra.importSubtitles()
+    let cues: ImportedSubtitleCue[] | null
+    try {
+      cues = await window.spectra.importSubtitles()
+    } catch (error) {
+      showNotice(`字幕ファイルを読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      return
+    }
     if (!cues?.length) return
-    const subtitleTrack = project.tracks.find((track) => track.kind === 'subtitle')
-    if (!subtitleTrack) return showNotice('字幕トラックがありません。', 'error')
-    const next = structuredClone(project)
-    const target = next.tracks.find((track) => track.id === subtitleTrack.id)
-    if (!target) return
-    target.clips.push(...cues.map((cue: ImportedSubtitleCue) => ({
-      id: makeId('caption'),
-      name: cue.text.slice(0, 24) || '字幕',
-      kind: 'subtitle' as const,
-      startUs: cue.startUs,
-      durationUs: Math.max(33_333, cue.endUs - cue.startUs),
-      sourceInUs: 0,
-      enabled: true,
-      text: cue.text,
-      style: structuredClone(DEFAULT_SUBTITLE_STYLE)
-    })))
-    target.clips.sort((a, b) => a.startUs - b.startUs)
-    applyProject(layoutSubtitleTracks(next))
-    showNotice(`${cues.length}件の字幕を読み込みました。`, 'success')
+    // The file dialog is asynchronous: always work on the project as it is now.
+    const currentProject = useEditorStore.getState().project
+    const subtitleTracks = currentProject.tracks.filter((track) => track.kind === 'subtitle')
+    if (subtitleTracks.length && subtitleTracks.every((track) => track.locked)) return showNotice('字幕トラックがロックされています。ロックを解除してから読み込んでください。', 'warning')
+    const usable = cues.filter((cue) => Number.isFinite(cue.startUs) && Number.isFinite(cue.endUs) && cue.startUs >= 0)
+    if (!usable.length) return showNotice('字幕ファイルに有効な時刻のキューがありませんでした。', 'warning')
+    const next = structuredClone(currentProject)
+    // Existing captions stay where they are; each cue goes to the first unlocked
+    // caption track where it does not overlap, otherwise to a new caption track.
+    const editable = next.tracks.filter((track) => track.kind === 'subtitle' && !track.locked)
+    for (const cue of usable) {
+      const clip: SubtitleClip = {
+        id: makeId('caption'),
+        name: cue.text.slice(0, 24) || '字幕',
+        kind: 'subtitle',
+        startUs: Math.round(cue.startUs),
+        durationUs: Math.max(33_333, Math.round(cue.endUs - cue.startUs)),
+        sourceInUs: 0,
+        enabled: true,
+        text: cue.text,
+        style: structuredClone(DEFAULT_SUBTITLE_STYLE)
+      }
+      let target = editable.find((track) => track.clips.every((existing) => existing.kind !== 'subtitle' || !subtitleOverlaps(existing, clip)))
+      if (!target) {
+        target = createTrack('subtitle', next.tracks.filter((track) => track.kind === 'subtitle').length + 1)
+        next.tracks.push(target)
+        editable.push(target)
+      }
+      target.clips.push(clip)
+    }
+    for (const track of editable) track.clips.sort((a, b) => a.startUs - b.startUs)
+    applyProject(next)
+    showNotice(`${usable.length}件の字幕を読み込みました${usable.length < cues.length ? `（時刻が不正な${cues.length - usable.length}件は除外）` : ''}。`, 'success')
   }
 
   return (
@@ -762,7 +798,7 @@ export default function Timeline(): React.JSX.Element {
           <Button className="subtle-button" onClick={addMediaTrack}><Plus size={14} />Vトラック</Button>
           <Button className="subtle-button" onClick={addSubtitleTrack}><Plus size={14} />Cトラック</Button>
           <Button className="subtle-button" onClick={addSubtitle}><Captions size={14} />字幕を追加</Button>
-          <IconButton label={selectedClipIds.length ? '再生位置で分割（Ctrl+K）' : '再生位置で分割（クリップを選択してください）'} disabled={!selectedClipIds.length} onClick={splitSelected}><Scissors size={16} /></IconButton>
+          <IconButton label={selectedClipIds.length ? '再生位置で分割（Ctrl+K）' : '再生位置で分割（Ctrl+K・未選択なら再生ヘッド上のクリップをすべて分割）'} onClick={splitSelected}><Scissors size={16} /></IconButton>
           <IconButton label={selectedClipIds.length ? (rippleMode ? '選択クリップを自動詰め削除' : '選択クリップを削除') : '選択クリップを削除（クリップを選択してください）'} disabled={!selectedClipIds.length} onClick={() => deleteSelected()}><Trash2 size={16} /></IconButton>
           <span className="toolbar-separator" />
           <IconButton label={zoomControls.canZoomOut ? 'タイムラインを縮小' : `タイムラインを縮小（最小${TIMELINE_ZOOM_MIN}px/秒）`} disabled={!zoomControls.canZoomOut} onClick={() => zoomTimeline(zoomPxPerSecond - 12)}><ZoomOut size={15} /></IconButton>
@@ -803,7 +839,7 @@ export default function Timeline(): React.JSX.Element {
                 onPointerDown={(event) => {
                   setContextMenu(null)
                   if (event.target === event.currentTarget) {
-                    setPlayhead(snapTime(timeFromPointer(event.clientX, event.currentTarget), event.altKey))
+                    setPlayhead(pointerTimeUs(event.clientX, event.currentTarget, event.altKey))
                     selectClip(null)
                   }
                 }}

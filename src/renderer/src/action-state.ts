@@ -1,5 +1,26 @@
 import { isMediaTrack, type TimelineTrack } from '../../shared/types'
 
+const NON_TEXT_INPUT_TYPES = new Set(['checkbox', 'radio', 'range', 'color', 'button', 'submit', 'reset', 'file', 'image'])
+
+/**
+ * How a focused element treats global editor shortcuts.
+ * - `text`: the element needs the keyboard for editing (text, number, textarea, select);
+ *   editor shortcuts must stay out of the way.
+ * - `control`: a slider/checkbox/color control; it only needs Space and the arrow keys,
+ *   so Ctrl+Z, Delete, Ctrl+K etc. must keep working after the user touched it.
+ * - `none`: any other element.
+ */
+export const shortcutTargetKind = (target: EventTarget | null): 'text' | 'control' | 'none' => {
+  const element = target as HTMLElement | null
+  const match = element?.closest?.('input, textarea, select, [contenteditable="true"]') as HTMLElement | null | undefined
+  if (!match) return 'none'
+  if (match.tagName === 'INPUT' && NON_TEXT_INPUT_TYPES.has((match as HTMLInputElement).type)) return 'control'
+  return 'text'
+}
+
+/** Keys a focused slider/checkbox handles itself. */
+export const controlOwnsKey = (key: string): boolean => key === ' ' || key.startsWith('Arrow') || key === 'Home' || key === 'End' || key === 'PageUp' || key === 'PageDown'
+
 export const TIMELINE_ZOOM_MIN = 4
 export const TIMELINE_ZOOM_MAX = 1000
 export const TIMELINE_ZOOM_DEFAULT = 72

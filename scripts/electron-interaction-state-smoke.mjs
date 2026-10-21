@@ -66,6 +66,11 @@ try {
   assert(states.noAudio?.run?.disabled === true && String(states.noAudio.run.title).includes('音声'), 'no-audio media must explain disabled auto processing')
   assert(states.multiSelection?.run?.disabled === true && String(states.multiSelection.run.title).includes('1つだけ'), 'multi-selection must explain the single-clip prerequisite')
   console.log(JSON.stringify({ ...report, outputLines: output.length }, null, 2))
+  if (process.env.SPECTRA_SKIP_EDITING_SMOKE !== '1') {
+    const { runEditingSmoke } = await import('./electron-editing-smoke.mjs')
+    const editing = await runEditingSmoke({ repositoryRoot, electronPath, workspace })
+    console.log(JSON.stringify({ editingSmoke: editing }, null, 2))
+  }
 } finally {
   await rm(workspace, { recursive: true, force: true })
 }

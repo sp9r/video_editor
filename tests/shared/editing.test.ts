@@ -175,3 +175,40 @@ const fixtureForMoveGap = (): ProjectFile => {
   ]
   return validateProject(project)
 }
+
+describe('editing robustness', () => {
+  it('never moves a linked group before the timeline origin or out of sync', () => {
+    let project = linkedProject()
+    project = trimLinkedClip(project, 'video-1', 'start', 1_000_000)
+    const moved = moveLinkedClip(project, 'video-1', project.tracks.find((t) => t.clips.some((c) => c.id === 'video-1'))!.id, 0)
+    expect(clipFrom(moved, 'video-1').startUs).toBe(clipFrom(moved, 'audio-1').startUs)
+    expect(clipFrom(moved, 'video-1').startUs).toBe(0)
+    expect(moveLinkedClip(project, 'video-1', project.tracks[0]!.id, Number.NaN)).toBe(project)
+  })
+
+  it('does not trim a clip start before the timeline origin or past the source', () => {
+    let project = linkedProject()
+    project = trimLinkedClip(project, 'video-1', 'start', 1_000_000)
+    const extended = trimLinkedClip(project, 'video-1', 'start', -5_000_000)
+    for (const id of ['video-1', 'audio-1']) {
+      expect(clipFrom(extended, id).startUs).toBeGreaterThanOrEqual(0)
+      expect(clipFrom(extended, id).sourceInUs).toBeGreaterThanOrEqual(0)
+    }
+    expect(() => validateProject(extended)).not.toThrow()
+    const longer = trimLinkedClip(extended, 'video-1', 'end', 60_000_000)
+    expect(clipFrom(longer, 'video-1').startUs + clipFrom(longer, 'video-1').durationUs).toBeLessThanOrEqual(10_000_000)
+  })
+
+  it('keeps clips on locked tracks untouched by a ripple delete', () => {
+    let project = createEmptyProject('ripple lock')
+    project = { ...project, tracks: [...project.tracks, createTrack('media', 2)], media: [videoAsset] }
+    const [v1, v2] = project.tracks.filter((t) => t.kind === 'media')
+    project = addClipToTrack(project, v1!.id, { ...createClipForAsset(videoAsset, 0, 1_000_000), id: 'a' })
+    project = addClipToTrack(project, v1!.id, { ...createClipForAsset(videoAsset, 1_000_000, 1_000_000), id: 'b' })
+    project = addClipToTrack(project, v2!.id, { ...createClipForAsset(videoAsset, 2_000_000, 1_000_000), id: 'c' })
+    project.tracks.find((t) => t.id === v2!.id)!.locked = true
+    const next = deleteLinkedClips(project, ['a'], true)
+    expect(clipFrom(next, 'b').startUs).toBe(0)
+    expect(clipFrom(next, 'c').startUs).toBe(2_000_000)
+  })
+})

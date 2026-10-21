@@ -6,6 +6,7 @@ import type {
   EncoderReport,
   AccuratePreviewFrameResult,
   SubtitleOverlayResult,
+  SubtitleOverlaySequenceResult,
   ExportProgress,
   ExportSettings,
   ProbeResult,
@@ -23,7 +24,6 @@ import { probeMediaFile, probeMediaFileSafe, validateRenderedOutput } from './pr
 import {
   buildRenderCommandArgs,
   buildAccurateFrameFilterGraph,
-  buildSubtitleOverlayFilterGraph,
   buildRenderFilterGraph,
   createRenderPlan,
   ffmpegSupportsFileBackedOptions,
@@ -34,7 +34,7 @@ import { WaveformExtractor } from './waveform.js'
 import { ExportPublishError, publishExportOutputs } from './export-publish.js'
 import type { WaveformRequest } from '../../shared/types.js'
 import { frameIndexForTime, timeUsForFrameIndex } from '../../shared/frame-time.js'
-import { subtitleVisualStateKey } from '../../shared/subtitle-render.js'
+import { subtitleAnimatedAt, subtitleVisualStateKey } from '../../shared/subtitle-render.js'
 import { projectFingerprint } from '../../shared/project.js'
 
 export interface FfmpegServiceOptions {
@@ -126,7 +126,54 @@ export const createFfmpegProgressParser = (
 
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error)
 
-const subtitleOverlayRendererVersion = 'phase4r4-alpha-layer2'
+const subtitleOverlayRendererVersion = 'preview-parity-2'
+
+/** Animated frames differ per frame, so only they include the frame index. */
+const subtitleOverlayCacheKey = (
+  project: ProjectFile,
+  fps: { numerator: number; denominator: number },
+  subtitleStateFingerprint: string,
+  animationMode: 'full' | 'base',
+  animatedFrameIndex: number | null
+): string => createHash('sha256').update(JSON.stringify({
+  rendererVersion: subtitleOverlayRendererVersion,
+  width: Math.max(16, Math.round(project.sequence.width)),
+  height: Math.max(16, Math.round(project.sequence.height)),
+  fps,
+  subtitleStateFingerprint,
+  animationMode,
+  ...(animatedFrameIndex === null ? {} : { animatedFrameIndex })
+})).digest('hex')
+
+/**
+ * Straight-alpha libass image of the subtitles for `frames` frames starting at
+ * `startUs`. libass is run over opaque black and opaque white, exactly as in
+ * the burn-in: alpha = 1 - (white - black) / 255 and colour = black / alpha.
+ * Running `ass` over a transparent canvas instead squares every partial alpha
+ * (a 15% box becomes 2%), so cue backgrounds and soft edges would not match Final.
+ */
+const subtitleOverlayGraph = (
+  width: number,
+  height: number,
+  fps: { numerator: number; denominator: number },
+  startUs: number,
+  frames: number,
+  assFileName: string
+): string => {
+  const frameUs = Math.ceil(fps.denominator * 1_000_000 / fps.numerator)
+  const duration = ((frameUs * frames) / 1_000_000 + 0.001).toFixed(6)
+  const start = (startUs / 1_000_000).toFixed(6)
+  const render = (colour: string): string =>
+    `color=c=${colour}:s=${width}x${height}:r=${fps.numerator}/${fps.denominator}:d=${duration},format=rgba,setpts=PTS+${start}/TB,ass=filename='${assFileName}',setpts=PTS-${start}/TB`
+  return [
+    `${render('black')},split[rb1][rb2]`,
+    `${render('white')}[rw]`,
+    '[rw][rb1]blend=all_mode=subtract,negate,format=gray,split[al1][al2]',
+    '[rb2]format=gbrp[rbp]',
+    '[rbp][al1]unpremultiply,format=rgb24[st]',
+    '[st][al2]alphamerge,format=rgba[vout]'
+  ].join(';\n')
+}
 
 const frameDurationUs = (plan: RenderPlan): number =>
   Math.ceil(plan.frameRateDenominator * 1_000_000 / plan.frameRateNumerator)
@@ -149,7 +196,7 @@ const moveIntoPlace = async (temporaryPath: string, outputPath: string): Promise
   }
 }
 
-const MAX_SUBTITLE_OVERLAY_CACHE_ENTRIES = 24
+const MAX_SUBTITLE_OVERLAY_CACHE_ENTRIES = 240
 const MAX_SUBTITLE_OVERLAY_CACHE_BYTES = 128 * 1024 * 1024
 
 const trimSubtitleOverlayDiskCache = async (directory: string, maximum = MAX_SUBTITLE_OVERLAY_CACHE_ENTRIES, maximumBytes = MAX_SUBTITLE_OVERLAY_CACHE_BYTES): Promise<number> => {
@@ -346,7 +393,11 @@ export class FfmpegService {
       const cachedFrame = await cached
       return { ...cachedFrame, requestedTimeUs, cacheHit: true, ffmpegStarted: false }
     }
-    const promise = this.#renderAccurateFrame(plan, cacheKey, {
+    // Start a few frames early so every clip reaches the target on its own grid.
+    const startFrame = Math.max(0, frameIndex - 2)
+    const windowPlan = createRenderPlan(project, settings, { window: { startFrame, frameCount: frameIndex - startFrame + 1 } })
+    const promise = this.#renderAccurateFrame(windowPlan, cacheKey, {
+      windowFrameIndex: frameIndex - startFrame,
       requestedTimeUs,
       renderedTimeUs,
       frameIndex,
@@ -387,14 +438,7 @@ export class FfmpegService {
     const renderedTimeUs = timeUsForFrameIndex(frameIndex, fps)
     const animationMode = options.animationMode ?? 'full'
     const subtitleStateFingerprint = createHash('sha256').update(subtitleVisualStateKey(project, renderedTimeUs)).digest('hex')
-    const cacheKey = createHash('sha256').update(JSON.stringify({
-      rendererVersion: subtitleOverlayRendererVersion,
-      width: Math.max(16, Math.round(project.sequence.width)),
-      height: Math.max(16, Math.round(project.sequence.height)),
-      fps,
-      subtitleStateFingerprint,
-      animationMode
-    })).digest('hex')
+    const cacheKey = subtitleOverlayCacheKey(project, fps, subtitleStateFingerprint, animationMode, animationMode === 'full' && subtitleAnimatedAt(project, renderedTimeUs) ? frameIndex : null)
     const cached = this.#subtitleOverlays.get(cacheKey)
     if (cached) {
       this.#subtitleOverlays.delete(cacheKey)
@@ -428,10 +472,99 @@ export class FfmpegService {
     }
   }
 
+  /**
+   * Exact libass images for a run of consecutive frames in one FFmpeg
+   * invocation, so animated cues (fade/pop/...) can be drawn frame by frame.
+   * Each frame lands in the same cache as renderSubtitleOverlay.
+   */
+  async renderSubtitleOverlaySequence(
+    project: ProjectFile,
+    startFrame: number,
+    frameCount: number,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<SubtitleOverlaySequenceResult> {
+    if (!Number.isSafeInteger(startFrame) || startFrame < 0 || !Number.isSafeInteger(frameCount) || frameCount < 1 || frameCount > 240) {
+      throw new Error('Subtitle overlay sequence range is invalid')
+    }
+    const fps = {
+      numerator: Math.max(1, Math.round(project.sequence.frameRate.numerator)),
+      denominator: Math.max(1, Math.round(project.sequence.frameRate.denominator))
+    }
+    const frames = Array.from({ length: frameCount }, (_, offset) => {
+      const frameIndex = startFrame + offset
+      const renderedTimeUs = timeUsForFrameIndex(frameIndex, fps)
+      const subtitleStateFingerprint = createHash('sha256').update(subtitleVisualStateKey(project, renderedTimeUs)).digest('hex')
+      const animated = subtitleAnimatedAt(project, renderedTimeUs)
+      return { frameIndex, renderedTimeUs, subtitleStateFingerprint, cacheKey: subtitleOverlayCacheKey(project, fps, subtitleStateFingerprint, 'full', animated ? frameIndex : null) }
+    })
+    const directory = join(this.workspaceRoot, 'subtitle-overlay')
+    const missing: number[] = []
+    for (const [offset, frame] of frames.entries()) {
+      const onDisk = await stat(join(directory, `${frame.cacheKey}.png`)).then((file) => file.isFile() && file.size > 0, () => false)
+      if (!onDisk) missing.push(offset)
+    }
+    let ffmpegStarted = false
+    if (missing.length) {
+      ffmpegStarted = true
+      const first = missing[0] ?? 0
+      const last = missing[missing.length - 1] ?? first
+      const count = last - first + 1
+      const firstFrame = frames[first]
+      if (!firstFrame) throw new Error('Subtitle overlay sequence is empty')
+      await mkdir(directory, { recursive: true })
+      const token = randomUUID()
+      const batchDirectory = join(directory, `.seq-${token}`)
+      await mkdir(batchDirectory, { recursive: true })
+      const filterGraphPath = join(batchDirectory, 'graph.ffgraph')
+      const assFileName = `${token}.ass`
+      const width = Math.max(16, Math.round(project.sequence.width))
+      const height = Math.max(16, Math.round(project.sequence.height))
+      try {
+        await Promise.all([
+          writeFile(filterGraphPath, subtitleOverlayGraph(width, height, fps, firstFrame.renderedTimeUs, count, assFileName), 'utf8'),
+          writeFile(join(batchDirectory, assFileName), generateAss(project), 'utf8')
+        ])
+        await this.executor.run({
+          command: this.paths.ffmpegPath,
+          args: ['-hide_banner', '-y', '-loglevel', 'warning', '-filter_complex_script', filterGraphPath, '-map', '[vout]', '-frames:v', String(count), '-an', '-c:v', 'png', '-pix_fmt', 'rgba', '-f', 'image2', join(batchDirectory, 'f%05d.png')],
+          cwd: batchDirectory,
+          signal: options.signal,
+          timeoutMs: 120_000,
+          maxOutputBytes: 32 * 1024 * 1024
+        })
+        for (const offset of missing) {
+          const frame = frames[offset]
+          if (!frame) continue
+          const produced = join(batchDirectory, `f${String(offset - first + 1).padStart(5, '0')}.png`)
+          const info = await stat(produced)
+          if (!info.isFile() || info.size === 0) throw new Error('Subtitle overlay sequence produced an empty frame')
+          await moveIntoPlace(produced, join(directory, `${frame.cacheKey}.png`))
+        }
+      } finally {
+        await rm(batchDirectory, { recursive: true, force: true }).catch(() => undefined)
+      }
+    }
+    const results: SubtitleOverlaySequenceResult['frames'] = []
+    for (const frame of frames) {
+      const framePath = join(directory, `${frame.cacheKey}.png`)
+      const result: SubtitleOverlayResult = { framePath, frameIndex: frame.frameIndex, subtitleStateFingerprint: frame.subtitleStateFingerprint, ffmpegStarted: false }
+      this.#subtitleOverlays.delete(frame.cacheKey)
+      this.#subtitleOverlays.set(frame.cacheKey, result)
+      results.push({ frameIndex: frame.frameIndex, framePath, subtitleStateFingerprint: frame.subtitleStateFingerprint })
+    }
+    while (this.#subtitleOverlays.size > MAX_SUBTITLE_OVERLAY_CACHE_ENTRIES) {
+      const oldest = this.#subtitleOverlays.keys().next().value
+      if (!oldest || frames.some((frame) => frame.cacheKey === oldest)) break
+      this.#subtitleOverlays.delete(oldest)
+    }
+    if (ffmpegStarted) this.#subtitleOverlayCacheBytes = await trimSubtitleOverlayDiskCache(directory)
+    return { frames: results, ffmpegStarted }
+  }
+
   async #renderAccurateFrame(
     plan: RenderPlan,
     cacheKey: string,
-    metadata: Omit<AccuratePreviewFrameResult, 'framePath'> & { generation: number; signal?: AbortSignal }
+    { windowFrameIndex, ...metadata }: Omit<AccuratePreviewFrameResult, 'framePath'> & { generation: number; signal?: AbortSignal; windowFrameIndex: number }
   ): Promise<AccuratePreviewFrameResult> {
     const directory = join(this.workspaceRoot, 'accurate-preview')
     const outputPath = join(directory, `${cacheKey}.png`)
@@ -453,7 +586,7 @@ export class FfmpegService {
     const assPath = join(directory, assFileName)
     try {
       await Promise.all([
-        writeFile(filterGraphPath, buildAccurateFrameFilterGraph(plan, metadata.frameIndex, assFileName), 'utf8'),
+        writeFile(filterGraphPath, buildAccurateFrameFilterGraph(plan, windowFrameIndex, assFileName), 'utf8'),
         writeFile(assPath, plan.ass, 'utf8')
       ])
       await this.executor.run({
@@ -529,7 +662,7 @@ export class FfmpegService {
     const denominator = Math.max(1, Math.round(project.sequence.frameRate.denominator))
     try {
       await Promise.all([
-        writeFile(filterGraphPath, buildSubtitleOverlayFilterGraph(width, height, numerator, denominator, metadata.renderedTimeUs, assFileName), 'utf8'),
+        writeFile(filterGraphPath, subtitleOverlayGraph(width, height, { numerator, denominator }, metadata.renderedTimeUs, 1, assFileName), 'utf8'),
         writeFile(assPath, generateAss(project, { disableAnimations: metadata.animationMode === 'base' }), 'utf8')
       ])
       await this.executor.run({
@@ -539,10 +672,6 @@ export class FfmpegService {
           '-y',
           '-loglevel',
           'warning',
-          '-f',
-          'lavfi',
-          '-i',
-          `color=c=black@0.0:s=${width}x${height}:r=${numerator}/${denominator}:d=${(Math.ceil(denominator * 1_000_000 / numerator) / 1_000_000).toFixed(6)}`,
           '-filter_complex_script',
           filterGraphPath,
           '-map',

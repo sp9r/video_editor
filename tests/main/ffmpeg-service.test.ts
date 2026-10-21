@@ -80,7 +80,8 @@ describe('FFmpeg export service', () => {
       expect(cacheHit.cacheHit).toBe(true)
       expect(cacheHit.ffmpegStarted).toBe(false)
       expect(graphs[0]).toContain("ass=filename='")
-      expect(graphs[0]).toContain(':alpha=1')
+      expect(graphs[0]).toContain('unpremultiply')
+      expect(graphs[0]).toContain('alphamerge')
       const changedProject = structuredClone(project)
       const changedSubtitle = changedProject.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
       if (!changedSubtitle || changedSubtitle.kind !== 'subtitle') throw new Error('changed subtitle fixture missing')
@@ -126,7 +127,7 @@ describe('FFmpeg export service', () => {
     }
   })
 
-  it('bounds the subtitle overlay cache while cycling through 100 visual states', async () => {
+  it('bounds the subtitle overlay cache while cycling through 250 visual states', async () => {
     const root = await mkdtemp(join(tmpdir(), 'spectra-subtitle-overlay-100-cues-'))
     try {
       const project = makeProject()
@@ -146,18 +147,18 @@ describe('FFmpeg export service', () => {
         }
       }
       const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor, workspaceRoot: join(root, 'workspace') })
-      for (let index = 0; index < 100; index += 1) {
+      for (let index = 0; index < 250; index += 1) {
         const next = structuredClone(project)
         const clip = next.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
         if (!clip || clip.kind !== 'subtitle') throw new Error('subtitle fixture missing')
         clip.style = { ...clip.style, positionX: 10 + index }
         await service.renderSubtitleOverlay(next, 500_000)
       }
-      expect(service.subtitleOverlayCacheSize).toBeLessThanOrEqual(24)
+      expect(service.subtitleOverlayCacheSize).toBeLessThanOrEqual(240)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
-  }, 30_000)
+  }, 90_000)
 
   it('reuses a prefetched next cue at the boundary without another FFmpeg render', async () => {
     const root = await mkdtemp(join(tmpdir(), 'spectra-subtitle-overlay-prefetch-'))
@@ -233,7 +234,9 @@ describe('FFmpeg export service', () => {
       expect(sameCanonicalFrame.requestedTimeUs).toBe(100_001)
       expect(first.frameIndex).toBe(3)
       expect(first.renderedTimeUs).toBe(100_000)
-      expect(graphs[0]).toContain("select='eq(n\\,3)'")
+      // Only a few frames are rendered, so the target is an index inside the window (frames 1..3).
+      expect(graphs[0]).toContain("select='eq(n\\,2)'")
+      expect(graphs[0]).toContain('setpts=PTS+ceil(1*1/30/TB-0.0001)[canvas]')
 
       const nextFrame = await service.renderAccurateFrame(project, 133_334)
       expect(renderCalls).toBe(2)

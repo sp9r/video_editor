@@ -14,6 +14,10 @@ interface FfprobeStream {
   channels?: number
   duration?: string
   disposition?: { attached_pic?: number }
+  color_space?: string
+  color_range?: string
+  tags?: { rotate?: string }
+  side_data_list?: Array<{ rotation?: number }>
 }
 
 interface FfprobeDocument {
@@ -64,6 +68,21 @@ const detectKind = (path: string, document: FfprobeDocument): ProbeResult['kind'
   throw new Error(`No supported audio or video stream was found in ${path}`)
 }
 
+/** Display rotation in degrees (0/90/180/270). FFmpeg and Chromium both autorotate, so sizes must follow it. */
+const displayRotation = (stream: FfprobeStream | undefined): number => {
+  const raw = stream?.side_data_list?.find((entry) => typeof entry.rotation === 'number')?.rotation ?? finiteNumber(stream?.tags?.rotate) ?? 0
+  return ((Math.round(raw / 90) * 90) % 360 + 360) % 360
+}
+
+const colorFields = (video: FfprobeStream | undefined): { colorSpace?: string; colorRange?: 'tv' | 'pc' } => {
+  const space = video?.color_space?.trim()
+  const range = video?.color_range === 'pc' || video?.color_range === 'tv' ? video.color_range : undefined
+  return {
+    ...(space && space !== 'unknown' ? { colorSpace: space } : {}),
+    ...(range ? { colorRange: range } : {})
+  }
+}
+
 export interface ProbeMediaOptions {
   executor?: ProcessExecutor
 }
@@ -89,14 +108,18 @@ export const probeMediaFile = async (
   const audio = streams.find((stream) => stream.codec_type === 'audio')
   const kind = detectKind(mediaPath, document)
   const frameRate = parseRational(video?.avg_frame_rate) ?? parseRational(video?.r_frame_rate)
+  const swapSides = displayRotation(video) % 180 === 90
+  const width = swapSides ? video?.height : video?.width
+  const height = swapSides ? video?.width : video?.height
   return {
     path: mediaPath,
     name: basename(mediaPath),
     kind,
     durationUs: kind === 'image' ? 0 : durationFromDocument(document),
-    ...(video?.width ? { width: video.width } : {}),
-    ...(video?.height ? { height: video.height } : {}),
+    ...(width ? { width } : {}),
+    ...(height ? { height } : {}),
     ...(frameRate ? { frameRate } : {}),
+    ...(kind === 'video' ? colorFields(video) : {}),
     ...(audio?.sample_rate ? { sampleRate: Number.parseInt(audio.sample_rate, 10) } : {}),
     ...(audio?.channels ? { channels: audio.channels } : {}),
     hasAudio: Boolean(audio),

@@ -1,17 +1,20 @@
 export const previewQualityLabel = ({
   playing,
-  accurateFrameMatchesCurrent,
-  accurateRendering,
-  accurateError
+  exactCheck,
+  exactShown,
+  exactRendering,
+  exactError
 }: {
   playing: boolean
-  accurateFrameMatchesCurrent: boolean
-  accurateRendering: boolean
-  accurateError: string | null
+  exactCheck: boolean
+  exactShown: boolean
+  exactRendering: boolean
+  exactError: string | null
 }): string => {
-  if (playing) return '高速プレビュー'
-  if (accurateFrameMatchesCurrent) return '正確プレビュー'
-  if (accurateRendering) return '高速表示 / 正確プレビュー更新中…'
-  if (accurateError) return '高速表示 / 正確プレビュー取得失敗'
-  return '高速表示 / 正確プレビュー生成中…'
+  if (!exactCheck) return 'ライブ合成（書き出しと同じ配置・字幕）'
+  if (playing) return 'ライブ合成（再生中は書き出し画質の確認を止めています）'
+  if (exactShown) return '書き出し画質（FFmpegの1フレーム）を表示中'
+  if (exactError) return 'ライブ合成 / 書き出し画質の取得失敗'
+  if (exactRendering) return 'ライブ合成 / 書き出し画質を生成中…'
+  return 'ライブ合成 / 書き出し画質を準備中…'
 }

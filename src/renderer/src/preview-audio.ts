@@ -4,12 +4,16 @@ export const PREVIEW_AUDIO_DRIFT_TOLERANCE_SECONDS = 0.12
 const mediaSeekState = new WeakMap<object, { requestedAt: number; target: number; observedTarget: number }>()
 
 /** Let an outstanding decoder seek finish before requesting a newer position. */
-export const syncPreviewMediaTime = (media: Pick<HTMLMediaElement, 'currentTime' | 'readyState' | 'seeking'>, expectedSeconds: number): void => {
+export const syncPreviewMediaTime = (
+  media: Pick<HTMLMediaElement, 'currentTime' | 'readyState' | 'seeking'>,
+  expectedSeconds: number,
+  toleranceSeconds = PREVIEW_AUDIO_DRIFT_TOLERANCE_SECONDS
+): void => {
   const previous = mediaSeekState.get(media)
   const explicitSeek = previous && Math.abs(expectedSeconds - previous.observedTarget) > 0.5
   if (previous) previous.observedTarget = expectedSeconds
   if (media.readyState < 2 || media.seeking) return
-  if (!Number.isFinite(media.currentTime) || Math.abs(media.currentTime - expectedSeconds) > PREVIEW_AUDIO_DRIFT_TOLERANCE_SECONDS) {
+  if (!Number.isFinite(media.currentTime) || Math.abs(media.currentTime - expectedSeconds) > toleranceSeconds) {
     const now = performance.now()
     // A completed seek can fire before the decoder presents its first sample.
     // Reissuing the same seek from seeked/loadeddata creates a feedback loop.
@@ -17,6 +21,32 @@ export const syncPreviewMediaTime = (media: Pick<HTMLMediaElement, 'currentTime'
     mediaSeekState.set(media, { requestedAt: now, target: expectedSeconds, observedTarget: expectedSeconds })
     media.currentTime = Math.max(0, expectedSeconds)
   }
+}
+
+export const PREVIEW_VIDEO_SEEK_THRESHOLD_SECONDS = 0.3
+const PREVIEW_VIDEO_RATE_DEADBAND_SECONDS = 0.012
+const PREVIEW_VIDEO_MAX_RATE_CORRECTION = 0.08
+
+/**
+ * Keep a muted video on the shared playback clock. Small drift is removed by
+ * nudging playbackRate, so lip sync stays within a frame without the stutter
+ * of a decoder seek; only large drift seeks.
+ */
+export const followPreviewClock = (
+  media: Pick<HTMLMediaElement, 'currentTime' | 'readyState' | 'seeking' | 'playbackRate'>,
+  expectedSeconds: number,
+  playing: boolean
+): void => {
+  const drift = expectedSeconds - media.currentTime
+  if (!playing || !Number.isFinite(drift) || Math.abs(drift) > PREVIEW_VIDEO_SEEK_THRESHOLD_SECONDS || media.readyState < 2 || media.seeking) {
+    if (media.playbackRate !== 1) media.playbackRate = 1
+    syncPreviewMediaTime(media, expectedSeconds, playing ? PREVIEW_VIDEO_SEEK_THRESHOLD_SECONDS : 1 / 120)
+    return
+  }
+  const rate = Math.abs(drift) < PREVIEW_VIDEO_RATE_DEADBAND_SECONDS
+    ? 1
+    : 1 + Math.max(-PREVIEW_VIDEO_MAX_RATE_CORRECTION, Math.min(PREVIEW_VIDEO_MAX_RATE_CORRECTION, drift * 0.5))
+  if (Math.abs(media.playbackRate - rate) > 0.002) media.playbackRate = rate
 }
 
 export const previewAudioIsActive = (item: PreviewPlanClip, playheadUs: number): boolean =>

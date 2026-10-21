@@ -12,6 +12,7 @@ import {
   relinkMediaAsset,
   replaceTrack,
   shiftClipTimeline,
+  snapUsToFrame,
   SubtitleCollisionError,
   validateProject,
   updateClip,
@@ -66,7 +67,8 @@ interface EditorState {
   fullCorrectionResult: FullCorrectionSession | null
   applyProject(project: ProjectFile, options?: { selectClipId?: string; preserveHistory?: boolean; asyncMutationOperationId?: string }): void
   loadProject(project: ProjectFile): void
-  markSaved(project?: ProjectFile): void
+  /** `savedFrom` is the project snapshot that was sent to disk; edits made while saving are kept. */
+  markSaved(project?: ProjectFile, savedFrom?: ProjectFile): void
   beginEditTransaction(): void
   commitEditTransaction(asyncMutationOperationId?: string): void
   cancelEditTransaction(): void
@@ -202,6 +204,33 @@ const compatibleTrack = (_asset: MediaAsset, track: TimelineTrack): boolean => {
   return isMediaTrack(track)
 }
 
+/** Drops selected IDs whose clips no longer exist (after delete, undo, redo, reload). */
+const existingSelection = (project: ProjectFile, ids: readonly string[]): string[] => {
+  if (!ids.length) return []
+  const present = new Set(project.tracks.flatMap((track) => track.clips.map((clip) => clip.id)))
+  const kept = ids.filter((id) => present.has(id))
+  return kept.length === ids.length ? (ids as string[]) : kept
+}
+
+/** Media clips (not captions) on editable tracks that strictly contain the given time. */
+const splittableClipIdsAt = (project: ProjectFile, atUs: TimeUs): string[] => {
+  const frameUs = Math.round(1_000_000 * project.sequence.frameRate.denominator / project.sequence.frameRate.numerator)
+  const ids: string[] = []
+  const seenGroups = new Set<string>()
+  for (const track of project.tracks) {
+    if (track.locked || track.hidden || !isMediaTrack(track)) continue
+    for (const clip of track.clips) {
+      if (clip.kind === 'subtitle' || atUs - clip.startUs < frameUs || clip.startUs + clip.durationUs - atUs < frameUs) continue
+      if (clip.linkGroupId) {
+        if (seenGroups.has(clip.linkGroupId)) continue
+        seenGroups.add(clip.linkGroupId)
+      }
+      ids.push(clip.id)
+    }
+  }
+  return ids
+}
+
 export const useEditorStore = create<EditorState>((set, get) => ({
   project: initialProject,
   projectLoadVersion: 0,
@@ -235,15 +264,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   applyProject: (project, options = {}) => {
     const current = get().project
     if (project === current) return
+    const nextFingerprint = projectFingerprint(project)
+    if (nextFingerprint === projectFingerprint(current)) {
+      // An edit that changes nothing (a drag that snaps back, a re-import of a
+      // known file, ...) must not add an empty entry to the undo history.
+      if (options.selectClipId) set({ selectedClipIds: [options.selectClipId] })
+      return
+    }
     const transactionBase = get().transactionBase
-    const transactionChanged = Boolean(transactionBase && projectFingerprint(transactionBase) !== projectFingerprint(project))
+    const transactionChanged = Boolean(transactionBase && projectFingerprint(transactionBase) !== nextFingerprint)
     if (!options.asyncMutationOperationId && (!transactionBase || transactionChanged)) conflictPendingAsyncMutation()
     set((state) => ({
       project,
       past: options.preserveHistory || state.transactionBase ? state.past : [...state.past, cloneProject(current)].slice(-HISTORY_LIMIT),
       future: options.preserveHistory || state.transactionBase ? state.future : [],
-      selectedClipIds: options.selectClipId ? [options.selectClipId] : state.selectedClipIds,
-      dirty: projectFingerprint(project) !== state.savedFingerprint
+      selectedClipIds: options.selectClipId ? [options.selectClipId] : existingSelection(project, state.selectedClipIds),
+      dirty: nextFingerprint !== state.savedFingerprint
     }))
   },
   loadProject: (project) => {
@@ -272,10 +308,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       fullCorrectionResult: null
     }))
   },
-  markSaved: (project) => {
+  markSaved: (project, savedFrom) => {
     const saved = project ? cloneProject(project) : get().project
     set((state) => {
       const transactionChanged = Boolean(state.transactionBase && projectFingerprint(state.transactionBase) !== projectFingerprint(state.project))
+      // Saving is asynchronous (a first save waits for a file dialog). If the
+      // user kept editing meanwhile, keep those edits and only adopt the path;
+      // the project then correctly stays "unsaved".
+      const editedWhileSaving = Boolean(project && savedFrom && projectFingerprint(state.project) !== projectFingerprint(savedFrom))
+      if (editedWhileSaving) {
+        return {
+          project: { ...state.project, projectPath: saved.projectPath },
+          dirty: true,
+          lastSavedAt: new Date(),
+          savedFingerprint: projectFingerprint(saved)
+        }
+      }
       return {
         project: saved,
         past: transactionChanged ? [...state.past, cloneProject(state.transactionBase!)].slice(-HISTORY_LIMIT) : state.past,
@@ -306,7 +354,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   cancelEditTransaction: () => {
     const base = get().transactionBase
     if (!base) return
-    set((state) => ({ project: base, dirty: projectFingerprint(base) !== state.savedFingerprint, transactionBase: null }))
+    set((state) => ({ project: base, selectedClipIds: existingSelection(base, state.selectedClipIds), dirty: projectFingerprint(base) !== state.savedFingerprint, transactionBase: null }))
   },
   selectClip: (id, additive = false) => {
     if (!id) return set({ selectedClipIds: [] })
@@ -317,7 +365,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({ selectedClipIds: toggledOff ? selected.filter((item) => !group.includes(item)) : [...selected, ...group.filter((item) => !selected.includes(item))] })
   },
   selectAsset: (id) => set({ selectedAssetId: id }),
-  setPlayhead: (playheadUs) => set({ playheadUs: Math.max(0, playheadUs) }),
+  setPlayhead: (playheadUs) => {
+    if (Number.isFinite(playheadUs)) set({ playheadUs: Math.max(0, playheadUs) })
+  },
   setPlaying: (playing) => set({ playing }),
   setTool: (tool) => set({ tool }),
   setSnapping: (snapping) => set({ snapping }),
@@ -333,7 +383,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       get().showNotice('この素材は選択したトラックへ配置できません。', 'warning')
       return
     }
-    const clip = createClipForAsset(asset, Math.max(0, atUs))
+    if (track.locked) {
+      get().showNotice('このトラックはロックされています。ロックを解除してから素材を配置してください。', 'warning')
+      return
+    }
+    if (asset.offline) {
+      get().showNotice('オフライン素材は配置できません。「再リンク」で素材の場所を指定してください。', 'warning')
+      return
+    }
+    // Drops arrive as arbitrary pixel positions; clips always start on a frame.
+    const startUs = Math.max(0, snapUsToFrame(Number.isFinite(atUs) ? atUs : 0, project))
+    const clip = createClipForAsset(asset, startUs)
     get().applyProject(addClipToTrack(project, trackId, clip), { selectClipId: clip.id })
   },
   autoCaptionSelected: async (settings) => {
@@ -734,7 +794,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   clearFullCorrectionResult: () => set({ fullCorrectionResult: null }),
   addSubtitle: () => {
     const { project, playheadUs } = get()
-    const clip = createSubtitleClip(playheadUs)
+    const clip = createSubtitleClip(snapUsToFrame(playheadUs, project))
     const next = cloneProject(project)
     let track = next.tracks.find((item) => item.kind === 'subtitle' && !item.locked && item.clips.every((item) => item.kind !== 'subtitle' || !subtitleOverlaps(item, clip)))
     if (!track) {
@@ -745,7 +805,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     track.clips.sort((left, right) => left.startUs - right.startUs)
     get().applyProject(validateProject(next), { selectClipId: clip.id })
   },
-  patchClip: (clipId, patcher) => get().applyProject(updateClip(get().project, clipId, patcher)),
+  patchClip: (clipId, patcher) => {
+    const project = get().project
+    const track = project.tracks.find((candidate) => candidate.clips.some((clip) => clip.id === clipId))
+    if (!track) return
+    if (track.locked) {
+      get().showNotice('このトラックはロックされているため編集できません。', 'warning')
+      return
+    }
+    try {
+      get().applyProject(updateClip(project, clipId, patcher))
+    } catch (error) {
+      get().showNotice(error instanceof Error ? error.message : '値を反映できませんでした。', 'warning')
+    }
+  },
   splitSubtitleAtWordBoundary: (clipId, boundaryIndex) => {
     try {
       const { project } = get()
@@ -810,7 +883,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
   splitSelectedAt: (atUs) => {
-    const { project, selectedClipIds } = get()
+    const { project } = get()
+    let selectedClipIds = get().selectedClipIds
+    if (!selectedClipIds.length) {
+      // Like other editors: with nothing selected, cut every clip under the playhead.
+      selectedClipIds = splittableClipIdsAt(project, snapUsToFrame(atUs, project))
+      if (!selectedClipIds.length) {
+        get().showNotice('分割するクリップを選択するか、再生ヘッドをクリップの上に置いてください。', 'warning')
+        return
+      }
+    }
     const selected = project.tracks.flatMap((track) => track.clips).filter((clip) => selectedClipIds.includes(clip.id))
     const selectedSubtitles = selected.filter((clip) => clip.kind === 'subtitle')
     if (selectedSubtitles.length) {
@@ -838,8 +920,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
 
     let next = project
-    for (const id of splitSelectedRoots(project, selectedClipIds)) next = splitLinkedClip(next, id, atUs)
-    if (next === project) get().showNotice('再生ヘッドをクリップの内側へ移動してください。', 'warning')
+    try {
+      for (const id of splitSelectedRoots(project, selectedClipIds)) next = splitLinkedClip(next, id, atUs)
+    } catch (error) {
+      if (error instanceof EditingOperationError) {
+        get().showNotice(error.message, 'warning')
+        return
+      }
+      throw error
+    }
+    if (next === project) get().showNotice('再生ヘッドを選択したクリップの内側（両端から1フレーム以上）へ移動してください。', 'warning')
     else get().applyProject(next)
   },
   splitSelected: () => get().splitSelectedAt(get().playheadUs),
@@ -868,13 +958,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { project, clipboard } = get()
     if (!clipboard.length) return get().showNotice('コピーしたクリップがありません。', 'warning')
     const baseUs = Math.min(...clipboard.map(({ clip }) => clip.startUs))
+    const originUs = snapUsToFrame(atUs ?? get().playheadUs, project)
     const groupIds = new Map<string, string>()
     const next = cloneProject(project)
     const pastedIds: string[] = []
     for (const item of clipboard) {
       const track = next.tracks.find((candidate) => candidate.id === item.trackId)
       if (!track || track.locked) {
-        get().showNotice('貼り付け先トラックがロックされています。', 'warning')
+        get().showNotice(track ? '貼り付け先トラックがロックされています。' : '貼り付け先のトラックが見つかりません。', 'warning')
         return
       }
       const linkGroupId = item.clip.linkGroupId
@@ -885,7 +976,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         })())
         : undefined
       const clip = structuredClone(item.clip)
-      const nextStart = Math.max(0, (atUs ?? get().playheadUs) + item.clip.startUs - baseUs)
+      const nextStart = Math.max(0, originUs + item.clip.startUs - baseUs)
       const shifted = shiftClipTimeline(clip, nextStart - clip.startUs)
       shifted.id = makeId('clip')
       if (linkGroupId) shifted.linkGroupId = linkGroupId
@@ -905,7 +996,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   duplicateSelected: () => {
     if (!get().selectedClipIds.length) return
     get().copySelected()
-    get().pasteClipboard()
+    // Duplicates land right after the originals instead of on top of them.
+    const clipboard = get().clipboard
+    if (!clipboard.length) return
+    get().pasteClipboard(Math.max(...clipboard.map(({ clip }) => clip.startUs + clip.durationUs)))
   },
   applySubtitleStyleToAll: (clipId) => {
     const { project } = get()
@@ -978,7 +1072,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { past, project } = get()
     const previous = past.at(-1)
     if (!previous) return
-    set((state) => ({ project: cloneProject(previous), past: state.past.slice(0, -1), future: [cloneProject(project), ...state.future], dirty: projectFingerprint(previous) !== state.savedFingerprint, transactionBase: null }))
+    set((state) => ({ project: cloneProject(previous), selectedClipIds: existingSelection(previous, state.selectedClipIds), past: state.past.slice(0, -1), future: [cloneProject(project), ...state.future], dirty: projectFingerprint(previous) !== state.savedFingerprint, transactionBase: null }))
   },
   redo: () => {
     conflictPendingAsyncMutation()
@@ -986,7 +1080,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const { future, project } = get()
     const next = future[0]
     if (!next) return
-    set((state) => ({ project: cloneProject(next), past: [...state.past, cloneProject(project)].slice(-HISTORY_LIMIT), future: state.future.slice(1), dirty: projectFingerprint(next) !== state.savedFingerprint, transactionBase: null }))
+    set((state) => ({ project: cloneProject(next), selectedClipIds: existingSelection(next, state.selectedClipIds), past: [...state.past, cloneProject(project)].slice(-HISTORY_LIMIT), future: state.future.slice(1), dirty: projectFingerprint(next) !== state.savedFingerprint, transactionBase: null }))
   },
   showNotice: (message, tone = 'info') => set({ notice: { id: Date.now(), message, tone } }),
   clearNotice: () => set({ notice: null })

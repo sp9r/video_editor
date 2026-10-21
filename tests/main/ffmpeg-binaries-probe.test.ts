@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { resolveFfmpegPaths, toUnpackedAsarPath } from '../../src/main/ffmpeg/binaries.js'
-import { parseFfprobeJson, parseRational, validateRenderedOutput } from '../../src/main/ffmpeg/probe.js'
+import { parseFfprobeJson, parseRational, probeMediaFile, validateRenderedOutput } from '../../src/main/ffmpeg/probe.js'
 import type { CommandRequest, CommandResult, ProcessExecutor } from '../../src/main/ffmpeg/process.js'
 
 const result = (request: CommandRequest, stdout = ''): CommandResult => ({
@@ -80,5 +80,23 @@ describe('ffprobe parsing and output verification', () => {
       { durationUs: 5_000_000, width: 1280, height: 720 },
       executor
     )).rejects.toThrow(/size/u)
+  })
+
+  it('reports display-oriented size and colour tags for probed video', async () => {
+    const probe = async (stream: object) => {
+      const executor: ProcessExecutor = {
+        async run(request) {
+          return result(request, JSON.stringify({ format: { duration: '1.0' }, streams: [{ codec_type: 'video', ...stream }] }))
+        }
+      }
+      return probeMediaFile({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, process.execPath, { executor })
+    }
+    const rotated = await probe({ width: 1920, height: 1080, color_space: 'bt709', color_range: 'tv', side_data_list: [{ rotation: -90 }] })
+    expect(rotated).toMatchObject({ width: 1080, height: 1920, colorSpace: 'bt709', colorRange: 'tv' })
+    const legacyTag = await probe({ width: 1920, height: 1080, tags: { rotate: '270' }, color_space: 'unknown' })
+    expect(legacyTag).toMatchObject({ width: 1080, height: 1920 })
+    expect(legacyTag.colorSpace).toBeUndefined()
+    const upright = await probe({ width: 1920, height: 1080, side_data_list: [{ rotation: 180 }] })
+    expect(upright).toMatchObject({ width: 1920, height: 1080 })
   })
 })

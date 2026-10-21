@@ -29,6 +29,9 @@ export interface MediaAsset {
   frameRate?: Rational
   sampleRate?: number
   channels?: number
+  /** Container-tagged colour matrix (ffprobe color_space), e.g. bt709. Absent when untagged. */
+  colorSpace?: string
+  colorRange?: 'tv' | 'pc'
   hasAudio: boolean
   fileSize: number
   modifiedAt: string
@@ -245,6 +248,8 @@ export interface ProbeResult {
   frameRate?: Rational
   sampleRate?: number
   channels?: number
+  colorSpace?: string
+  colorRange?: 'tv' | 'pc'
   hasAudio: boolean
   fileSize: number
   modifiedAt: string
@@ -295,6 +300,18 @@ export interface SubtitleOverlayResult {
   /** Diagnostic-only cache metadata; omitted by older providers. */
   cacheHit?: boolean
   /** Diagnostic-only indication that the request spawned FFmpeg. */
+  ffmpegStarted?: boolean
+}
+
+export interface SubtitleOverlaySequenceFrame {
+  frameIndex: number
+  framePath: string
+  subtitleStateFingerprint: string
+}
+
+export interface SubtitleOverlaySequenceResult {
+  frames: SubtitleOverlaySequenceFrame[]
+  /** Diagnostic-only: whether this call spawned FFmpeg. */
   ffmpegStarted?: boolean
 }
 
@@ -440,6 +457,7 @@ export interface DesktopApi {
   createPreviewPlan(project: ProjectFile): Promise<PreviewPlan>
   renderAccuratePreviewFrame(project: ProjectFile, timeUs: TimeUs): Promise<AccuratePreviewFrameResult>
   renderSubtitleOverlay(project: ProjectFile, timeUs: TimeUs, options?: SubtitleOverlayRequestOptions): Promise<SubtitleOverlayResult>
+  renderSubtitleOverlaySequence(project: ProjectFile, startFrame: number, frameCount: number): Promise<SubtitleOverlaySequenceResult>
   startSilenceCutReapply(project: ProjectFile, selectedClipId: string, jobId: string, profile: import('./silence-cut').SilenceReapplyProfile, minSilenceUs?: number): Promise<{
     jobId: string
     analysis: AutoCaptionSilenceAnalysis

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeSubtitleClips, buildSubtitleRenderSpec, fastSubtitleAnimationStyle, subtitleAnchorTransform, subtitleVisualStateKey } from '../../src/shared/subtitle-render.js'
+import { activeSubtitleClips, buildSubtitleRenderSpec, subtitleAnimatedAt, subtitleAnchorTransform, subtitleVisualStateKey } from '../../src/shared/subtitle-render.js'
 import { DEFAULT_SUBTITLE_STYLE } from '../../src/shared/types.js'
 
 const caption = (style: Partial<typeof DEFAULT_SUBTITLE_STYLE> = {}, text = 'alpha beta\n日本語'): Parameters<typeof buildSubtitleRenderSpec>[0] => ({
@@ -15,12 +15,6 @@ const caption = (style: Partial<typeof DEFAULT_SUBTITLE_STYLE> = {}, text = 'alp
 })
 
 describe('canonical subtitle render spec', () => {
-  it('derives approximate Fast animation from playhead time on the image only', () => {
-    const clip = caption({ animation: 'pop', animationDurationUs: 500_000 })
-    expect(fastSubtitleAnimationStyle(clip, 0)).toEqual({ opacity: 0, transform: 'scale(0.9000)' })
-    expect(fastSubtitleAnimationStyle(clip, 250_000).transform).not.toBe('none')
-    expect(fastSubtitleAnimationStyle(clip, 1_000_000)).toEqual({ opacity: 1, transform: 'scale(1.0000)' })
-  })
   it('uses the same logical position and anchor semantics for all alignments', () => {
     const sequence = { width: 1920, height: 1080 }
     const top = buildSubtitleRenderSpec(caption({ alignment: 'top', positionX: 50, positionY: 10 }), sequence)
@@ -72,5 +66,24 @@ describe('canonical subtitle render spec', () => {
     const before = subtitleVisualStateKey(project, 500_000)
     second.text = 'changed'
     expect(subtitleVisualStateKey(project, 500_000)).not.toBe(before)
+  })
+})
+
+describe('subtitleAnimatedAt', () => {
+  const project = (style: Partial<typeof DEFAULT_SUBTITLE_STYLE>): Parameters<typeof subtitleAnimatedAt>[0] => ({
+    tracks: [{ id: 't', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: [{ id: 'c', name: 'c', kind: 'subtitle', text: 'a', startUs: 1_000_000, durationUs: 2_000_000, sourceInUs: 0, enabled: true, style: { ...structuredClone(DEFAULT_SUBTITLE_STYLE), ...style } }] }],
+    sequence: { width: 1280, height: 720, frameRate: { numerator: 30, denominator: 1 }, sampleRate: 48000, backgroundColor: '#000000' },
+    media: []
+  }) as unknown as Parameters<typeof subtitleAnimatedAt>[0]
+
+  it('is true only inside the animation windows', () => {
+    const fade = project({ animation: 'fade', animationDurationUs: 500_000 })
+    expect(subtitleAnimatedAt(fade, 1_200_000)).toBe(true)
+    expect(subtitleAnimatedAt(fade, 2_000_000)).toBe(false)
+    expect(subtitleAnimatedAt(fade, 2_700_000)).toBe(true)
+    expect(subtitleAnimatedAt(fade, 500_000)).toBe(false)
+    const pop = project({ animation: 'pop', animationDurationUs: 500_000 })
+    expect(subtitleAnimatedAt(pop, 2_700_000)).toBe(false)
+    expect(subtitleAnimatedAt(project({ animation: 'none', animationDurationUs: 500_000 }), 1_200_000)).toBe(false)
   })
 })

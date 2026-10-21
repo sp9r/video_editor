@@ -1,4 +1,4 @@
-﻿import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
+﻿import { useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
 
 export const IconButton = ({
   label,
@@ -43,18 +43,50 @@ export const Field = ({
   </label>
 )
 
+/**
+ * Number input that keeps what the user is typing while it has focus. Without the
+ * draft, a controlled value that is reformatted on every keystroke (e.g. "1" ->
+ * "1.00") makes it impossible to type "1.5", and an emptied field would commit 0.
+ * Only complete, valid numbers reach `onChange`; blur shows the model value again.
+ */
 export const NumberField = ({
   label,
   suffix,
+  value,
+  onChange,
+  onBlur,
   ...props
-}: InputHTMLAttributes<HTMLInputElement> & { label: string; suffix?: string }): React.JSX.Element => (
-  <Field label={label}>
-    <span className="number-input">
-      <input type="number" {...props} />
-      {suffix && <span>{suffix}</span>}
-    </span>
-  </Field>
-)
+}: InputHTMLAttributes<HTMLInputElement> & { label: string; suffix?: string }): React.JSX.Element => {
+  const [draft, setDraft] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  // A change that did not come from typing in this focused input (undo, spinner
+  // without focus, programmatic update) must show the model value again.
+  useEffect(() => {
+    if (draft !== null && document.activeElement !== inputRef.current) setDraft(null)
+  }, [value, draft])
+  return (
+    <Field label={label}>
+      <span className="number-input">
+        <input
+          type="number"
+          ref={inputRef}
+          {...props}
+          value={draft ?? value}
+          onChange={(event) => {
+            setDraft(event.target.value)
+            if (event.target.value === '' || event.target.validity?.badInput) return
+            onChange?.(event)
+          }}
+          onBlur={(event) => {
+            setDraft(null)
+            onBlur?.(event)
+          }}
+        />
+        {suffix && <span>{suffix}</span>}
+      </span>
+    </Field>
+  )
+}
 
 export const SelectField = ({
   label,
