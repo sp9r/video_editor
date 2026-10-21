@@ -304,10 +304,12 @@ export const trimClip = (
   project: ProjectFile,
   clipId: string,
   edge: 'start' | 'end',
-  timelineUs: TimeUs
+  timelineUs: TimeUs,
+  exact = false
 ): ProjectFile =>
   updateClip(project, clipId, (clip) => {
-    const snapped = snapUsToFrame(timelineUs, project)
+    // exact: the caller snapped to an existing clip edge, which may sit off the frame grid.
+    const snapped = exact ? Math.round(timelineUs) : snapUsToFrame(timelineUs, project)
     const frameUs = framesToUs(1, project.sequence.frameRate.numerator, project.sequence.frameRate.denominator)
     if (!Number.isFinite(snapped)) return clip
     if (edge === 'start') {

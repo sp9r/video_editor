@@ -52,10 +52,14 @@ export const runEditingSmoke = async ({ repositoryRoot, electronPath, workspace 
     }
     const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra })
     const click = async (x, y) => { await mouse('mouseMoved', x, y, { buttons: 0 }); await mouse('mousePressed', x, y); await mouse('mouseReleased', x, y); await sleep(120) }
-    const drag = async (x0, y0, x1, y1) => {
-      await mouse('mouseMoved', x0, y0, { buttons: 0 }); await mouse('mousePressed', x0, y0)
-      for (let step = 1; step <= 8; step += 1) await mouse('mouseMoved', x0 + ((x1 - x0) * step) / 8, y0 + ((y1 - y0) * step) / 8)
-      await mouse('mouseReleased', x1, y1); await sleep(200)
+    // modifiers: CDP bitmask (Alt = 1). probe runs just before release, while the drag is still live.
+    const drag = async (x0, y0, x1, y1, modifiers = 0, probe = null) => {
+      const extra = { modifiers }
+      await mouse('mouseMoved', x0, y0, { buttons: 0, ...extra }); await mouse('mousePressed', x0, y0, extra)
+      for (let step = 1; step <= 8; step += 1) await mouse('mouseMoved', x0 + ((x1 - x0) * step) / 8, y0 + ((y1 - y0) * step) / 8, extra)
+      const probed = probe ? await probe() : undefined
+      await mouse('mouseReleased', x1, y1, extra); await sleep(200)
+      return probed
     }
     const KEYS = { k: ['KeyK', 75], z: ['KeyZ', 90], y: ['KeyY', 89], c: ['KeyC', 67], v: ['KeyV', 86], a: ['KeyA', 65], s: ['KeyS', 83] }
     const key = async (name, modifiers = 0) => {
@@ -174,6 +178,45 @@ export const runEditingSmoke = async ({ repositoryRoot, electronPath, workspace 
     await drag(mover.x + 30, mover.y + mover.h / 2, mover.x + 30 + 0, mover.y + mover.h / 2) // click without move = no history change
     const unchanged = await snapshot()
     check('move: a plain click does not move the clip', unchanged.clips[0].left === mover.left, unchanged.clips[0])
+
+    // 8b. Snapping of move and trim (8 px threshold, S toggles, Alt bypasses).
+    s = await snapshot()
+    const snapClips = s.clips
+    const neighbour = snapClips.at(-1) // the trimmed last clip; its end is the snap target
+    const neighbourEndPx = neighbour.left + neighbour.width
+    const first = snapClips[0]
+    const indicator = () => evaluate(`Boolean(document.querySelector('.snap-indicator'))`)
+    const moveStartPx = async () => (await snapshot()).clips.at(-1).left
+    const dragFirstNearNeighbourEnd = (modifiers = 0, probe = null) => drag(first.x + 30, first.y + first.h / 2, first.x + 30 + neighbourEndPx + 4, first.y + first.h / 2, modifiers, probe)
+    let seenIndicator = false
+    await dragFirstNearNeighbourEnd(0, async () => { seenIndicator = await indicator() })
+    const snappedLeft = await moveStartPx()
+    check('snap: moving a clip within 8 px of another clip end lands exactly on that end', Math.abs(snappedLeft - neighbourEndPx) < 0.01, { snappedLeft, neighbourEndPx })
+    check('snap: the indicator line shows during a snapping drag and disappears on release', seenIndicator && !(await indicator()), { seenIndicator })
+    await key('z', CTRL)
+    await dragFirstNearNeighbourEnd(1)
+    const altLeft = await moveStartPx()
+    check('snap: the same drag with Alt held does not snap', Math.abs(altLeft - neighbourEndPx) > 1.5, { altLeft, neighbourEndPx })
+    await key('z', CTRL)
+    await key('s')
+    await dragFirstNearNeighbourEnd()
+    const offLeft = await moveStartPx()
+    check('snap: with snapping turned off (S) the drag does not snap', Math.abs(offLeft - neighbourEndPx) > 1.5, { offLeft, neighbourEndPx })
+    await key('z', CTRL)
+    await key('s')
+    s = await snapshot()
+    check('snap: undo restored the original clips', s.clips.length === snapClips.length && Math.abs(s.clips[0].left - first.left) < 0.01, s.clips.map((c) => c.left))
+    // Trim the end of the long last clip to ~4 px past the playhead.
+    await click(secondsX(5), s.ruler.y + 10)
+    const playheadPx = await evaluate(`parseFloat(document.querySelector('.playhead-hit-area').style.left)`)
+    s = await snapshot()
+    const trimTarget = s.clips.at(-1)
+    await click(trimTarget.x + 20, trimTarget.y + trimTarget.h / 2)
+    const handleX = trimTarget.x + trimTarget.w - 3
+    await drag(handleX, trimTarget.y + trimTarget.h / 2, trimTarget.x + playheadPx - trimTarget.left + 4, trimTarget.y + trimTarget.h / 2)
+    const trimmedClip = (await snapshot()).clips.at(-1)
+    check('snap: trimming a clip end near the playhead ends exactly at the playhead', Math.abs(trimmedClip.left + trimmedClip.width - playheadPx) < 0.01, { end: trimmedClip.left + trimmedClip.width, playheadPx })
+    await key('z', CTRL)
 
     // 9. Delete and ripple delete.
     const beforeDelete = (await snapshot()).clips

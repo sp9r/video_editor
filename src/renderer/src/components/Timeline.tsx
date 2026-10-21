@@ -23,6 +23,7 @@ import { createTrack, findSubtitleContext, formatTimecode, makeId, snapUsToFrame
 import { isSubtitleOwnershipBoundaryAvailable, isSubtitleWordBoundarySplitAvailable, nearestSubtitleOwnershipBoundaryIndex, nearestSubtitleWordBoundaryIndex } from '../../../shared/editing/operations'
 import { subtitleEditUnits } from '../../../shared/editing/edit-units'
 import { snapSubtitleTimelinePosition } from '../../../shared/editing/subtitle-snap'
+import { clipSnapTargets, clipSnapThresholdUs, snapClipEdge, snapClipMove } from '../../../shared/editing/clip-snap'
 import { DEFAULT_SUBTITLE_STYLE, isMediaTrack, type ImportedSubtitleCue, type SubtitleClip, type SubtitleEditUnit, type SubtitleWord, type TimelineClip, type TimelineTrack, type TimeUs } from '../../../shared/types'
 import { editorDurationUs, useEditorStore } from '../store'
 import { TIMELINE_ZOOM_MAX, TIMELINE_ZOOM_MIN, clampTimelineZoom, shortcutTargetKind, timelineZoomControlState, timelineZoomScrollLeft, trackControlState } from '../action-state'
@@ -287,6 +288,9 @@ interface PointerEdit {
   initialStartUs: number
   initialDurationUs: number
   targetTrackId: string
+  /** Pointer delta in time after snapping; the live preview and the commit both use this. */
+  deltaUs: number
+  snapTimeUs: number | null
 }
 
 interface SubtitleBoundaryDrag {
@@ -680,6 +684,20 @@ export default function Timeline(): React.JSX.Element {
     // out of the clip: "place playhead, click clip, Ctrl+K" has to split there.
     const currentPlayheadUs = useEditorStore.getState().playheadUs
     if (mode === 'move' && !(currentPlayheadUs >= clip.startUs && currentPlayheadUs < clip.startUs + clip.durationUs)) setPlayhead(clip.startUs)
+    const targets = clipSnapTargets(useEditorStore.getState().project, { excludeClipIds: [clip.id], playheadUs: useEditorStore.getState().playheadUs })
+    const thresholdUs = clipSnapThresholdUs(zoomPxPerSecond)
+    // One function for preview and commit so that what is shown before release is what is applied.
+    const resolve = (clientX: number, altKey: boolean): { deltaUs: number; snapTimeUs: number | null } => {
+      const rawDeltaUs = ((clientX - event.clientX) / zoomPxPerSecond) * 1_000_000
+      if (altKey || !useEditorStore.getState().snapping) return { deltaUs: rawDeltaUs, snapTimeUs: null }
+      if (mode === 'move') {
+        const snapped = snapClipMove({ startUs: clip.startUs + rawDeltaUs, durationUs: clip.durationUs, targets, thresholdUs })
+        return snapped ? { deltaUs: snapped.timeUs - clip.startUs, snapTimeUs: snapped.target.timeUs } : { deltaUs: rawDeltaUs, snapTimeUs: null }
+      }
+      const baseUs = mode === 'trim-start' ? clip.startUs : clip.startUs + clip.durationUs
+      const snapped = snapClipEdge({ timeUs: Math.max(0, baseUs + rawDeltaUs), targets, thresholdUs })
+      return snapped ? { deltaUs: snapped.timeUs - baseUs, snapTimeUs: snapped.timeUs } : { deltaUs: rawDeltaUs, snapTimeUs: null }
+    }
     const start: PointerEdit = {
       clipId: clip.id,
       mode,
@@ -687,12 +705,15 @@ export default function Timeline(): React.JSX.Element {
       deltaX: 0,
       initialStartUs: clip.startUs,
       initialDurationUs: clip.durationUs,
-      targetTrackId: trackId
+      targetTrackId: trackId,
+      deltaUs: 0,
+      snapTimeUs: null
     }
     setPointerEdit(start)
     const move = (pointerEvent: PointerEvent): void => {
       const lane = document.elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)?.closest('.track-lane') as HTMLElement | null
-      setPointerEdit((current) => current ? { ...current, deltaX: pointerEvent.clientX - current.initialX, targetTrackId: lane?.dataset.trackId ?? current.targetTrackId } : null)
+      const resolved = resolve(pointerEvent.clientX, pointerEvent.altKey)
+      setPointerEdit((current) => current ? { ...current, deltaX: pointerEvent.clientX - current.initialX, ...resolved, targetTrackId: lane?.dataset.trackId ?? current.targetTrackId } : null)
     }
     const up = (pointerEvent: PointerEvent): void => {
       window.removeEventListener('pointermove', move)
@@ -710,10 +731,11 @@ export default function Timeline(): React.JSX.Element {
         setPointerEdit(null)
         return
       }
-      const deltaUs = ((pointerEvent.clientX - start.initialX) / zoomPxPerSecond) * 1_000_000
-      if (mode === 'move') moveSelected(clip.id, latestTrackId, start.initialStartUs + deltaUs)
-      else if (mode === 'trim-start') trim(clip.id, 'start', start.initialStartUs + deltaUs)
-      else trim(clip.id, 'end', start.initialStartUs + start.initialDurationUs + deltaUs)
+      const { deltaUs, snapTimeUs } = resolve(pointerEvent.clientX, pointerEvent.altKey)
+      const exact = snapTimeUs !== null
+      if (mode === 'move') moveSelected(clip.id, latestTrackId, start.initialStartUs + deltaUs, exact)
+      else if (mode === 'trim-start') trim(clip.id, 'start', start.initialStartUs + deltaUs, exact)
+      else trim(clip.id, 'end', start.initialStartUs + start.initialDurationUs + deltaUs, exact)
       setPointerEdit(null)
     }
     const cancel = (): void => {
@@ -886,7 +908,7 @@ export default function Timeline(): React.JSX.Element {
                 })}
                 {track.clips.map((clip) => {
                   const edit = pointerEdit?.clipId === clip.id ? pointerEdit : null
-                  const deltaPx = edit?.deltaX ?? 0
+                  const deltaPx = edit ? edit.deltaUs / 1_000_000 * zoomPxPerSecond : 0
                   const visualLeft = clip.startUs / 1_000_000 * zoomPxPerSecond + (edit?.mode === 'move' ? deltaPx : edit?.mode === 'trim-start' ? deltaPx : 0)
                   const visualWidth = clip.durationUs / 1_000_000 * zoomPxPerSecond + (edit?.mode === 'trim-start' ? -deltaPx : edit?.mode === 'trim-end' ? deltaPx : 0)
                   const selected = selectedClipIds.includes(clip.id)
@@ -997,6 +1019,7 @@ export default function Timeline(): React.JSX.Element {
                 })}
               </div>
             ))}
+            {pointerEdit?.snapTimeUs != null ? <i className="snap-indicator" data-snap-us={pointerEdit.snapTimeUs} style={{ left: pointerEdit.snapTimeUs / 1_000_000 * zoomPxPerSecond }} /> : null}
             <div className="playhead-hit-area" style={{ left: playheadUs / 1_000_000 * zoomPxPerSecond }} onPointerDown={beginPlayheadDrag} aria-label={`再生位置 ${formatTimecode(playheadUs, project)}`}><i className="playhead" /></div>
           </div>
         </div>

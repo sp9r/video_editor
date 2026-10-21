@@ -102,8 +102,9 @@ interface EditorState {
   moveSubtitleBoundary(leftClipId: string, rightClipId: string, boundaryIndex: number): void
   mergeSubtitleWithPrevious(clipId: string): void
   mergeSubtitleWithNext(clipId: string): void
-  moveSelected(clipId: string, trackId: string, atUs: TimeUs): void
-  trim(clipId: string, edge: 'start' | 'end', atUs: TimeUs): void
+  /** exact: skip frame rounding because atUs is an existing clip edge or the playhead. */
+  moveSelected(clipId: string, trackId: string, atUs: TimeUs, exact?: boolean): void
+  trim(clipId: string, edge: 'start' | 'end', atUs: TimeUs, exact?: boolean): void
   splitSelectedAt(atUs: TimeUs): void
   splitSelected(): void
   deleteSelected(ripple?: boolean): void
@@ -856,8 +857,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       else throw error
     }
   },
-  moveSelected: (clipId, trackId, atUs) => {
-    try { get().applyProject(moveLinkedClip(get().project, clipId, trackId, atUs)) }
+  moveSelected: (clipId, trackId, atUs, exact) => {
+    try { get().applyProject(moveLinkedClip(get().project, clipId, trackId, atUs, exact)) }
     catch (error) {
       if (error instanceof EditingOperationError || error instanceof SubtitleCollisionError) get().showNotice(error.message, 'warning')
       else throw error
@@ -875,8 +876,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       else throw error
     }
   },
-  trim: (clipId, edge, atUs) => {
-    try { get().applyProject(trimLinkedClip(get().project, clipId, edge, atUs)) }
+  trim: (clipId, edge, atUs, exact) => {
+    try { get().applyProject(trimLinkedClip(get().project, clipId, edge, atUs, exact)) }
     catch (error) {
       if (error instanceof EditingOperationError || error instanceof SubtitleCollisionError) get().showNotice(error.message, 'warning')
       else throw error

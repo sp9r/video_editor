@@ -419,7 +419,7 @@ const applyTimeDelta = (project: ProjectFile, clipIds: readonly string[], deltaU
   }
 }
 
-export const moveLinkedClip = (project: ProjectFile, clipId: string, targetTrackId: string, atUs: TimeUs): ProjectFile => {
+export const moveLinkedClip = (project: ProjectFile, clipId: string, targetTrackId: string, atUs: TimeUs, exact = false): ProjectFile => {
   const location = locateClip(project, clipId)
   const targetTrack = project.tracks.find((track) => track.id === targetTrackId)
   if (!location || !targetTrack) return project
@@ -430,7 +430,7 @@ export const moveLinkedClip = (project: ProjectFile, clipId: string, targetTrack
   const next = clone(project)
   const selected = locateClip(next, clipId)
   if (!selected) return project
-  const nextStart = Math.max(0, snapUsToFrame(atUs, project))
+  const nextStart = Math.max(0, exact ? Math.round(atUs) : snapUsToFrame(atUs, project))
   // Linked clips move by the same delta; none of them may cross the timeline
   // origin, otherwise a partial clamp would silently desynchronize the group.
   const earliestStartUs = Math.min(...locations(next, ids).map(({ clip }) => clip.startUs))
@@ -441,7 +441,7 @@ export const moveLinkedClip = (project: ProjectFile, clipId: string, targetTrack
   return next
 }
 
-export const trimLinkedClip = (project: ProjectFile, clipId: string, edge: 'start' | 'end', atUs: TimeUs): ProjectFile => {
+export const trimLinkedClip = (project: ProjectFile, clipId: string, edge: 'start' | 'end', atUs: TimeUs, exact = false): ProjectFile => {
   const location = locateClip(project, clipId)
   if (!location) return project
   const ids = linkedClipIds(project, clipId)
@@ -451,8 +451,8 @@ export const trimLinkedClip = (project: ProjectFile, clipId: string, edge: 'star
       throw new EditingOperationError('subtitle_trim_conflict', '単語タイミングより内側には字幕を縮められません。', [candidate.clip.id])
     }
   }
-  if (ids.length === 1) return trimClip(project, clipId, edge, atUs)
-  const selectedAfter = trimClip(project, clipId, edge, atUs)
+  if (ids.length === 1) return trimClip(project, clipId, edge, atUs, exact)
+  const selectedAfter = trimClip(project, clipId, edge, atUs, exact)
   const selectedBefore = location.clip
   const selectedLocationAfter = locateClip(selectedAfter, clipId)
   if (!selectedLocationAfter) return project
