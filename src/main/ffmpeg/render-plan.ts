@@ -292,19 +292,24 @@ const makeInputArgs = (
   return ['-ss', seconds(seekUs), '-t', seconds(clip.durationUs + shiftUs + frameUs), '-i', asset.path]
 }
 
+/** The libass filter; fontsDir (relative to FFmpeg's cwd) adds the fonts bundled with Cutline. */
+export const assFilter = (assFileName: string, fontsDir?: string): string =>
+  fontsDir ? `ass=filename='${assFileName}':fontsdir='${fontsDir}'` : `ass=filename='${assFileName}'`
+
 const validateAssFileName = (assFileName: string): void => {
   if (!/^[A-Za-z0-9_.-]+$/u.test(assFileName)) throw new Error('ASS filename must be a safe workspace basename')
 }
 
 export const buildAuthoritativeVideoGraph = (
   plan: Omit<RenderPlan, 'filterGraph'> | RenderPlan,
-  assFileName = plan.assFileName
+  assFileName = plan.assFileName,
+  fontsDir?: string
 ): AuthoritativeVideoGraph => {
   validateAssFileName(assFileName)
   const statements = [...plan.graphStatements]
   let videoLabel = plan.compositedVideoLabel
   if (plan.burnSubtitles && plan.subtitleCueCount > 0 && plan.srt.trim()) {
-    statements.push(`[${videoLabel}]ass=filename='${assFileName}'[subtitled]`)
+    statements.push(`[${videoLabel}]${assFilter(assFileName, fontsDir)}[subtitled]`)
     videoLabel = 'subtitled'
   }
   if (plan.width !== plan.compositionWidth || plan.height !== plan.compositionHeight) {
@@ -322,9 +327,10 @@ export const buildAuthoritativeVideoGraph = (
 export const buildRenderFilterGraph = (
   plan: Omit<RenderPlan, 'filterGraph'> | RenderPlan,
   encoderId: H264EncoderId,
-  assFileName = plan.assFileName
+  assFileName = plan.assFileName,
+  fontsDir?: string
 ): string => {
-  const authoritative = buildAuthoritativeVideoGraph(plan, assFileName)
+  const authoritative = buildAuthoritativeVideoGraph(plan, assFileName, fontsDir)
   const statements = authoritative.statements
   const videoLabel = authoritative.videoLabel
   const format = encoderPixelFormat(encoderId)
@@ -343,10 +349,11 @@ const CHROMA_ROUND_TRIP = `${TO_VIDEO_RANGE},format=yuv420p,scale=in_color_matri
 export const buildAccurateFrameFilterGraph = (
   plan: Omit<RenderPlan, 'filterGraph'> | RenderPlan,
   frameIndex: number,
-  assFileName = plan.assFileName
+  assFileName = plan.assFileName,
+  fontsDir?: string
 ): string => {
   if (!Number.isInteger(frameIndex) || frameIndex < 0) throw new Error('Accurate frame index must be a non-negative integer')
-  const authoritative = buildAuthoritativeVideoGraph(plan, assFileName)
+  const authoritative = buildAuthoritativeVideoGraph(plan, assFileName, fontsDir)
   authoritative.statements.push(
     `[${authoritative.videoLabel}]select='eq(n\\,${frameIndex})',setpts=PTS-STARTPTS,${CHROMA_ROUND_TRIP}[vout]`
   )

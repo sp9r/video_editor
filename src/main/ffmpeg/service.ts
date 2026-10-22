@@ -23,6 +23,7 @@ import { QueuedProcessExecutor } from './process-queue.js'
 import { defaultProcessExecutor, ProcessCancelledError, type ProcessExecutor } from './process.js'
 import { probeMediaFile, probeMediaFileSafe, validateRenderedOutput } from './probe.js'
 import {
+  assFilter,
   buildRenderCommandArgs,
   buildAccurateFrameFilterGraph,
   buildRenderFilterGraph,
@@ -30,6 +31,7 @@ import {
   ffmpegSupportsFileBackedOptions,
   type RenderPlan
 } from './render-plan.js'
+import { fontsDirForWorkingDirectory } from './fonts.js'
 import { generateAss, generateSrt, generateSubtitleSlotAss } from './subtitles.js'
 import { WaveformExtractor } from './waveform.js'
 import { ExportPublishError, publishExportOutputs } from './export-publish.js'
@@ -173,12 +175,13 @@ const subtitleSlotGraph = (
   width: number,
   height: number,
   presentationMs: readonly number[],
-  assFileName: string
+  assFileName: string,
+  fontsDir?: string
 ): string => {
   const duration = (presentationMs.length / 1000 + 0.0005).toFixed(4)
   const stamp = `setpts='${lookupExpression(presentationMs)}'`
   const render = (colour: string): string =>
-    `color=c=${colour}:s=${width}x${height}:r=1000:d=${duration},format=rgba,${stamp},ass=filename='${assFileName}',setpts=N`
+    `color=c=${colour}:s=${width}x${height}:r=1000:d=${duration},format=rgba,${stamp},${assFilter(assFileName, fontsDir)},setpts=N`
   return [
     `${render('black')},split[rb1][rb2]`,
     `${render('white')}[rw]`,
@@ -577,8 +580,9 @@ export class FfmpegService {
     try {
       const { ass, presentationMs } = generateSubtitleSlotAss(project, slots.map((slot) => ({ frameIndex: slot.frameIndex, base })))
       const filterGraphPath = join(batchDirectory, 'graph.ffgraph')
+      const fontsDir = await fontsDirForWorkingDirectory(batchDirectory)
       await Promise.all([
-        writeFile(filterGraphPath, subtitleSlotGraph(width, height, presentationMs, assFileName), 'utf8'),
+        writeFile(filterGraphPath, subtitleSlotGraph(width, height, presentationMs, assFileName, fontsDir), 'utf8'),
         writeFile(join(batchDirectory, assFileName), ass, 'utf8')
       ])
       await this.executor.run({
@@ -627,7 +631,7 @@ export class FfmpegService {
     const assPath = join(directory, assFileName)
     try {
       await Promise.all([
-        writeFile(filterGraphPath, buildAccurateFrameFilterGraph(plan, windowFrameIndex, assFileName), 'utf8'),
+        writeFile(filterGraphPath, buildAccurateFrameFilterGraph(plan, windowFrameIndex, assFileName, await fontsDirForWorkingDirectory(directory)), 'utf8'),
         writeFile(assPath, plan.ass, 'utf8')
       ])
       await this.executor.run({
@@ -770,6 +774,7 @@ export class FfmpegService {
       await mkdir(dirname(outputPath), { recursive: true })
       await mkdir(workspacePath, { recursive: true })
       await writeFile(join(workspacePath, plan.assFileName), plan.ass, 'utf8')
+      const exportFontsDir = await fontsDirForWorkingDirectory(workspacePath)
       if (settings.exportSrt) await writeFile(join(workspacePath, 'captions.srt'), plan.srt, 'utf8')
       const debugArtifacts = process.env.SPECTRA_KEEP_EXPORT_DEBUG === '1'
       if (debugArtifacts) {
@@ -784,7 +789,7 @@ export class FfmpegService {
         await Promise.all([
           writeFile(join(workspacePath, 'project-snapshot.json'), JSON.stringify(project, null, 2), 'utf8'),
           writeFile(join(workspacePath, 'export-settings.json'), JSON.stringify(debugSettings, null, 2), 'utf8'),
-          writeFile(join(workspacePath, 'render.ffgraph'), buildRenderFilterGraph(plan, 'libx264'), 'utf8')
+          writeFile(join(workspacePath, 'render.ffgraph'), buildRenderFilterGraph(plan, 'libx264', plan.assFileName, exportFontsDir), 'utf8')
         ])
       }
 
@@ -815,7 +820,7 @@ export class FfmpegService {
             vaapiDevice: this.vaapiDevice,
             signal
           })
-          const graph = buildRenderFilterGraph(plan, encoderId)
+          const graph = buildRenderFilterGraph(plan, encoderId, plan.assFileName, exportFontsDir)
           assertSubtitleBurnInGraph(plan, graph)
           await writeFile(filterGraphPath, graph, 'utf8')
           let latestRatio = 0
