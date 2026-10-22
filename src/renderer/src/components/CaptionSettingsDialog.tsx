@@ -112,6 +112,7 @@ function CaptionSettingsForm({ trackId }: { trackId: string }): React.JSX.Elemen
               {MODES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
           </label>
+          {mode !== 'rule' && <small className="field-hint">ルール以外は、ローカルのQwenが考えてから字幕を書きます（フィラーと繰り返しを消す）。5分の動画で30〜70分ほどかかります。</small>}
           <label className="field"><span className="field-label">テンプレート</span>
             <select disabled={busy} value={templateId} onChange={(event) => chooseTemplate(event.target.value)}>
               <option value="">現在の見た目のまま</option>

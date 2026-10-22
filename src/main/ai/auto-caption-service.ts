@@ -158,7 +158,8 @@ export class AutoCaptionService {
         args: [scriptPath, '--request', requestPath, '--output', resultPath],
         cwd: discovery.root,
         signal: new AbortController().signal,
-        timeoutMs: 15 * 60 * 1000,
+        // The LLM caption writer thinks before answering and can take an hour for a long clip.
+        timeoutMs: this.timeoutMs,
         maxOutputBytes: MAX_PROGRESS_BYTES,
         onStdout: () => undefined
       })
