@@ -70,16 +70,17 @@ const template = (id: SubtitleTemplateId, label: string, style: Partial<Subtitle
 
 export const SUBTITLE_TEMPLATES: readonly SubtitleTemplateOption[] = Object.freeze([
   // The look of the user's posted clips (Vrew, 57 projects, 2022-2023): yellow text with a black
-  // outline and a soft shadow, about 130 px at 1080p, one short line at the bottom. Their font
-  // (けいふぉんと) is not installed here, so the verified Noto Sans JP bold stands in for it.
+  // outline and a soft shadow, about 130 px at 1080p, one short line at the bottom, in けいふぉんと
+  // (family "Keifont", one heavy Regular weight; https://font.sumomo.ne.jp/font_1.html, Apache-2.0).
   template('default', '標準（切り抜き）', {
+    fontFamily: 'Keifont',
     fontSize: 130,
     color: '#fff800',
     outlineColor: '#000000',
     outlineWidth: 7,
     shadowColor: '#00000080',
     shadowBlur: 4,
-    bold: true,
+    bold: false,
     positionY: 93,
     maxWidthPercent: 96
   }, 'auto', { maxChars: 14, maxLines: 1 }),

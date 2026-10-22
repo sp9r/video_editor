@@ -11,7 +11,7 @@ describe('subtitle template model', () => {
   })
 
   it('makes the standard template look like the posted clips', () => {
-    expect(SUBTITLE_TEMPLATES[0]?.style).toMatchObject({ color: '#fff800', outlineColor: '#000000', outlineWidth: 7, fontSize: 130 })
+    expect(SUBTITLE_TEMPLATES[0]?.style).toMatchObject({ fontFamily: 'Keifont', color: '#fff800', outlineColor: '#000000', outlineWidth: 7, fontSize: 130 })
     expect(getSubtitleTemplateSettings('default')).toMatchObject({ maxChars: 14, maxLines: 1 })
   })
 
