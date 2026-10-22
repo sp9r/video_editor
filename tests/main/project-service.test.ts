@@ -19,12 +19,12 @@ const sourceAsset = (path: string): MediaAsset => ({
 })
 
 describe('manual project persistence boundary', () => {
-  it('opens a contract model and saves a new .spectra without overwriting the contract', async () => {
+  it('opens a contract model and saves a new .cutline without overwriting the contract', async () => {
     const root = await mkdtemp(join(tmpdir(), 'video-editor-save-as-'))
     try {
       const sourcePath = join(root, 'source.mp4')
       const contractPath = join(root, 'edit_project.json')
-      const outputPath = join(root, 'manual', 'clip.spectra')
+      const outputPath = join(root, 'manual', 'clip.cutline')
       await writeFile(sourcePath, 'source media')
       await writeFile(contractPath, '{"schema_version":"edit_project.v1"}\n')
       const originalHash = createHash('sha256').update(await readFile(contractPath)).digest('hex')
@@ -49,11 +49,11 @@ describe('manual project persistence boundary', () => {
     }
   })
 
-  it('preserves imported subtitle words when saving .spectra', async () => {
+  it('preserves imported subtitle words when saving .cutline', async () => {
     const root = await mkdtemp(join(tmpdir(), 'video-editor-save-words-'))
     try {
       const sourcePath = join(root, 'source.mp4')
-      const outputPath = join(root, 'manual', 'clip.spectra')
+      const outputPath = join(root, 'manual', 'clip.cutline')
       await writeFile(sourcePath, 'source media')
       electronMocks.showSaveDialog.mockResolvedValueOnce({ canceled: false, filePath: outputPath })
       let project = createEmptyProject('manual words')
@@ -80,7 +80,7 @@ describe('manual project persistence boundary', () => {
     try {
       const projectDirectory = join(root, 'project-a')
       const recoveryUserData = join(root, 'recovery-b')
-      const projectPath = join(projectDirectory, 'clip.spectra')
+      const projectPath = join(projectDirectory, 'clip.cutline')
       const sourcePath = join(projectDirectory, 'media', 'source.mp4')
       await mkdir(join(projectDirectory, 'media'), { recursive: true })
       await writeFile(sourcePath, 'source media', { encoding: 'utf8' })
@@ -90,6 +90,21 @@ describe('manual project persistence boundary', () => {
       const recovered = await loadRecovery()
       expect(recovered?.recoveryProvenance?.originalProjectDirectory).toBe(projectDirectory)
       expect(recovered?.media[0]).toMatchObject({ path: sourcePath, relativePath: join('media', 'source.mp4'), offline: false })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reads the pre-rename latest.spectra.autosave and prefers the new autosave name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'video-editor-legacy-recovery-'))
+    try {
+      electronMocks.getPath.mockReturnValue(root)
+      await mkdir(join(root, 'recovery'), { recursive: true })
+      await writeFile(join(root, 'recovery', 'latest.spectra.autosave'), `${JSON.stringify(createEmptyProject('legacy'))}
+`)
+      expect((await loadRecovery())?.name).toBe('legacy')
+      await writeRecovery(createEmptyProject('fresh'))
+      expect((await loadRecovery())?.name).toBe('fresh')
     } finally {
       await rm(root, { recursive: true, force: true })
     }

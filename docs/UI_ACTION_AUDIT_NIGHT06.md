@@ -1,6 +1,6 @@
 # UI Action Audit — NIGHT 06
 
-対象: Spectra Video Studio の current renderer UI。今回の対象は、表示中の操作が「有効な文脈で実行できる」「無効なら前提条件が分かる」「有効なのに無反応にならない」ことの確認。
+対象: Cutline（旧Spectra Video Studio）の current renderer UI。今回の対象は、表示中の操作が「有効な文脈で実行できる」「無効なら前提条件が分かる」「有効なのに無反応にならない」ことの確認。
 
 ## Inventory
 

@@ -1,4 +1,4 @@
-# Spectra Video Studio
+# Cutline
 
 一般的なYouTube動画を、素材の読み込み、タイムライン編集、字幕・画像・音声の合成、H.264/AAC書き出しまで一つのデスクトップアプリで制作するための、クロスプラットフォーム動画編集ソフトです。
 
@@ -23,7 +23,7 @@ Windowsでは`start-preview.cmd`で修正版を起動できます。音量・左
 - 字幕の本文・時刻・フォント・色・縁・影・背景・位置の編集
 - `none` / `fade` / `pop` / `slide-up` / `typewriter` 字幕効果プリセット
 - SRT / WebVTT読み込み、SRT出力、ASS/libassによる字幕焼き込み
-- `.spectra`プロジェクト保存、相対パス、素材オフライン検出、再リンク用API
+- `.cutline`プロジェクト保存（旧`.spectra`も開ける）、相対パス、素材オフライン検出、再リンク用API
 - Undo / Redo、recovery自動保存
 - NVENC / Intel QSV / AMD AMF / Apple VideoToolbox / VAAPIの実エンコード検査
 - GPU失敗時の`libx264` CPUフォールバック
@@ -94,8 +94,8 @@ npm.cmd run dist:win
 
 `release/` にはWindows x64の次の生成物が出力されます（Git管理外）。
 
-- `Spectra Video Studio-0.1.0-win-x64-setup.exe`（NSIS installer）
-- `Spectra Video Studio-0.1.0-win-x64-portable.exe`（portable）
+- `Cutline-0.1.0-win-x64-setup.exe`（NSIS installer）
+- `Cutline-0.1.0-win-x64-portable.exe`（portable）
 
 > [!WARNING]
 > このPCではunpacked／portableの起動プロセスと同梱FFmpeg/ffprobeの解決までを確認しています。インストーラーの対話的な導入・アンインストール、別PCへの移植、Intel／NVIDIA実機のGPU検出・CPU fallbackは未受入です。現時点で「別PCへコピーすれば確実に使える」とは扱わないでください。
@@ -108,7 +108,7 @@ npm.cmd run dist:win
 4. クリップ端をドラッグしてトリミングし、再生位置で`Ctrl+K`を押して分割する。
 5. インスペクタでクロップ、位置、音量、フェードを調整する。
 6. 「字幕を追加」または「SRT/VTT読込」で字幕を置き、右側でスタイルを設定する。
-7. `Ctrl+S`で`.spectra`プロジェクトを保存する。
+7. `Ctrl+S`で`.cutline`プロジェクトを保存する。
 8. 「書き出す」でプリセット、GPU優先／CPU、字幕、保存先を確認してMP4を生成する。GPU優先時も失敗すればCPUへ安全に切り替わる。
 
 詳しい操作は [USER_GUIDE.md](./docs/USER_GUIDE.md) を参照してください。

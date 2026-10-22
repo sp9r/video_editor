@@ -120,7 +120,7 @@ export const createMainWindow = (): BrowserWindow => {
     minWidth: 1180,
     minHeight: 720,
     show: false,
-    title: 'Spectra Video Studio',
+    title: 'Cutline',
     backgroundColor: '#111318',
     autoHideMenuBar: true,
     webPreferences: {

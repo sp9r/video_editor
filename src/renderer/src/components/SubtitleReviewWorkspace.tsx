@@ -88,7 +88,7 @@ export default function SubtitleReviewWorkspace({ project, baselines, onClose }:
         const jsonl = serializeLearningDatasetJsonl(dataset.samples)
         const link = document.createElement('a')
         link.href = URL.createObjectURL(new Blob([jsonl], { type: 'application/x-ndjson' }))
-        link.download = 'spectra-learning-dataset.v1.jsonl'
+        link.download = 'cutline-learning-dataset.v1.jsonl'
         link.click()
         URL.revokeObjectURL(link.href)
         setDatasetExportResult({ exported: true, eligibleSamples: dataset.samples.length, excludedSamples: dataset.excludedSamples, malformedRecords: dataset.diagnostics.length })

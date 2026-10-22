@@ -1,4 +1,4 @@
-# Spectra Video Studio — Product Backlog
+# Cutline — Product Backlog
 
 このファイルは、ユーザーから出た製品要望・UX改善・人間レビュー項目の **source of truth** とする。
 `docs/EDITOR_BACKLOG.md` は低レベルの技術負債・実装メモとして残し、このファイルは「何を実現したいか」「今どの状態か」を管理する。

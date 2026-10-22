@@ -1,5 +1,5 @@
 {
-  "name": "spectra-video-studio",
+  "name": "cutline",
   "version": "0.1.0",
   "private": true,
   "description": "A portable, non-linear desktop video editor for everyday YouTube production.",
@@ -8,7 +8,7 @@
     "video-editor": "scripts/video-editor.mjs"
   },
   "type": "module",
-  "author": "Spectra Video Studio contributors",
+  "author": "Cutline contributors",
   "license": "MIT",
   "engines": {
     "node": ">=22.12.0"
@@ -56,8 +56,8 @@
     "vitest": "4.1.10"
   },
   "build": {
-    "appId": "jp.spectra.video-studio",
-    "productName": "Spectra Video Studio",
+    "appId": "jp.local.cutline",
+    "productName": "Cutline",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release"

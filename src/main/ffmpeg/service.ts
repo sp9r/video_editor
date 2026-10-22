@@ -320,7 +320,7 @@ export class FfmpegService {
     this.#caseInsensitiveOutputPaths = (options.platform ?? process.platform) === 'win32'
     // Thumbnails, waveforms and background subtitle images share a bounded number of FFmpeg processes.
     this.executor = new QueuedProcessExecutor(options.executor ?? defaultProcessExecutor)
-    this.workspaceRoot = resolve(options.workspaceRoot ?? join(tmpdir(), 'spectra-video-studio'))
+    this.workspaceRoot = resolve(options.workspaceRoot ?? join(tmpdir(), 'cutline'))
     this.vaapiDevice = options.vaapiDevice
     this.detector = new EncoderDetector(paths, {
       executor: this.executor,

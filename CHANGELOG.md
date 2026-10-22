@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 2026-10-22 Renamed
+
+- 製品名を「Spectra Video Studio」から**Cutline**に変更した。パッケージ名・productName・appId（`jp.local.cutline`）・ウィンドウ名・ロゴ（Cutline／動画編集）・ダイアログ・書き出し既定名・docsを更新。実行ファイルは`Cutline.exe`。
+- プロジェクトの拡張子を`.cutline`にした。開くときは旧`.spectra`と`.json`も受け付ける。復旧の自動保存は`latest.cutline.autosave`（旧`latest.spectra.autosave`も読む）。
+- 初回起動時に`%APPDATA%\Spectra Video Studio`の設定・復旧・字幕テンプレート・自動字幕の基準・レビュー・学習データを`%APPDATA%\Cutline`へコピーする（旧フォルダは残す）。
+- 内部名（`window.spectra`、IPC、`SPECTRA_*`、契約の版文字列）は互換のため変更していない。
+
 ### 2026-10-22 Export parity
 
 - 実映像（1080p60のVFR・色タグなしH.264、107カット）で、プレビューと書き出しの違いを測って直した。プロジェクトのコピーの先頭15秒を実際に書き出し、そのフレームをプレビューのcanvas（DPR 1と2）・FFmpegの正確フレームと比べた（`scripts/real-footage-parity-check.mjs`）。

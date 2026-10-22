@@ -26,9 +26,10 @@ import { SilenceAnalysisService } from './silence-analysis-service'
 import { DEFAULT_SILENCE_REAPPLY_PROFILE, isSilenceReapplyProfile } from '../shared/silence-cut'
 import { runProjectQa } from '../shared/project-qa'
 import { ThumbnailService } from './thumbnail-service'
+import { LEGACY_USER_DATA_FOLDER, migrateLegacyUserData } from './user-data-migration'
 
 registerPrivilegedSchemes()
-app.setName('Spectra Video Studio')
+app.setName('Cutline')
 
 const smokeMode = ['SPECTRA_ACCURATE_PREVIEW_SMOKE', 'SPECTRA_STARTUP_SMOKE', 'SPECTRA_INTERACTION_SMOKE', 'SPECTRA_SUBTITLE_PARITY_SMOKE']
   .some((key) => process.env[key] === '1')
@@ -37,6 +38,17 @@ if (smokeMode) {
   const profile = mkdtempSync(path.join(app.getPath('temp'), 'spectra-smoke-profile-'))
   app.setPath('userData', profile)
   app.setPath('sessionData', profile)
+} else if (!app.commandLine.hasSwitch('user-data-dir')) {
+  // An explicit --user-data-dir (isolated profile) is left untouched.
+  // The product was renamed from "Spectra Video Studio"; copy the old settings/recovery/templates once, before anything reads userData.
+  const appData = app.getPath('appData')
+  const userData = path.join(appData, 'Cutline')
+  app.setPath('userData', userData)
+  try {
+    migrateLegacyUserData(path.join(appData, LEGACY_USER_DATA_FOLDER), userData)
+  } catch (error) {
+    console.error('Legacy user data migration failed', error)
+  }
 }
 
 const MEDIA_FILTERS = [
@@ -418,7 +430,7 @@ const registerIpcHandlers = (): void => {
     if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0 || bytes.byteLength > 25 * 1024 * 1024 || (format !== 'png' && format !== 'jpeg')) throw new Error('サムネイル画像データが不正です。')
     const response = await dialog.showSaveDialog({
       title: 'サムネイルを書き出す',
-      defaultPath: `spectra-thumbnail.${format === 'png' ? 'png' : 'jpg'}`,
+      defaultPath: `cutline-thumbnail.${format === 'png' ? 'png' : 'jpg'}`,
       filters: [{ name: format === 'png' ? 'PNG image' : 'JPEG image', extensions: [format === 'png' ? 'png' : 'jpg'] }]
     })
     if (response.canceled || !response.filePath) return null
@@ -595,7 +607,7 @@ const runInteractionStateSmoke = async (window: BrowserWindow): Promise<Record<s
 const start = async (): Promise<void> => {
   installMediaProtocol()
   ffmpegService = await createFfmpegService({
-    workspaceRoot: smokeMode ? path.join(app.getPath('userData'), 'media-workspace') : path.join(app.getPath('temp'), 'spectra-video-studio')
+    workspaceRoot: smokeMode ? path.join(app.getPath('userData'), 'media-workspace') : path.join(app.getPath('temp'), 'cutline')
   })
   silenceAnalysisService = new SilenceAnalysisService(ffmpegService.paths, { executor: ffmpegService.executor })
   autoCaptionService = new AutoCaptionService({ appPath: app.getAppPath(), userDataPath: app.getPath('userData') })

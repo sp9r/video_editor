@@ -1,6 +1,6 @@
 # Third-party notices
 
-Spectra Video Studio is distributed with third-party open-source software.
+Cutline is distributed with third-party open-source software.
 
 - Electron, React, Vite, TypeScript, Zustand and Lucide are used under their
   respective open-source licenses.

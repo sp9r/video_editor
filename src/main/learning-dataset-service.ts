@@ -22,7 +22,7 @@ export const exportLearningDataset = async (): Promise<LearningDatasetExportResu
   await writeAtomic(learningDatasetAggregatePath(), jsonl)
   const destination = await dialog.showSaveDialog({
     title: '学習データを書き出す',
-    defaultPath: 'spectra-learning-dataset.v1.jsonl',
+    defaultPath: 'cutline-learning-dataset.v1.jsonl',
     filters: [{ name: 'JSONL', extensions: ['jsonl'] }]
   })
   const exported = !destination.canceled && Boolean(destination.filePath)

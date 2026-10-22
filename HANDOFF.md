@@ -1,4 +1,13 @@
-# Spectra Video Studio 開発引き継ぎ
+# Cutline 開発引き継ぎ
+
+## 2026-10-22 製品名をCutlineに変更
+
+本人の希望で「Spectra Video Studio」を**Cutline**に改名した（カット編集と字幕のラインから）。表示される名前だけの変更で、内部の識別子は互換のため旧名のまま。
+
+- 変更したもの: `package.json`（name=`cutline`、productName=`Cutline`、appId=`jp.local.cutline`）、ウィンドウ名、左上のロゴ（Cutline／動画編集）、ダイアログ、学習データの既定名（`cutline-learning-dataset.v1.jsonl`）、サムネイルの既定名、docs、`start-preview.cmd`。パッケージ後の実行ファイルは`Cutline.exe`。確認版は`release/local-preview-cutline/win-unpacked/`。
+- プロジェクトは`.cutline`で保存する。開くときは`.cutline`・旧`.spectra`・`.json`（edit_project）が使える。復旧用の自動保存は`recovery/latest.cutline.autosave`に書き、無ければ旧`latest.spectra.autosave`を読む。
+- ユーザーデータの引き継ぎ: Electronのuserデータは製品名に従うため、保存先が`%APPDATA%\Spectra Video Studio`から`%APPDATA%\Cutline`に変わる。起動時（他のどの処理よりも先）に`src/main/user-data-migration.ts`が、旧フォルダの`recovery`・`spectra-app-settings.v1.json`・`subtitle-templates.v1.json`・`auto-caption-worker.json`・`experimental.auto-caption-baseline.v1`・`experimental.full-correction.v1`・`review`・`learning`を新フォルダへ**コピー**する（旧フォルダは移動・削除しない。キャッシュはコピーしない）。全部成功したら`.migrated-from-spectra-video-studio.json`を書き、以後は動かない。新フォルダにある同名ファイルは上書きしない。`--user-data-dir`指定（スモークの隔離プロファイル）とスモークモードでは動かない。
+- 意図的に旧名のままにした内部名: `window.spectra`（preload API）、IPCチャンネル名、`SPECTRA_*`環境変数、`spectra.auto-caption.*`などの契約・版文字列、`spectra:e2e-project`イベント、`spectra-media`スキーム、設定ファイル名`spectra-app-settings.v1.json`、テストとscriptの名前、兄弟`clip_automation`の`spectra_*.py`ワーカー。これらを変えると既存データやワーカーとの互換が切れる。
 
 ## 2026-10-21 プレビュー方式の作り直しと書き出しの一致
 

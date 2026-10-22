@@ -5,7 +5,8 @@ import { validateProject } from '../shared/project'
 import { isEditProjectDocument, loadEditProject } from './standalone/edit-project'
 import type { OpenProjectResult, ProjectFile, SaveProjectResult } from '../shared/types'
 
-const PROJECT_EXTENSION = 'spectra'
+const PROJECT_EXTENSION = 'cutline'
+const LEGACY_PROJECT_EXTENSION = 'spectra'
 
 const existsAsFile = async (candidate: string): Promise<boolean> => {
   try {
@@ -61,10 +62,11 @@ export const saveProject = async (project: ProjectFile, saveAs = false): Promise
     const response = await dialog.showSaveDialog({
       title: 'プロジェクトを保存',
       defaultPath: `${project.name}.${PROJECT_EXTENSION}`,
-      filters: [{ name: 'Spectra / edit_project', extensions: [PROJECT_EXTENSION, 'json'] }]
+      filters: [{ name: 'Cutline プロジェクト', extensions: [PROJECT_EXTENSION, 'json'] }]
     })
     if (response.canceled || !response.filePath) return { cancelled: true }
-    projectPath = response.filePath.endsWith(`.${PROJECT_EXTENSION}`)
+    const lowerPath = response.filePath.toLowerCase()
+    projectPath = lowerPath.endsWith(`.${PROJECT_EXTENSION}`) || lowerPath.endsWith(`.${LEGACY_PROJECT_EXTENSION}`)
       ? response.filePath
       : `${response.filePath}.${PROJECT_EXTENSION}`
   }
@@ -78,7 +80,7 @@ export const openProject = async (): Promise<OpenProjectResult> => {
   const response = await dialog.showOpenDialog({
     title: 'プロジェクトを開く',
     properties: ['openFile'],
-    filters: [{ name: 'Spectra / edit_project', extensions: [PROJECT_EXTENSION, 'json'] }]
+    filters: [{ name: 'Cutline プロジェクト / edit_project', extensions: [PROJECT_EXTENSION, LEGACY_PROJECT_EXTENSION, 'json'] }]
   })
   const projectPath = response.filePaths[0]
   if (response.canceled || !projectPath) return { cancelled: true, warnings: [] }
@@ -97,7 +99,9 @@ export const openProject = async (): Promise<OpenProjectResult> => {
   return { cancelled: false, projectPath, ...hydrated }
 }
 
-const recoveryPath = (): string => path.join(app.getPath('userData'), 'recovery', 'latest.spectra.autosave')
+const recoveryPath = (): string => path.join(app.getPath('userData'), 'recovery', 'latest.cutline.autosave')
+// Autosave name used before the Cutline rename; still read when no new autosave exists.
+const legacyRecoveryPath = (): string => path.join(app.getPath('userData'), 'recovery', 'latest.spectra.autosave')
 
 export const writeRecovery = async (project: ProjectFile): Promise<void> => {
   const target = recoveryPath()
@@ -112,8 +116,11 @@ export const writeRecovery = async (project: ProjectFile): Promise<void> => {
 }
 
 export const loadRecovery = async (): Promise<ProjectFile | null> => {
-  const target = recoveryPath()
-  if (!(await existsAsFile(target))) return null
+  let target = recoveryPath()
+  if (!(await existsAsFile(target))) {
+    target = legacyRecoveryPath()
+    if (!(await existsAsFile(target))) return null
+  }
   try {
     const source = await readFile(target, 'utf8')
     const recovered = validateProject(JSON.parse(source) as unknown)

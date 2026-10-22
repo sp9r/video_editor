@@ -1,7 +1,7 @@
 # アーキテクチャ
 
 更新日: 2026-08-14
-対象: Spectra Video Studio 0.1.x
+対象: Cutline 0.1.x（旧名Spectra Video Studio）
 
 ## clip_automationとの境界（Phase 3）
 

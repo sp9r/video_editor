@@ -5,7 +5,7 @@
 
 ## 1. 製品定義
 
-Spectra Video Studioは、一般的なYouTube動画を素材読み込みからH.264/AAC MP4書き出しまで一つのアプリで制作する、クロスプラットフォーム非線形動画編集ソフトである。プロ向けNLEに馴染みやすい編集概念を採るが、他社製品の視覚表現や固有資産は模倣しない。
+Cutlineは、一般的なYouTube動画を素材読み込みからH.264/AAC MP4書き出しまで一つのアプリで制作する、クロスプラットフォーム非線形動画編集ソフトである。プロ向けNLEに馴染みやすい編集概念を採るが、他社製品の視覚表現や固有資産は模倣しない。
 
 0.1.xは実用アルファであり、Adobe Premiere Pro、DaVinci Resolve、Final Cut Proの全機能・全性能との同等性は保証しない。初期完成条件は「通常のYouTube動画制作を別編集ソフトへ移らず完遂できること」とする。
 
@@ -17,7 +17,7 @@ Spectra Video Studioは、一般的なYouTube動画を素材読み込みからH.
 | macOS | Intel / Apple Silicon。VideoToolbox対応はtarget OS buildで検査 |
 | Linux | x64を基本。NVENC/QSV/VAAPIは実行環境で検査 |
 | GPUなし | `libx264` CPUへ自動fallback |
-| プロジェクト | UTF-8 JSON、拡張子`.spectra`、schema version付き |
+| プロジェクト | UTF-8 JSON、拡張子`.cutline`（旧`.spectra`も読み込み可）、schema version付き |
 | 作業色空間 | 0.1.xはSDR BT.709、8-bitを基本 |
 | 標準音声 | 48 kHz stereo |
 
