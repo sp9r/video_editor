@@ -211,7 +211,15 @@ const registerIpcHandlers = (): void => {
     return await requireService().renderSubtitleOverlaySequence(validateProject(projectInput), startFrame, frameCount)
   })
 
-  ipcMain.handle(IPC.silenceCutReapply, async (event, projectInput: ProjectFile, selectedClipId: unknown, jobId: unknown, profileInput: unknown, minSilenceInput: unknown) => {
+  ipcMain.handle(IPC.previewSubtitleFrames, async (event, projectInput: ProjectFile, frameIndices: unknown, optionsInput?: unknown) => {
+    assertTrustedSender(event)
+    if (!Array.isArray(frameIndices) || frameIndices.length < 1 || frameIndices.length > 256 || frameIndices.some((frame) => typeof frame !== 'number' || !Number.isSafeInteger(frame) || frame < 0)) {
+      throw new Error('字幕overlayのフレーム指定が不正です。')
+    }
+    return await requireService().renderSubtitleFrames(validateProject(projectInput), frameIndices as number[], { urgent: (optionsInput as { urgent?: unknown } | undefined)?.urgent === true })
+  })
+
+  ipcMain.handle(IPC.silenceCutReapply,async (event, projectInput: ProjectFile, selectedClipId: unknown, jobId: unknown, profileInput: unknown, minSilenceInput: unknown) => {
     assertTrustedSender(event)
     if (typeof selectedClipId !== 'string' || selectedClipId.length > 200 || typeof jobId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/u.test(jobId)) {
       throw new Error('無音再適用の対象またはjob IDが不正です。')
@@ -257,6 +265,11 @@ const registerIpcHandlers = (): void => {
     assertTrustedSender(event)
     if (typeof jobId !== 'string' || jobId.length > 200) return null
     return requireAutoCaptionService().status(jobId)
+  })
+
+  ipcMain.handle(IPC.autoCaptionResegment, async (event, requestInput: unknown) => {
+    assertTrustedSender(event)
+    return requireAutoCaptionService().resegment(requestInput)
   })
 
   ipcMain.handle(IPC.autoCaptionBaselinesLoad, async (event) => {

@@ -24,14 +24,34 @@ import { isMediaTrack } from '../../shared/types'
 import type { AutoCaptionProgress, AutoCaptionResult, AutoCaptionSettings, AutoCaptionSilenceAnalysis } from '../../shared/auto-caption-contract'
 import { applyAutoCaptionResultToProject } from '../../shared/auto-caption-adapter'
 import { applySilenceCutToProject, canRestoreSilenceCut, DEFAULT_SILENCE_REAPPLY_PROFILE, createSilenceCutTimeMapper, restoreSilenceCutToProject, silenceCutOperationForClip, type SilenceReapplyProfile } from '../../shared/silence-cut'
-import type { MediaAsset, ProjectFile, SubtitleStyle, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
-import type { UserSubtitleTemplate } from '../../shared/subtitle-templates'
+import type { MediaAsset, ProjectFile, SubtitleClip, SubtitleStyle, SubtitleTrackLayoutSettings, TimelineClip, TimelineTrack, TimeUs } from '../../shared/types'
+import { applyCaptionAppearance, applyCaptionResegmentResults, buildResegmentRequests, captionSplitSettingsChanged, planCaptionResegment, resegmentKeptMessage, resegmentLimits } from '../../shared/caption-resegment'
+import { normalizeSubtitleMaxLines } from '../../shared/subtitle-layout'
+import { getSubtitleTemplateStyleForId, type UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { FullCorrectionSession } from '../../shared/full-correction'
-import { describeAutoCaptionBackend } from '../../shared/auto-caption-ui'
+import { describeAutoCaptionBackend, resolveCaptionLayoutLimits, withCaptionWidth } from '../../shared/auto-caption-ui'
 import { createDemoProject } from './demo'
 import { shareUnchangedProjectParts } from './project-sharing'
 import { clampTimelineZoom, TIMELINE_ZOOM_DEFAULT } from './action-state'
 import { createPendingAsyncMutation, markPendingAsyncMutationCancelRequested, markPendingAsyncMutationConflicted, pendingAsyncMutationMatchesCurrent, type PendingAsyncMutation, type PendingAsyncMutationKind } from './pending-async-mutation'
+
+export interface ApplyCaptionSettingsInput {
+  trackId: string
+  scope: 'track' | 'selection'
+  settings: SubtitleTrackLayoutSettings
+  language: string
+  /** Replaces the whole style of every caption in scope (a template). */
+  templateStyle?: SubtitleStyle
+  /** Applied on top of the template/current style. */
+  stylePatch?: Partial<SubtitleStyle>
+}
+
+export interface ApplyCaptionSettingsResult {
+  affectedCount: number
+  resegmented: boolean
+  createdCount: number
+  keptCount: number
+}
 
 type EditTool = 'select' | 'razor'
 type Notice = { id: number; tone: 'info' | 'success' | 'warning' | 'error'; message: string }
@@ -60,6 +80,11 @@ interface EditorState {
   userSubtitleTemplates: UserSubtitleTemplate[]
   defaultSubtitleTemplateId: string
   autoCaptionSettingsSeed: Pick<AutoCaptionSettings, 'maxChars' | 'maxLines' | 'segmentationMode'>
+  /** The caption settings last applied to a track; later automatic runs start from them. */
+  captionLayoutDefaults: SubtitleTrackLayoutSettings | null
+  /** Open 「字幕設定を変更」 panel (the subtitle track it edits), or null. */
+  captionSettingsDialogTrackId: string | null
+  captionSettingsBusy: boolean
   savedFingerprint: string
   transactionBase: ProjectFile | null
   pendingAsyncMutation: PendingAsyncMutation | null
@@ -85,6 +110,9 @@ interface EditorState {
   relinkAsset(assetId: string, asset: MediaAsset): void
   addAssetClip(assetId: string, trackId: string, atUs: TimeUs): void
   autoCaptionSelected(settings?: AutoCaptionSettings): Promise<AutoCaptionApplySummary | null>
+  openCaptionSettings(trackId: string): void
+  closeCaptionSettings(): void
+  applyCaptionSettings(input: ApplyCaptionSettingsInput): Promise<ApplyCaptionSettingsResult | null>
   cancelAutoCaption(): Promise<void>
   reapplySilenceCut(profile?: SilenceReapplyProfile, minSilenceUs?: number): Promise<boolean>
   updateSilenceCutThreshold(minSilenceUs: number): Promise<boolean>
@@ -263,6 +291,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   userSubtitleTemplates: [],
   defaultSubtitleTemplateId: 'default',
   autoCaptionSettingsSeed: { maxChars: 32, maxLines: 2, segmentationMode: 'auto' },
+  captionLayoutDefaults: null,
+  captionSettingsDialogTrackId: null,
+  captionSettingsBusy: false,
   applyProject: (project, options = {}) => {
     const current = get().project
     if (project === current) return
@@ -419,6 +450,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
     const projectLoadVersion = get().projectLoadVersion
     let operationId: string | undefined
+    // Width and line limits: the worker receives the per-line capacity computed from the
+    // template style at the chosen width, and the generated clips keep that width.
+    const captionTemplateStyle = settings
+      ? getSubtitleTemplateStyleForId(settings.subtitleTemplate ?? 'default', get().userSubtitleTemplates)
+      : undefined
+    const captionLayoutLimits = settings && captionTemplateStyle
+      ? resolveCaptionLayoutLimits({
+          maxChars: settings.maxChars,
+          maxLines: settings.maxLines ?? 2,
+          style: captionTemplateStyle,
+          maxWidthPercent: settings.maxWidthPercent,
+          sequenceWidth: project.sequence.width
+        })
+      : undefined
+    const workerSettings: AutoCaptionSettings | undefined = settings && captionLayoutLimits
+      ? { ...settings, lineCapacity: captionLayoutLimits.lineCapacity, maxWidthPercent: captionLayoutLimits.widthPercent }
+      : settings
+    const captionAppliedStyle = captionTemplateStyle && captionLayoutLimits && captionLayoutLimits.widthPercent !== captionTemplateStyle.maxWidthPercent
+      ? withCaptionWidth(captionTemplateStyle, captionLayoutLimits.widthPercent)
+      : undefined
     set({ autoCaptionProgress: { version: 'spectra.auto-caption.progress.v1', jobId: '', state: 'preparing', ratio: 0, message: '音声準備中…' }, autoCaptionJobId: null })
     try {
       const health = await window.spectra.autoCaptionHealth()
@@ -454,8 +505,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             resolve({ result: progress.result, silenceAnalysis: progress.silenceAnalysis })
           }
         })
-        const start = settings
-          ? window.spectra!.startAutoCaption(project, selectedIds, settings)
+        const start = workerSettings
+          ? window.spectra!.startAutoCaption(project, selectedIds, workerSettings)
           : window.spectra!.startAutoCaption(project, selectedIds)
         void start.then(
           async (started) => {
@@ -554,6 +605,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         maxLines: settings?.maxLines ?? 2,
         sourceTimeMapper,
         subtitleTemplate: settings?.subtitleTemplate ?? 'default',
+        ...(captionAppliedStyle ? { subtitleTemplateStyle: captionAppliedStyle } : {}),
+        captionLayout: {
+          maxChars: settings?.maxChars ?? 32,
+          maxLines: normalizeSubtitleMaxLines(settings?.maxLines ?? 2),
+          maxWidthPercent: captionLayoutLimits?.widthPercent ?? captionTemplateStyle?.maxWidthPercent ?? 80,
+          segmentationMode: settings?.segmentationMode ?? 'auto',
+          templateId: settings?.subtitleTemplate ?? 'default'
+        },
         userSubtitleTemplates,
         captionCoverageRanges,
         captionCoverageMaxGapUs: silenceAnalysis?.settings.minSilenceUs
@@ -748,6 +807,92 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setUserSubtitleTemplates: (templates) => set({ userSubtitleTemplates: structuredClone(templates) }),
   setDefaultSubtitleTemplateId: (id) => set({ defaultSubtitleTemplateId: id }),
   setAutoCaptionSettingsSeed: (settings) => set({ autoCaptionSettingsSeed: structuredClone(settings) }),
+  openCaptionSettings: (trackId) => set({ captionSettingsDialogTrackId: trackId }),
+  closeCaptionSettings: () => set({ captionSettingsDialogTrackId: null }),
+  applyCaptionSettings: async (input) => {
+    if (get().captionSettingsBusy) return null
+    const project = get().project
+    const loadVersion = get().projectLoadVersion
+    const track = project.tracks.find((candidate) => candidate.id === input.trackId)
+    if (!track || track.kind !== 'subtitle') {
+      get().showNotice('字幕トラックが見つかりません。', 'warning')
+      return null
+    }
+    if (track.locked) {
+      get().showNotice('字幕トラックがロックされています。', 'warning')
+      return null
+    }
+    const trackClips = track.clips.filter((clip): clip is SubtitleClip => clip.kind === 'subtitle')
+    const scopeIds = input.scope === 'selection' ? new Set(get().selectedClipIds.filter((id) => trackClips.some((clip) => clip.id === id))) : undefined
+    const inScope = trackClips.filter((clip) => !scopeIds || scopeIds.has(clip.id))
+    if (inScope.length === 0) {
+      get().showNotice(input.scope === 'selection' ? '設定を変える字幕を選択してください。' : 'このトラックに字幕がありません。', 'warning')
+      return null
+    }
+    const { settings } = input
+    const maxLines = normalizeSubtitleMaxLines(settings.maxLines)
+    const styleFor = (clip: SubtitleClip): SubtitleStyle => ({
+      ...(input.templateStyle ?? clip.style),
+      ...input.stylePatch,
+      maxWidthPercent: settings.maxWidthPercent
+    })
+    const sequenceWidth = project.sequence.width
+    const first = inScope[0]!
+    const previousStyle = first.style
+    const previousLayout = track.captionLayout
+    const previousLimits = resegmentLimits(
+      { maxChars: previousLayout?.maxChars ?? settings.maxChars, maxLines: normalizeSubtitleMaxLines(first.maxLines), maxWidthPercent: previousStyle.maxWidthPercent },
+      previousStyle,
+      sequenceWidth
+    )
+    const nextLimits = resegmentLimits({ maxChars: settings.maxChars, maxLines, maxWidthPercent: settings.maxWidthPercent }, styleFor(first), sequenceWidth)
+    const needsResegment = captionSplitSettingsChanged(
+      { ...previousLimits, maxLines: normalizeSubtitleMaxLines(first.maxLines), segmentationMode: previousLayout?.segmentationMode ?? settings.segmentationMode },
+      { ...nextLimits, maxLines, segmentationMode: settings.segmentationMode }
+    )
+    const layout: SubtitleTrackLayoutSettings = { ...settings, maxLines }
+    set({ captionLayoutDefaults: { ...layout } })
+    try {
+      const appearance = applyCaptionAppearance(project, input.trackId, scopeIds, { styleFor, maxLines, layout })
+      if (!needsResegment) {
+        get().applyProject(appearance)
+        get().showNotice(`字幕${inScope.length}件の見た目と折り返しを変更しました。`, 'success')
+        return { affectedCount: inScope.length, resegmented: false, createdCount: 0, keptCount: 0 }
+      }
+      const plan = planCaptionResegment(appearance, input.trackId, scopeIds)
+      if (!window.spectra || plan.runs.length === 0) {
+        get().applyProject(appearance)
+        const reason = !window.spectra ? '再分割はElectron版で利用できるため、見た目と折り返しだけ変更しました。' : '再分割できる字幕がないため、見た目と折り返しだけ変更しました。'
+        get().showNotice(`${reason}${resegmentKeptMessage(plan.keptClipIds.length)}`, 'warning')
+        return { affectedCount: inScope.length, resegmented: false, createdCount: 0, keptCount: plan.keptClipIds.length }
+      }
+      set({ captionSettingsBusy: true })
+      const requests = buildResegmentRequests(plan, {
+        jobPrefix: makeId('resegment').replace(/[^A-Za-z0-9._:-]/g, '-'),
+        language: input.language === 'auto' ? 'ja' : input.language,
+        maxChars: nextLimits.maxChars,
+        maxLines,
+        lineCapacity: nextLimits.lineCapacity,
+        segmentationMode: settings.segmentationMode
+      })
+      const results = await Promise.all(requests.map((request) => window.spectra!.resegmentCaptions(request)))
+      if (get().project !== project || get().projectLoadVersion !== loadVersion) {
+        get().showNotice('再分割中にプロジェクトが変更されたため、字幕設定の変更を取り消しました。もう一度実行してください。', 'warning')
+        return null
+      }
+      const outcome = applyCaptionResegmentResults(appearance, plan, results)
+      const firstCreated = outcome.project.tracks.find((candidate) => candidate.id === input.trackId)?.clips.find((clip) => clip.kind === 'subtitle' && clip.startUs >= (inScope[0]?.startUs ?? 0))
+      get().applyProject(outcome.project, firstCreated ? { selectClipId: firstCreated.id } : undefined)
+      const keptMessage = resegmentKeptMessage(outcome.keptCount)
+      get().showNotice(`字幕${outcome.replacedCount}件を${outcome.createdCount}件に分け直しました（音声の再認識なし）。${keptMessage}`, 'success')
+      return { affectedCount: inScope.length, resegmented: true, createdCount: outcome.createdCount, keptCount: outcome.keptCount }
+    } catch (error) {
+      get().showNotice(`字幕設定を変更できませんでした: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      return null
+    } finally {
+      set({ captionSettingsBusy: false })
+    }
+  },
   hydrateFullCorrectionSessions: (sessions) => {
     const current = get().project
     const active = sessions

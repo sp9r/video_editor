@@ -308,12 +308,14 @@ function TrackControls({ track, tracks }: { track: TimelineTrack; tracks: Timeli
   const renameTrack = useEditorStore((state) => state.renameTrack)
   const deleteTrack = useEditorStore((state) => state.deleteTrack)
   const reorderTrack = useEditorStore((state) => state.reorderTrack)
+  const openCaptionSettings = useEditorStore((state) => state.openCaptionSettings)
   const controls = trackControlState(track, tracks)
   return (
     <div className={`track-header kind-${track.kind}`}>
       <span className="track-index">{trackLabel(track, tracks)}</span>
       <strong title={track.name}>{track.name}</strong>
       <div className="track-controls">
+        {track.kind === 'subtitle' && <IconButton label="字幕設定を変更" onClick={() => openCaptionSettings(track.id)}><Captions size={11} /></IconButton>}
         <IconButton label="トラック名を変更" onClick={() => { const next = window.prompt('トラック名', track.name); if (next !== null) renameTrack(track.id, next) }}><Pencil size={11} /></IconButton>
         <IconButton label={controls.moveUpLabel} disabled={!controls.canMoveUp} onClick={() => reorderTrack(track.id, -1)}><ChevronUp size={11} /></IconButton>
         <IconButton label={controls.moveDownLabel} disabled={!controls.canMoveDown} onClick={() => reorderTrack(track.id, 1)}><ChevronDown size={11} /></IconButton>

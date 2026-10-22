@@ -8,6 +8,8 @@ import { applySubtitleTemplateToClip, deriveSubtitleTemplateGeneration } from '.
 import type { SubtitleTemplateCaptionGeneration } from '../../../shared/subtitle-templates'
 import { canRestoreSilenceCut, DEFAULT_SILENCE_REAPPLY_PROFILE, silenceCutOperationForClip, silenceCutProfileSettings, type SilenceReapplyProfile } from '../../../shared/silence-cut'
 import { getSubtitleTemplate, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../../shared/subtitle-templates'
+import { captionLayoutHint, resolveCaptionLayoutLimits } from '../../../shared/auto-caption-ui'
+import { layoutSubtitleText, MAX_SUBTITLE_MAX_LINES, normalizeSubtitleMaxLines } from '../../../shared/subtitle-layout'
 import { findClip, useEditorStore } from '../store'
 import { Button, EmptyState, Field, NumberField, Section, SelectField } from './Controls'
 import SubtitleTemplatePreview from './SubtitleTemplatePreview'
@@ -275,6 +277,7 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
               <label className="field"><span className="field-label">最大文字数</span><input type="number" min={1} max={10000} value={saveGeneration.maxChars} onChange={(event) => setSaveGeneration((current) => ({ ...current, maxChars: Math.max(1, Math.min(10000, Number(event.target.value) || 1)) }))} /></label>
               <label className="field"><span className="field-label">最大行数</span><input type="number" min={1} max={16} value={saveGeneration.maxLines} onChange={(event) => setSaveGeneration((current) => ({ ...current, maxLines: Math.max(1, Math.min(16, Number(event.target.value) || 1)) }))} /></label>
             </div>
+            <small className="field-hint caption-layout-hint">{captionLayoutHint({ maxChars: saveGeneration.maxChars, maxLines: saveGeneration.maxLines, style: clip.style, sequenceWidth: project.sequence.width })}</small>
             <label className="field"><span className="field-label">字幕品質</span><select value={saveGeneration.segmentationMode} onChange={(event) => setSaveGeneration((current) => ({ ...current, segmentationMode: event.target.value as SubtitleTemplateCaptionGeneration['segmentationMode'] }))}><option value="auto">高品質（自動）</option><option value="rule">ルール</option><option value="llm">LLM</option></select></label>
             <div className="template-style-summary"><strong>見た目</strong><span>{clip.style.fontFamily} / {clip.style.fontSize}px / {clip.style.bold ? '太字' : '標準'} / {clip.style.italic ? '斜体' : '標準'}</span><span>文字 {clip.style.color} · 縁取り {clip.style.outlineColor} {clip.style.outlineWidth}px · 幅 {clip.style.maxWidthPercent}%</span></div>
             <small className="field-hint">{saveSeedSource === 'baseline' ? 'この字幕の自動字幕baseline設定を初期値にしました。' : '対応baselineがないため、現在のAuto Processing設定を初期値にしました。本文の長さからは推測していません。'}</small>
@@ -289,7 +292,8 @@ function SubtitleTemplateManager({ clip }: { clip: SubtitleClip }): React.JSX.El
 }
 
 function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
-  const { project, patchClip, selectClip, setPlayhead, splitSubtitleAtWordBoundary, mergeSubtitleWithPrevious, mergeSubtitleWithNext } = useEditorStore()
+  const { project, patchClip, selectClip, setPlayhead, splitSubtitleAtWordBoundary, mergeSubtitleWithPrevious, mergeSubtitleWithNext, openCaptionSettings } = useEditorStore()
+  const subtitleTrackId = project.tracks.find((track) => track.kind === 'subtitle' && track.clips.some((candidate) => candidate.id === clip.id))?.id
   const transaction = useEditTransaction()
   const [fontFamilies, setFontFamilies] = useState<string[]>([...FALLBACK_FONT_FAMILIES])
   useEffect(() => {
@@ -303,6 +307,8 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
   const { previous, next } = findSubtitleContext(project, clip.id)
   const wordsMatchText = subtitleWordsMatchText(clip)
   const editUnits = subtitleEditUnits(clip)
+  const lineLayout = layoutSubtitleText(clip.text, clip.style, project.sequence.width, clip.maxLines)
+  const lineLimits = resolveCaptionLayoutLimits({ maxChars: 80, maxLines: lineLayout.maxLines, style: clip.style, sequenceWidth: project.sequence.width })
   const selectContext = (item: SubtitleClip): void => {
     selectClip(item.id)
     setPlayhead(item.startUs)
@@ -321,6 +327,7 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
         </div>
       </Section>
       <Section title="字幕テキスト">
+        <Button className="subtle-button" disabled={!subtitleTrackId} title="この字幕トラックの文字数・横幅・行数・区切り方式・見た目を、作成済みの字幕にまとめて適用し直す" onClick={() => subtitleTrackId && openCaptionSettings(subtitleTrackId)}>字幕設定を変更…</Button>
         <Field label="本文" wide>
           <textarea
             {...transaction}
@@ -337,6 +344,10 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
             })}
           />
         </Field>
+        <p className={`field-hint ${lineLayout.diagnostics.length ? 'warning' : ''}`} role={lineLayout.diagnostics.length ? 'alert' : undefined} data-testid="subtitle-line-count">
+          {lineLayout.lineCount} / {lineLayout.maxLines}行（1行に約{lineLimits.lineCapacity}文字、字幕幅{lineLimits.widthPercent}%）
+          {lineLayout.diagnostics.length > 0 && ` ${lineLayout.lineCount}行になり最大${lineLayout.maxLines}行を超えています。字幕幅を広げるか、文字を減らすか、字幕を分けてください。`}
+        </p>
         {clip.words?.length || editUnits?.length ? (
           <Field label="単語境界" wide>
             <div className="subtitle-word-boundaries" aria-label="単語境界で分割">
@@ -377,6 +388,7 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
           <NumberField {...transaction} label="影ぼかし" suffix="px" min={0} max={40} value={clip.style.shadowBlur} onChange={(event) => patchStyle({ shadowBlur: numberValue(event.target.value) })} />
           <NumberField {...transaction} label="背景濃度" suffix="%" min={0} max={100} value={Math.round(clip.style.backgroundOpacity * 100)} onChange={(event) => patchStyle({ backgroundOpacity: numberValue(event.target.value) / 100 })} />
           <NumberField {...transaction} label="字幕幅" suffix="%" min={10} max={300} value={clip.style.maxWidthPercent ?? 80} onChange={(event) => patchStyle({ maxWidthPercent: numberValue(event.target.value, 80) })} />
+          <NumberField {...transaction} label="最大行数" suffix="行" min={1} max={MAX_SUBTITLE_MAX_LINES} step={1} value={normalizeSubtitleMaxLines(clip.maxLines)} onChange={(event) => patchClip(clip.id, (current) => current.kind === 'subtitle' ? { ...current, maxLines: normalizeSubtitleMaxLines(Math.round(numberValue(event.target.value, 2))) } : current)} />
         </div>
         <Button className="subtle-button" onClick={() => useEditorStore.getState().applySubtitleStyleToAll(clip.id)}>この字幕のスタイルを全字幕へ適用</Button>
       </Section>

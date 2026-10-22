@@ -9,7 +9,11 @@ import {
   parseAutoCaptionBaseline,
   parseAutoCaptionProgress,
   parseAutoCaptionRequest,
-  parseAutoCaptionResult
+  parseAutoCaptionResult,
+  parseResegmentRequest,
+  parseResegmentResult,
+  RESEGMENT_REQUEST_VERSION,
+  RESEGMENT_RESULT_VERSION
 } from '../../src/shared/auto-caption-contract.js'
 
 const request = () => ({
@@ -52,6 +56,9 @@ describe('auto-caption worker contract draft', () => {
     expect(parseAutoCaptionRequest(request())).toMatchObject({ sourceStartUs: 10_000_000, sourceEndUs: 15_000_000, silenceCut: 'strong', accelerationMode: 'gpu', subtitleTemplate: 'high-contrast' })
     expect(() => parseAutoCaptionRequest({ ...request(), sourceStartUs: 1.5 })).toThrow()
     expect(() => parseAutoCaptionRequest({ ...request(), sourceEndUs: 10_000_000 })).toThrow()
+    expect(parseAutoCaptionRequest({ ...request(), lineCapacity: 12 })).toMatchObject({ lineCapacity: 12 })
+    expect(parseAutoCaptionRequest(request())).not.toHaveProperty('lineCapacity')
+    expect(() => parseAutoCaptionRequest({ ...request(), lineCapacity: 0 })).toThrow()
   })
 
   it('rejects unsupported unified processing settings', () => {
@@ -107,5 +114,28 @@ describe('auto-caption worker contract draft', () => {
     expect(parseAutoCaptionBaseline(baseline)).toMatchObject({ version: AUTO_CAPTION_BASELINE_VERSION, jobId: 'caption-job-1' })
     expect(JSON.stringify(baseline)).not.toContain('mediaPath')
     expect(baseline.rawWords).not.toBe(parseAutoCaptionResult(result()).rawWords)
+  })
+})
+
+describe('segmentation-only (resegment) contract', () => {
+  const req = () => ({
+    version: RESEGMENT_REQUEST_VERSION, jobId: 'rs-1', language: 'ja', maxChars: 24, maxLines: 2, lineCapacity: 12, segmentationMode: 'rule',
+    words: [{ id: 'w0', text: '就職', startUs: 0, endUs: 500_000 }, { id: 'w1', text: '試験', startUs: 500_000, endUs: 900_000 }]
+  })
+
+  it('validates the request and rejects bad words', () => {
+    expect(parseResegmentRequest(req())).toMatchObject({ lineCapacity: 12, words: [{ id: 'w0' }, { id: 'w1' }] })
+    expect(() => parseResegmentRequest({ ...req(), words: [] })).toThrow()
+    expect(() => parseResegmentRequest({ ...req(), words: [req().words[0], req().words[0]] })).toThrow()
+    expect(() => parseResegmentRequest({ ...req(), mediaPath: 'x' })).toThrow()
+  })
+
+  it('requires the result to own every input word exactly once, in order', () => {
+    const request = parseResegmentRequest(req())
+    const caption = (id: string, ids: string[], startUs: number, endUs: number) => ({ id, text: 'x', startUs, endUs, sourceWordIds: ids, textStatus: 'as_transcribed' })
+    const result = (captions: unknown[]) => ({ version: RESEGMENT_RESULT_VERSION, jobId: 'rs-1', method: 'rule', captions })
+    expect(parseResegmentResult(result([caption('c1', ['w0'], 0, 500_000), caption('c2', ['w1'], 500_000, 900_000)]), request).captions).toHaveLength(2)
+    expect(() => parseResegmentResult(result([caption('c1', ['w1'], 0, 500_000), caption('c2', ['w0'], 500_000, 900_000)]), request)).toThrow()
+    expect(() => parseResegmentResult(result([caption('c1', ['w0'], 0, 500_000)]), request)).toThrow()
   })
 })

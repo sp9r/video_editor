@@ -2,7 +2,7 @@ import { mapAutoCaptionSourceTimeToTimelineUs, type AutoCaptionResult } from './
 import { AUTOMATION_SCHEMA_VERSION, validateAutomationProposal, type AutomationProposal, type TranscriptAiOutput } from './automation.js'
 import { createTrack, makeId, validateProject } from './project.js'
 import { deriveSubtitleEditUnits } from './editing/edit-units.js'
-import { type ProjectFile, type SubtitleClip, type TimelineClip } from './types.js'
+import { type ProjectFile, type SubtitleClip, type SubtitleTrackLayoutSettings, type TimelineClip } from './types.js'
 import { validateSubtitleMaxLines } from './subtitle-layout.js'
 import type { SourceTimeMapper } from './silence-cut.js'
 import { getSubtitleTemplateStyleForId, type UserSubtitleTemplate } from './subtitle-templates.js'
@@ -191,7 +191,7 @@ export const applyAutoCaptionResultToProject = (
   project: ProjectFile,
   clip: Pick<TimelineClip, 'startUs' | 'sourceInUs' | 'durationUs'>,
   result: AutoCaptionResult,
-  options: { maxChars?: number; maxLines?: number; sourceTimeMapper?: SourceTimeMapper; subtitleTemplate?: SubtitleTemplateId; userSubtitleTemplates?: readonly UserSubtitleTemplate[]; subtitleTemplateStyle?: SubtitleStyle; captionCoverageRanges?: readonly CaptionCoverageRange[]; captionCoverageMaxGapUs?: number } = {}
+  options: { maxChars?: number; maxLines?: number; captionLayout?: SubtitleTrackLayoutSettings; sourceTimeMapper?: SourceTimeMapper; subtitleTemplate?: SubtitleTemplateId; userSubtitleTemplates?: readonly UserSubtitleTemplate[]; subtitleTemplateStyle?: SubtitleStyle; captionCoverageRanges?: readonly CaptionCoverageRange[]; captionCoverageMaxGapUs?: number } = {}
 ): AutoCaptionProjectApply => {
   const transcript = autoCaptionResultToTranscript(clip, result, { sourceTimeMapper: options.sourceTimeMapper })
   if (options.maxChars !== undefined && (!Number.isSafeInteger(options.maxChars) || options.maxChars < 1 || options.maxChars > 10_000)) {
@@ -204,6 +204,8 @@ export const applyAutoCaptionResultToProject = (
   const maxLines = options.maxLines === undefined ? undefined : validateSubtitleMaxLines(options.maxLines)
   const track = createTrack('subtitle', project.tracks.filter((candidate) => candidate.kind === 'subtitle').length + 1)
   track.name = nextAutoCaptionTrackName(project)
+  // The settings the captions were made with: the settings panel opens with them and later runs start from them.
+  if (options.captionLayout) track.captionLayout = { ...options.captionLayout }
   const captions: SubtitleClip[] = transcript.segments.map((segment, index) => ({
     id: makeId('ai-caption'),
     name: segment.text.slice(0, 40),

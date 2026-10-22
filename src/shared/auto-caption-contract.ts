@@ -31,6 +31,10 @@ export interface AutoCaptionSettings {
   language: string
   maxChars: number
   maxLines?: number
+  /** Characters (full-width) that fit on one line; the worker splits captions so each wraps within maxLines lines of this size. */
+  lineCapacity?: number
+  /** Line box width as a percentage of the video width the generated captions are laid out for (stored on the clips' style). */
+  maxWidthPercent?: number
   segmentationMode: SegmentationMode
   silenceCut?: SilenceCutMode
   accelerationMode?: AccelerationMode
@@ -87,6 +91,7 @@ export interface AutoCaptionRequest {
   language: string
   maxChars: number
   maxLines?: number
+  lineCapacity?: number
   segmentationMode: SegmentationMode
   silenceCut?: SilenceCutMode
   accelerationMode?: AccelerationMode
@@ -340,8 +345,11 @@ const parseSourceClip = (value: unknown, label: string): AutoCaptionSourceClipId
 
 const parseSettings = (value: unknown): AutoCaptionBaseline['settings'] => {
   if (!isRecord(value)) throw new Error('settings must be an object')
-  assertKeys(value, ['language', 'maxChars', 'maxLines', 'segmentationMode', 'silenceCut', 'silenceMinUs', 'accelerationMode', 'subtitleTemplate'], 'settings')
+  assertKeys(value, ['language', 'maxChars', 'maxLines', 'lineCapacity', 'maxWidthPercent', 'segmentationMode', 'silenceCut', 'silenceMinUs', 'accelerationMode', 'subtitleTemplate'], 'settings')
   const maxLines = value.maxLines === undefined ? undefined : boundedCount(value.maxLines, 'settings.maxLines', 1, 16)
+  const lineCapacity = value.lineCapacity === undefined ? undefined : boundedCount(value.lineCapacity, 'settings.lineCapacity', 1, 200)
+  const maxWidthPercent = value.maxWidthPercent === undefined ? undefined : value.maxWidthPercent
+  if (maxWidthPercent !== undefined && (typeof maxWidthPercent !== 'number' || !Number.isFinite(maxWidthPercent) || maxWidthPercent < 1 || maxWidthPercent > 1000)) throw new Error('settings.maxWidthPercent is invalid')
   const segmentationMode = requiredString(own(value, 'segmentationMode'), 'settings.segmentationMode', 16) as SegmentationMode
   if (!SEGMENTATION_MODES.includes(segmentationMode)) throw new Error('settings.segmentationMode is invalid')
   const silenceCut = value.silenceCut === undefined ? undefined : requiredString(value.silenceCut, 'settings.silenceCut', 16) as SilenceCutMode
@@ -354,6 +362,8 @@ const parseSettings = (value: unknown): AutoCaptionBaseline['settings'] => {
     language: requiredString(own(value, 'language'), 'settings.language', 35),
     maxChars: boundedCount(own(value, 'maxChars'), 'settings.maxChars', 1, 10_000),
     ...(maxLines === undefined ? {} : { maxLines }),
+    ...(lineCapacity === undefined ? {} : { lineCapacity }),
+    ...(maxWidthPercent === undefined ? {} : { maxWidthPercent }),
     segmentationMode,
     ...(silenceCut === undefined ? {} : { silenceCut }),
     ...(silenceMinUs === undefined ? {} : { silenceMinUs }),
@@ -366,7 +376,7 @@ export const parseAutoCaptionSettings = (value: unknown): AutoCaptionSettings =>
 
 export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
   if (!isRecord(input)) throw new Error('auto-caption request must be an object')
-  assertKeys(input, ['version', 'jobId', 'mediaPath', 'sourceStartUs', 'sourceEndUs', 'language', 'maxChars', 'maxLines', 'segmentationMode', 'silenceCut', 'silenceMinUs', 'accelerationMode', 'subtitleTemplate'], 'auto-caption request')
+  assertKeys(input, ['version', 'jobId', 'mediaPath', 'sourceStartUs', 'sourceEndUs', 'language', 'maxChars', 'maxLines', 'lineCapacity', 'segmentationMode', 'silenceCut', 'silenceMinUs', 'accelerationMode', 'subtitleTemplate'], 'auto-caption request')
   if (own(input, 'version') !== AUTO_CAPTION_REQUEST_VERSION) throw new Error('unsupported auto-caption request version')
   const sourceStartUs = integerUs(own(input, 'sourceStartUs'), 'sourceStartUs')
   const sourceEndUs = integerUs(own(input, 'sourceEndUs'), 'sourceEndUs', false)
@@ -374,6 +384,7 @@ export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
   const segmentationMode = requiredString(own(input, 'segmentationMode'), 'segmentationMode', 16) as SegmentationMode
   if (!SEGMENTATION_MODES.includes(segmentationMode)) throw new Error('unsupported segmentationMode')
   const maxLines = input.maxLines === undefined ? undefined : boundedCount(input.maxLines, 'maxLines', 1, 16)
+  const lineCapacity = input.lineCapacity === undefined ? undefined : boundedCount(input.lineCapacity, 'lineCapacity', 1, 200)
   const silenceCut = input.silenceCut === undefined ? undefined : requiredString(input.silenceCut, 'silenceCut', 16) as SilenceCutMode
   if (silenceCut !== undefined && !SILENCE_CUT_MODES.includes(silenceCut)) throw new Error('unsupported silenceCut')
   const silenceMinUs = input.silenceMinUs === undefined ? undefined : boundedCount(input.silenceMinUs, 'silenceMinUs', 0, 2_000_000)
@@ -389,6 +400,7 @@ export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
     language: requiredString(own(input, 'language'), 'language', 35),
     maxChars: boundedCount(own(input, 'maxChars'), 'maxChars', 1, 10_000),
     ...(maxLines === undefined ? {} : { maxLines }),
+    ...(lineCapacity === undefined ? {} : { lineCapacity }),
     segmentationMode,
     ...(silenceCut === undefined ? {} : { silenceCut }),
     ...(silenceMinUs === undefined ? {} : { silenceMinUs }),
@@ -546,4 +558,108 @@ export const parseAutoCaptionBaseline = (input: unknown): AutoCaptionBaseline =>
     diagnostics: parsedResult.diagnostics,
     fallback: parsedResult.fallback
   }
+}
+
+// ---------------------------------------------------------------------------
+// Segmentation-only mode: re-split already transcribed words with new layout
+// limits. No audio and no Whisper; the same worker segmentation code runs.
+// ---------------------------------------------------------------------------
+
+export const RESEGMENT_REQUEST_VERSION = 'spectra.auto-caption.resegment.request.v1' as const
+export const RESEGMENT_RESULT_VERSION = 'spectra.auto-caption.resegment.result.v1' as const
+
+export interface ResegmentWord {
+  id: string
+  text: string
+  startUs: number
+  endUs: number
+}
+
+export interface ResegmentRequest {
+  version: typeof RESEGMENT_REQUEST_VERSION
+  jobId: string
+  language: string
+  maxChars: number
+  maxLines: number
+  lineCapacity?: number
+  segmentationMode: SegmentationMode
+  words: ResegmentWord[]
+}
+
+export interface ResegmentCaption {
+  id: string
+  text: string
+  startUs: number
+  endUs: number
+  sourceWordIds: string[]
+  textStatus: AutoCaptionTextStatus
+}
+
+export interface ResegmentResult {
+  version: typeof RESEGMENT_RESULT_VERSION
+  jobId: string
+  method: string
+  captions: ResegmentCaption[]
+}
+
+export const parseResegmentRequest = (input: unknown): ResegmentRequest => {
+  if (!isRecord(input)) throw new Error('resegment request must be an object')
+  assertKeys(input, ['version', 'jobId', 'language', 'maxChars', 'maxLines', 'lineCapacity', 'segmentationMode', 'words'], 'resegment request')
+  if (own(input, 'version') !== RESEGMENT_REQUEST_VERSION) throw new Error('unsupported resegment request version')
+  const segmentationMode = requiredString(own(input, 'segmentationMode'), 'segmentationMode', 16) as SegmentationMode
+  if (!SEGMENTATION_MODES.includes(segmentationMode)) throw new Error('unsupported segmentationMode')
+  const rawWords = own(input, 'words')
+  if (!Array.isArray(rawWords) || rawWords.length === 0 || rawWords.length > 100_000) throw new Error('words must be a non-empty array')
+  const ids = new Set<string>()
+  const words = rawWords.map((item, index): ResegmentWord => {
+    if (!isRecord(item)) throw new Error(`words[${index}] must be an object`)
+    assertKeys(item, ['id', 'text', 'startUs', 'endUs'], `words[${index}]`)
+    const id = identifier(own(item, 'id'), `words[${index}].id`)
+    if (ids.has(id)) throw new Error(`words[${index}].id is duplicated`)
+    ids.add(id)
+    const startUs = integerUs(own(item, 'startUs'), `words[${index}].startUs`)
+    const endUs = integerUs(own(item, 'endUs'), `words[${index}].endUs`)
+    if (endUs < startUs) throw new Error(`words[${index}] ends before it starts`)
+    return { id, text: requiredString(own(item, 'text'), `words[${index}].text`, 400), startUs, endUs }
+  })
+  const lineCapacity = input.lineCapacity === undefined ? undefined : boundedCount(input.lineCapacity, 'lineCapacity', 1, 200)
+  return {
+    version: RESEGMENT_REQUEST_VERSION,
+    jobId: identifier(own(input, 'jobId'), 'jobId'),
+    language: requiredString(own(input, 'language'), 'language', 35),
+    maxChars: boundedCount(own(input, 'maxChars'), 'maxChars', 1, 10_000),
+    maxLines: boundedCount(own(input, 'maxLines'), 'maxLines', 1, 16),
+    ...(lineCapacity === undefined ? {} : { lineCapacity }),
+    segmentationMode,
+    words
+  }
+}
+
+export const parseResegmentResult = (input: unknown, request: ResegmentRequest): ResegmentResult => {
+  if (!isRecord(input)) throw new Error('resegment result must be an object')
+  assertKeys(input, ['version', 'jobId', 'method', 'captions', 'diagnostics'], 'resegment result')
+  if (own(input, 'version') !== RESEGMENT_RESULT_VERSION) throw new Error('unsupported resegment result version')
+  if (own(input, 'jobId') !== request.jobId) throw new Error('resegment result identity mismatch')
+  const rawCaptions = own(input, 'captions')
+  if (!Array.isArray(rawCaptions) || rawCaptions.length === 0) throw new Error('resegment result has no captions')
+  // Every input word must be owned exactly once, in order: the editor never invents or drops words.
+  let cursor = 0
+  const captions = rawCaptions.map((item, index): ResegmentCaption => {
+    if (!isRecord(item)) throw new Error(`captions[${index}] must be an object`)
+    assertKeys(item, ['id', 'text', 'startUs', 'endUs', 'sourceWordIds', 'textStatus'], `captions[${index}]`)
+    const sourceWordIds = own(item, 'sourceWordIds')
+    if (!Array.isArray(sourceWordIds) || sourceWordIds.length === 0) throw new Error(`captions[${index}].sourceWordIds is invalid`)
+    for (const wordId of sourceWordIds) {
+      if (wordId !== request.words[cursor]?.id) throw new Error('resegment word ownership is not in input order')
+      cursor += 1
+    }
+    const textStatus = requiredString(own(item, 'textStatus'), `captions[${index}].textStatus`, 32) as AutoCaptionTextStatus
+    if (!TEXT_STATUSES.includes(textStatus)) throw new Error('textStatus is invalid')
+    const startUs = integerUs(own(item, 'startUs'), `captions[${index}].startUs`)
+    const endUs = integerUs(own(item, 'endUs'), `captions[${index}].endUs`, false)
+    if (endUs <= startUs) throw new Error(`captions[${index}] has no positive duration`)
+    return { id: identifier(own(item, 'id'), `captions[${index}].id`), text: requiredString(own(item, 'text'), `captions[${index}].text`, 100_000), startUs, endUs, sourceWordIds: sourceWordIds as string[], textStatus }
+  })
+  if (cursor !== request.words.length) throw new Error('resegment result did not own every word')
+  return { version: RESEGMENT_RESULT_VERSION, jobId: request.jobId, method: typeof input.method === 'string' ? input.method.slice(0, 64) : 'unknown', captions }
 }

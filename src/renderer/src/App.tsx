@@ -21,7 +21,8 @@ import { createEmptyProject } from '../../shared/project'
 import type { AutoCaptionBaseline, AutoCaptionSettings } from '../../shared/auto-caption-contract'
 import { runProjectQa, type ProjectQaIssue } from '../../shared/project-qa'
 import { DEFAULT_SILENCE_REAPPLY_PROFILE, silenceCutProfileSettings } from '../../shared/silence-cut'
-import { autoCaptionDisplayRatio, autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressMode, autoCaptionProgressStage, autoCaptionStageLabel, formatClockDurationUs, formatDurationUs, formatElapsedMs, silenceCutProfileLabel } from '../../shared/auto-caption-ui'
+import { autoCaptionDisplayRatio, autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressMode, autoCaptionProgressStage, autoCaptionStageLabel, formatClockDurationUs, formatDurationUs, formatElapsedMs, silenceCutProfileLabel, captionLayoutHint } from '../../shared/auto-caption-ui'
+import CaptionSettingsDialog from './components/CaptionSettingsDialog'
 import { getSubtitleTemplate, getSubtitleTemplateSettings, SUBTITLE_TEMPLATES, type SubtitleTemplateDraft, type UserSubtitleTemplate } from '../../shared/subtitle-templates'
 import type { EncoderReport, ProjectFile } from '../../shared/types'
 import { BrandMark } from './components/Brand'
@@ -121,6 +122,19 @@ export default function App(): React.JSX.Element {
     return () => window.clearInterval(timer)
   }, [captioning])
 
+  // Settings applied through 「字幕設定を変更」 become the defaults of the next automatic run.
+  const captionLayoutDefaults = useEditorStore((state) => state.captionLayoutDefaults)
+  useEffect(() => {
+    if (!captionLayoutDefaults) return
+    setCaptionSettings((current) => ({
+      ...current,
+      maxChars: captionLayoutDefaults.maxChars,
+      maxLines: captionLayoutDefaults.maxLines,
+      maxWidthPercent: captionLayoutDefaults.maxWidthPercent,
+      segmentationMode: captionLayoutDefaults.segmentationMode
+    }))
+  }, [captionLayoutDefaults])
+
   useEffect(() => {
     setAutoCaptionSettingsSeed({
       maxChars: captionSettings.maxChars,
@@ -160,6 +174,7 @@ export default function App(): React.JSX.Element {
         subtitleTemplate: resolvedLastUsed,
         maxChars: settings.maxChars,
         maxLines: settings.maxLines,
+        maxWidthPercent: undefined,
         segmentationMode: settings.segmentationMode
       }))
     }).catch(() => undefined)
@@ -170,7 +185,7 @@ export default function App(): React.JSX.Element {
       setLastUsedSubtitleTemplateId('default')
       if (window.spectra) void window.spectra.setLastUsedSubtitleTemplateId('default')
       const settings = getSubtitleTemplateSettings('default', userSubtitleTemplates)
-      setCaptionSettings((current) => ({ ...current, subtitleTemplate: 'default', maxChars: settings.maxChars, maxLines: settings.maxLines, segmentationMode: settings.segmentationMode }))
+      setCaptionSettings((current) => ({ ...current, subtitleTemplate: 'default', maxChars: settings.maxChars, maxLines: settings.maxLines, maxWidthPercent: undefined, segmentationMode: settings.segmentationMode }))
     }
   }, [lastUsedSubtitleTemplateId, userSubtitleTemplates])
 
@@ -421,7 +436,16 @@ export default function App(): React.JSX.Element {
     : undefined
   const selectedAutoProcessingTemplate = getSubtitleTemplate(captionSettings.subtitleTemplate ?? 'default', userSubtitleTemplates)
   const selectedAutoProcessingTemplateSettings = getSubtitleTemplateSettings(captionSettings.subtitleTemplate ?? 'default', userSubtitleTemplates)
-  const hasAutoProcessingOverrides = captionSettings.maxChars !== selectedAutoProcessingTemplateSettings.maxChars
+  const captionWidthPercent = captionSettings.maxWidthPercent ?? selectedAutoProcessingTemplateSettings.layoutConstraints.maxWidthPercent
+  const captionLayoutHintText = captionLayoutHint({
+    maxChars: captionSettings.maxChars,
+    maxLines: captionSettings.maxLines ?? 2,
+    style: selectedAutoProcessingTemplateSettings.style,
+    maxWidthPercent: captionWidthPercent,
+    sequenceWidth: project.sequence.width
+  })
+  const hasAutoProcessingOverrides = captionWidthPercent !== selectedAutoProcessingTemplateSettings.layoutConstraints.maxWidthPercent
+    || captionSettings.maxChars !== selectedAutoProcessingTemplateSettings.maxChars
     || (captionSettings.maxLines ?? 2) !== selectedAutoProcessingTemplateSettings.maxLines
     || captionSettings.segmentationMode !== selectedAutoProcessingTemplateSettings.segmentationMode
   const captionProgressStage = autoCaptionProgress
@@ -454,12 +478,12 @@ export default function App(): React.JSX.Element {
     const settings = getSubtitleTemplateSettings(captionSettings.subtitleTemplate, userSubtitleTemplates)
     return {
       name: selected ? ('name' in selected ? selected.name : selected.label) : '新しい字幕テンプレート',
-      style: settings.style,
+      style: { ...settings.style, maxWidthPercent: captionWidthPercent },
       captionGeneration: {
         maxChars: captionSettings.maxChars ?? settings.maxChars,
         maxLines: captionSettings.maxLines ?? settings.maxLines,
         segmentationMode: captionSettings.segmentationMode ?? settings.segmentationMode,
-        layoutConstraints: { maxWidthPercent: settings.layoutConstraints.maxWidthPercent }
+        layoutConstraints: { maxWidthPercent: captionWidthPercent }
       }
     }
   }
@@ -471,6 +495,7 @@ export default function App(): React.JSX.Element {
       subtitleTemplate: id,
       maxChars: settings.maxChars,
       maxLines: settings.maxLines,
+      maxWidthPercent: undefined,
       segmentationMode: settings.segmentationMode
     }))
   }
@@ -489,7 +514,7 @@ export default function App(): React.JSX.Element {
       const next = [...userSubtitleTemplates.filter((template) => template.id !== created.id), created]
       setUserSubtitleTemplates(next)
       setStoreUserSubtitleTemplates(next)
-      setCaptionSettings((current) => ({ ...current, subtitleTemplate: created.id, maxChars: created.captionGeneration.maxChars, maxLines: created.captionGeneration.maxLines, segmentationMode: created.captionGeneration.segmentationMode }))
+      setCaptionSettings((current) => ({ ...current, subtitleTemplate: created.id, maxChars: created.captionGeneration.maxChars, maxLines: created.captionGeneration.maxLines, maxWidthPercent: undefined, segmentationMode: created.captionGeneration.segmentationMode }))
     } catch {
       showNotice('字幕テンプレートを保存できませんでした。', 'error')
     }
@@ -519,7 +544,7 @@ export default function App(): React.JSX.Element {
       setUserSubtitleTemplates(next)
       setStoreUserSubtitleTemplates(next)
       const settings = getSubtitleTemplateSettings('default', next)
-      setCaptionSettings((current) => ({ ...current, subtitleTemplate: 'default', maxChars: settings.maxChars, maxLines: settings.maxLines, segmentationMode: settings.segmentationMode }))
+      setCaptionSettings((current) => ({ ...current, subtitleTemplate: 'default', maxChars: settings.maxChars, maxLines: settings.maxLines, maxWidthPercent: undefined, segmentationMode: settings.segmentationMode }))
     } catch {
       showNotice('字幕テンプレートを削除できませんでした。', 'error')
     }
@@ -597,6 +622,7 @@ export default function App(): React.JSX.Element {
           <IconButton label="通知を閉じる" onClick={clearNotice}><X size={14} /></IconButton>
         </div>
       )}
+      <CaptionSettingsDialog />
       {templateManagerOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTemplateManagerOpen(false) }}><SubtitleTemplateManagerPanel userTemplates={userSubtitleTemplates} defaultTemplateId={defaultSubtitleTemplateId} selectedSubtitle={selectedSubtitleClip} onTemplatesChange={(templates) => { setUserSubtitleTemplates(templates); setStoreUserSubtitleTemplates(templates) }} onDefaultChange={setDefaultSubtitleTemplateId} onClose={() => setTemplateManagerOpen(false)} /></div>}
       {qaOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setQaOpen(false) }}><ProjectQaPanel report={qaReport} onClose={() => setQaOpen(false)} onNavigate={navigateToQaIssue} /></div>}
       {appError && (
@@ -622,10 +648,12 @@ export default function App(): React.JSX.Element {
                   <label className="field"><span className="field-label">処理デバイス</span><select disabled={captioning} value={captionSettings.accelerationMode ?? 'auto'} onChange={(event) => setCaptionSettings((current) => ({ ...current, accelerationMode: event.target.value as AutoCaptionSettings['accelerationMode'] }))}><option value="auto">自動（推奨）</option><option value="gpu">GPU優先</option><option value="cpu">CPU</option></select></label>
                   <label className="field"><span className="field-label">言語</span><select disabled={captioning} value={captionSettings.language} onChange={(event) => setCaptionSettings((current) => ({ ...current, language: event.target.value }))}><option value="ja">日本語</option><option value="auto">自動判定</option></select></label>
                   <label className="field"><span className="field-label">最大文字数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={10000} value={captionSettings.maxChars} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxChars: Math.max(1, Math.min(10000, Number(event.target.value) || 32)) }))} /><span>文字</span></span></label>
+                  <label className="field"><span className="field-label">横幅の上限（%）</span><span className="number-input"><input disabled={captioning} type="number" min={10} max={300} step={1} aria-label="字幕の横幅の上限（動画幅に対する%）" value={captionWidthPercent} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxWidthPercent: Math.max(10, Math.min(300, Number(event.target.value) || 80)) }))} /><span>%</span></span></label>
                   <label className="field"><span className="field-label">最大行数</span><span className="number-input"><input disabled={captioning} type="number" min={1} max={16} value={captionSettings.maxLines ?? 2} onChange={(event) => setCaptionSettings((current) => ({ ...current, maxLines: Math.max(1, Math.min(16, Number(event.target.value) || 2)) }))} /><span>行</span></span></label>
+                  {captionLayoutHintText && <small className="field-hint caption-layout-hint" data-testid="caption-layout-hint">{captionLayoutHintText}</small>}
                   <label className="field"><span className="field-label">字幕品質</span><select disabled={captioning} value={captionSettings.segmentationMode} onChange={(event) => setCaptionSettings((current) => ({ ...current, segmentationMode: event.target.value as AutoCaptionSettings['segmentationMode'] }))}><option value="auto">高品質</option><option value="rule">ルール</option></select></label>
                   <label className="field"><span className="field-label">字幕テンプレート</span><select disabled={captioning} value={captionSettings.subtitleTemplate ?? 'default'} onChange={(event) => selectSubtitleTemplate(event.target.value)}><optgroup label="組み込み（変更不可）">{SUBTITLE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</optgroup>{userSubtitleTemplates.length > 0 && <optgroup label="ユーザー">{userSubtitleTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</optgroup>}</select></label>
-                  {selectedAutoProcessingTemplate && <div className="auto-template-preview"><SubtitleTemplatePreview style={selectedAutoProcessingTemplate.style} maxLines={selectedAutoProcessingTemplateSettings.maxLines} /><small>{'name' in selectedAutoProcessingTemplate ? selectedAutoProcessingTemplate.name : selectedAutoProcessingTemplate.label} · {selectedAutoProcessingTemplateSettings.maxChars}文字 / {selectedAutoProcessingTemplateSettings.maxLines}行</small></div>}
+                  {selectedAutoProcessingTemplate && <div className="auto-template-preview"><SubtitleTemplatePreview style={selectedAutoProcessingTemplate.style} maxLines={selectedAutoProcessingTemplateSettings.maxLines} /><small>{'name' in selectedAutoProcessingTemplate ? selectedAutoProcessingTemplate.name : selectedAutoProcessingTemplate.label} · {selectedAutoProcessingTemplateSettings.maxChars}文字 / {selectedAutoProcessingTemplateSettings.maxLines}行 / 幅{selectedAutoProcessingTemplateSettings.layoutConstraints.maxWidthPercent}%</small></div>}
                   {hasAutoProcessingOverrides && <small className="field-hint template-override-note">個別設定を使用中です。template本体は変更されません。次回template選択時にtemplate値へ戻ります。</small>}
                   <div className="template-actions"><Button disabled={captioning} title={captioning ? '生成中は変更できません' : '現在の設定を新しいtemplateとして保存'} onClick={() => void createUserSubtitleTemplate(false)}>新規保存</Button><Button disabled={captioning} title={captioning ? '生成中は変更できません' : '現在の設定をtemplateとして複製'} onClick={() => void createUserSubtitleTemplate(true)}>複製</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} title={captioning ? '生成中は変更できません' : 'ユーザーtemplateを選択すると更新できます'} onClick={() => void updateUserSubtitleTemplate()}>更新</Button><Button disabled={captioning || !userSubtitleTemplates.some((template) => template.id === captionSettings.subtitleTemplate)} title={captioning ? '生成中は変更できません' : 'ユーザーtemplateを選択すると削除できます'} onClick={() => void deleteUserSubtitleTemplate()}>削除</Button></div>
                   {autoCaptionProgress && (

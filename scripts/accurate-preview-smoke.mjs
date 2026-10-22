@@ -184,7 +184,7 @@ try {
       { id: 'v2', name: 'V2', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'top-1', name: 'Top', kind: 'video', assetId: 'top', startUs: 0, durationUs: 8_000_000, sourceInUs: 0, enabled: true, audio: { volumeDb: 0, pan: 0, fadeInUs: 0, fadeOutUs: 0 }, transform: { positionX: 180, positionY: -70, scale: 0.8, rotation: 7, opacity: 0.9, crop: { left: 0.08, top: 0.04, right: 0.06, bottom: 0.1 } } }] },
       { id: 'v1', name: 'V1', kind: 'video', locked: false, muted: false, hidden: false, clips: [{ id: 'bottom-1', name: 'Bottom', kind: 'video', assetId: 'bottom', startUs: 0, durationUs: 8_000_000, sourceInUs: 0, enabled: true, audio: { volumeDb: audioE2e ? 6 : 0, pan: audioE2e ? 0.25 : 0, fadeInUs: 0, fadeOutUs: 0 }, transform: { positionX: 0, positionY: 0, scale: 1, rotation: 0, opacity: 1, crop: { left: 0, top: 0, right: 0, bottom: 0 } } }] },
       { id: 'sub', name: 'C1', kind: 'subtitle', locked: false, muted: false, hidden: false, clips: [
-        subtitle('cue-static', '静的な字幕 cue 1', 500_000, 2_000_000),
+        subtitle('cue-static', '静的な字幕 cue 1', 502_000, 2_000_000),
         subtitle('cue-fade', 'フェードする字幕', 3_000_000, 2_000_000, { animation: 'fade', animationDurationUs: 500_000 }),
         subtitle('cue-pop', 'ポップする字幕', 5_500_000, 2_000_000, { animation: 'pop', animationDurationUs: 500_000 })
       ] }
@@ -262,8 +262,15 @@ try {
   // ---------- 1. paused canvas vs FFmpeg ----------
   await cdp.eval(`window.__goto(0)`)
   await waitFor(async () => (await cdp.eval('window.__state()')).frame === '0', 30_000, 'first frame')
+  // Every planned subtitle image is rendered in the background without any playback.
+  await waitFor(async () => {
+    const progress = await cdp.eval(`window.__canvas()?.dataset.subtitleRendered ?? ''`)
+    const [rendered, planned] = String(progress).split('/').map(Number)
+    return planned > 0 && rendered === planned
+  }, 60_000, 'subtitle pre-render')
   const plan = [
-    ['before any cue', 6], ['static cue', 30], ['gap after static cue', 87],
+    ['before any cue', 6], ['cue-static one frame early (off-grid start)', 15], ['cue-static first frame', 16], ['static cue', 30],
+    ['cue-static last frame', 75], ['cue-static first frame after end', 76], ['gap after static cue', 87],
     ['fade-in start', 91], ['fade-in mid', 98], ['fade static', 120], ['fade-out mid', 142], ['fade-out end', 148],
     ['pop start', 166], ['pop mid', 172], ['after pop', 230]
   ]

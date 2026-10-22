@@ -62,7 +62,7 @@ export class PreviewCompositor {
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly host: HTMLElement,
-    private readonly api: Pick<DesktopApi, 'mediaUrl' | 'renderSubtitleOverlay' | 'renderSubtitleOverlaySequence'>,
+    private readonly api: Pick<DesktopApi, 'mediaUrl' | 'renderSubtitleFrames'>,
     private readonly hooks: CompositorHooks
   ) {
     this.#subtitles = new PreviewSubtitleFrames(api, () => this.requestDraw(), hooks.onSubtitleRequest, hooks.onSubtitleOutcome)
@@ -133,7 +133,7 @@ export class PreviewCompositor {
       for (const element of elements) if (!wanted.has(element) && element instanceof HTMLVideoElement && !element.paused) element.pause()
     }
     this.#prune(project)
-    if (!input.exactImage) this.#subtitles.ensure(project, this.#frameIndex)
+    if (!input.exactImage) this.#subtitles.ensure(project, this.#frameIndex, input.playing)
     // While a video clocks playback, its element holds the newest frame only
     // inside its own frame callback, so draw there to label the frame correctly.
     if (input.playing && clock !== null && !fromFrameCallback) return
@@ -311,6 +311,8 @@ export class PreviewCompositor {
     // Read by the E2E smoke to know when a frame is final.
     this.canvas.dataset.drawnFrame = String(this.#frameIndex)
     this.canvas.dataset.subtitleExact = exact ? 'true' : 'false'
+    const subtitleProgress = this.#subtitles.progress()
+    this.canvas.dataset.subtitleRendered = `${subtitleProgress.rendered}/${subtitleProgress.planned}`
     this.canvas.dataset.layersReady = this.#layers.every(({ element }) => !element || (this.#ready(element) && !(element instanceof HTMLVideoElement && element.seeking))) ? 'true' : 'false'
     this.hooks.onDraw?.(this.#frameIndex)
   }

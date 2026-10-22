@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { layoutSubtitleText, subtitleMaxWidthPx, wrapSubtitleText } from '../../src/shared/subtitle-layout'
+import { layoutSubtitleText, subtitleLineCapacity, subtitleMaxWidthPx, wrapSubtitleText } from '../../src/shared/subtitle-layout'
 
 const style = { fontSize: 20, letterSpacing: 0, maxWidthPercent: 80 }
 
@@ -62,5 +62,86 @@ describe('shared subtitle wrapping', () => {
 
   it('keeps the legacy wrapper API while accepting a line limit', () => {
     expect(wrapSubtitleText('one two three', style, 160, 2).split('\n').length).toBe(2)
+  })
+})
+
+describe('subtitle line capacity', () => {
+  const userStyle = { fontSize: 120, letterSpacing: 0, maxWidthPercent: 80 }
+
+  it('fits 12 full-width characters per line for 120 px text in 80% of 1920 px', () => {
+    expect(subtitleLineCapacity(userStyle, 1920)).toBe(12)
+  })
+
+  it('agrees with layoutSubtitleText: capacity chars stay on one line, one more wraps', () => {
+    for (const [fontSize, letterSpacing, percent, width] of [[120, 0, 80, 1920], [54, 2, 80, 1920], [72, 4, 60, 1080], [48, 0.5, 100, 1280]] as const) {
+      const s = { fontSize, letterSpacing, maxWidthPercent: percent }
+      const capacity = subtitleLineCapacity(s, width)
+      expect(layoutSubtitleText('あ'.repeat(capacity), s, width, 4).lineCount).toBe(1)
+      expect(layoutSubtitleText('あ'.repeat(capacity + 1), s, width, 4).lineCount).toBe(2)
+    }
+  })
+
+  it('is at least 1 even when one glyph is wider than the line', () => {
+    expect(subtitleLineCapacity({ fontSize: 400, letterSpacing: 0, maxWidthPercent: 10 }, 1920)).toBe(1)
+  })
+})
+
+describe('Japanese bunsetsu-aware balanced wrapping', () => {
+  const user = { fontSize: 120, letterSpacing: 0, maxWidthPercent: 80 }
+  const lines = (text: string, maxLines = 2) => layoutSubtitleText(text, user, 1920, maxLines).wrappedText.split('\n')
+
+  it('does not leave a verb ending alone: 解説します', () => {
+    const wrapped = lines('突破するコツを3分で解説します')
+    expect(wrapped).toHaveLength(2)
+    expect(wrapped.join('')).toBe('突破するコツを3分で解説します')
+    expect(wrapped.some((line) => line === 'ます' || line.startsWith('ます'))).toBe(false)
+    expect(wrapped.join('|')).not.toContain('解説し|')
+  })
+
+  it('does not leave a particle alone: エントリーシートを', () => {
+    const wrapped = lines('あなたはエントリーシートを')
+    expect(wrapped.join('')).toBe('あなたはエントリーシートを')
+    expect(wrapped.every((line) => line !== 'を' && !line.startsWith('を'))).toBe(true)
+  })
+
+  it('balances the lines instead of filling the first line', () => {
+    const wrapped = lines('すると嬉しいことに面接の通知が来ました')
+    expect(wrapped).toHaveLength(2)
+    const widths = wrapped.map((line) => Array.from(line).length)
+    expect(Math.abs(widths[0]! - widths[1]!)).toBeLessThanOrEqual(4)
+  })
+
+  it('never starts a line with punctuation or a closing bracket', () => {
+    const wrapped = lines('それはとても大切なことなのですが、今日はここまでにします。')
+    for (const line of wrapped) expect(line).not.toMatch(/^[、。」）]/u)
+    expect(wrapped.join('')).toBe('それはとても大切なことなのですが、今日はここまでにします。')
+  })
+
+  it('keeps the text and never needs fewer lines than the capacity allows', () => {
+    const text = '憧れの会社に提出すると嬉しいことに面接の通知が来ました'
+    for (const percent of [30, 45, 60, 80, 100]) {
+      const result = layoutSubtitleText(text, { ...user, maxWidthPercent: percent }, 1920, 4)
+      expect(result.wrappedText.replace(/\n/gu, '')).toBe(text)
+      const capacity = subtitleLineCapacity({ ...user, maxWidthPercent: percent }, 1920)
+      expect(result.lineCount).toBeGreaterThanOrEqual(Math.ceil(Array.from(text).length / capacity))
+    }
+  })
+
+  it('is deterministic (Preview and ASS share this function)', () => {
+    const a = layoutSubtitleText('突破するコツを3分で解説します', user, 1920, 2)
+    const b = layoutSubtitleText('突破するコツを3分で解説します', user, 1920, 2)
+    expect(a).toEqual(b)
+  })
+})
+
+describe('wrapping examples from the Japanese line-break review', () => {
+  const user = { fontSize: 120, letterSpacing: 0, maxWidthPercent: 80 }
+  it('keeps a verb stem with its auxiliary and a particle with its noun', () => {
+    expect(layoutSubtitleText('トレーニングすべきでしょうか', user, 1920, 2).wrappedText).toBe('トレーニング\nすべきでしょうか')
+    expect(layoutSubtitleText('あなたはエントリーシートを', user, 1920, 2).wrappedText).toBe('あなたは\nエントリーシートを')
+    expect(layoutSubtitleText('突破するコツを3分で解説します', user, 1920, 2).wrappedText).toBe('突破するコツを\n3分で解説します')
+  })
+  it('wraps English at word boundaries and balances the lines', () => {
+    expect(layoutSubtitleText('This is an English caption for testing', user, 1920, 2).wrappedText).toBe('This is an English\ncaption for testing')
   })
 })

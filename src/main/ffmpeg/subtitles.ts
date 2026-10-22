@@ -1,5 +1,6 @@
 import type { ProjectFile, SubtitleClip, SubtitleStyle } from '../../shared/types.js'
-import { buildSubtitleRenderSpec, type SubtitleRenderSpec } from '../../shared/subtitle-render.js'
+import { activeSubtitleCuesAtFrame, buildSubtitleRenderSpec, type SubtitleRenderSpec } from '../../shared/subtitle-render.js'
+import { frameTimeMs, subtitleAssWindow, subtitleFrameRange } from '../../shared/subtitle-timing.js'
 import { canonicalShadowBlurRadius } from '../../shared/subtitle-shadow.js'
 
 export interface SubtitleCue {
@@ -50,8 +51,8 @@ const assColor = (value: string, opacity = 1): string => {
   return `&H${assAlpha.toString(16).padStart(2, '0')}${color.blue.toString(16).padStart(2, '0')}${color.green.toString(16).padStart(2, '0')}${color.red.toString(16).padStart(2, '0')}`.toUpperCase()
 }
 
-const assTime = (timeUs: number, end = false): string => {
-  const centiseconds = end ? Math.ceil(Math.max(0, timeUs) / 10_000) : Math.floor(Math.max(0, timeUs) / 10_000)
+const assTimeMs = (milliseconds: number): string => {
+  const centiseconds = Math.floor(Math.max(0, milliseconds) / 10)
   const hours = Math.floor(centiseconds / 360_000)
   const minutes = Math.floor(centiseconds / 6_000) % 60
   const seconds = Math.floor(centiseconds / 100) % 60
@@ -149,9 +150,20 @@ export const assShadowBlurFromCss = canonicalShadowBlurRadius
 
 export const generateAss = (project: ProjectFile, options: { disableAnimations?: boolean } = {}): string => {
   const cues = collectSubtitleCues(project)
+  const events = cues.flatMap(({ clip, layer }, index) => {
+    const range = subtitleFrameRange(clip.startUs, clip.durationUs, project.sequence.frameRate)
+    // A cue that falls between two frames is never visible, in Preview or here.
+    if (!range) return []
+    const window = subtitleAssWindow(range, project.sequence.frameRate)
+    return cueDialogueLines(project, clip, layer, index, window.startMs, window.endMs, options.disableAnimations === true)
+  })
+  return `${[...assHeader(project, cues), ...events].join('\n')}\n`
+}
+
+const assHeader = (project: ProjectFile, cues: SubtitleCue[], only?: ReadonlySet<number>): string[] => {
   const width = Math.max(16, Math.round(project.sequence.width))
   const height = Math.max(16, Math.round(project.sequence.height))
-  const header = [
+  return [
     '[Script Info]',
     'ScriptType: v4.00+',
     'WrapStyle: 2',
@@ -162,6 +174,7 @@ export const generateAss = (project: ProjectFile, options: { disableAnimations?:
     '[V4+ Styles]',
     'Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding',
     ...cues.flatMap(({ clip }, index) => {
+      if (only && !only.has(index)) return []
       const spec = buildSubtitleRenderSpec(clip, { width, height })
       return [
         ...(spec.backgroundOpacity > 0 ? [styleLine(spec, index, 'background')] : []),
@@ -173,27 +186,100 @@ export const generateAss = (project: ProjectFile, options: { disableAnimations?:
     '[Events]',
     'Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text'
   ]
-  const events = cues.flatMap(({ clip, layer }, index) => {
-    const start = Math.max(0, clip.startUs)
-    const end = Math.max(start + 10_000, start + clip.durationUs)
-    const spec = buildSubtitleRenderSpec(clip, { width, height })
-    const x = Math.round(spec.xPx)
-    const y = Math.round(spec.yPx)
-    const renderEvent = (styleName: string, eventX: number, eventY: number, eventLayer: number, shadow = false): string => {
-      const override = options.disableAnimations ? `\\pos(${eventX},${eventY})` : animationOverride(spec, eventX, eventY)
-      const assBlur = shadow ? assShadowBlurFromCss(spec.shadowBlurPx) : 0
-      const blurOverride = assBlur > 0 ? `\\blur${assBlur}` : ''
-      const text = `{${override}${blurOverride}}${escapeAssText(spec.wrappedText)}`
-      return `Dialogue: ${eventLayer},${assTime(start)},${assTime(end, true)},${styleName},,0,0,0,,${text}`
+}
+
+/** Dialogue lines (background, shadow, main) of one cue between two centisecond-aligned times. */
+const cueDialogueLines = (
+  project: ProjectFile,
+  clip: SubtitleClip,
+  layer: number,
+  index: number,
+  startMs: number,
+  endMs: number,
+  disableAnimations: boolean
+): string[] => {
+  const width = Math.max(16, Math.round(project.sequence.width))
+  const height = Math.max(16, Math.round(project.sequence.height))
+  const spec = buildSubtitleRenderSpec(clip, { width, height })
+  const x = Math.round(spec.xPx)
+  const y = Math.round(spec.yPx)
+  const renderEvent = (styleName: string, eventX: number, eventY: number, eventLayer: number, shadow = false): string => {
+    const override = disableAnimations ? `\\pos(${eventX},${eventY})` : animationOverride(spec, eventX, eventY)
+    const assBlur = shadow ? assShadowBlurFromCss(spec.shadowBlurPx) : 0
+    const blurOverride = assBlur > 0 ? `\\blur${assBlur}` : ''
+    const text = `{${override}${blurOverride}}${escapeAssText(spec.wrappedText)}`
+    return `Dialogue: ${eventLayer},${assTimeMs(startMs)},${assTimeMs(endMs)},${styleName},,0,0,0,,${text}`
+  }
+  const background = spec.backgroundOpacity > 0 ? renderEvent(`Cue${index}Background`, x, y, layer) : undefined
+  const shadow = hasVisibleColor(spec.shadowColor)
+    ? renderEvent(`Cue${index}Shadow`, x + Math.round(spec.shadowOffsetXPx), y + Math.round(spec.shadowOffsetYPx), layer + (background ? 1 : 0), true)
+    : undefined
+  const main = renderEvent(`Cue${index}`, x, y, layer + (shadow ? 1 : 0) + (background ? 1 : 0))
+  return [background, shadow, main].filter((event): event is string => event !== undefined)
+}
+
+export interface SubtitleSlotRequest {
+  frameIndex: number
+  /** Draw the cue without its animation (static look). */
+  base?: boolean
+}
+
+export interface SubtitleSlotAss {
+  ass: string
+  /** Presentation time (ms) at which libass must be asked to draw each requested slot. */
+  presentationMs: number[]
+}
+
+const ceilToCentisecond = (milliseconds: number): number => Math.ceil(milliseconds / 10) * 10
+
+/**
+ * One ASS file whose slot i, when rendered at presentationMs[i], looks exactly
+ * like the export on frame requests[i].frameIndex. Each slot is a short-lived
+ * copy of the active cues placed so that, relative to its own start, the
+ * render time equals the real frame's offset into the cue (animations depend
+ * on nothing else), and slots never overlap. Static frames are shortened to
+ * just past the animation window so slots stay close together.
+ */
+export const generateSubtitleSlotAss = (project: ProjectFile, requests: readonly SubtitleSlotRequest[]): SubtitleSlotAss => {
+  const cues = collectSubtitleCues(project)
+  const indexOfClip = new Map(cues.map(({ clip }, index) => [clip, index]))
+  const fps = project.sequence.frameRate
+  interface SlotEvent { clip: SubtitleClip; layer: number; index: number; backMs: number; durationMs: number }
+  const slots = requests.map((request) => {
+    const residue = frameTimeMs(request.frameIndex, fps) % 10
+    const events: SlotEvent[] = []
+    for (const cue of activeSubtitleCuesAtFrame(project, request.frameIndex)) {
+      const index = indexOfClip.get(cue.clip)
+      if (index === undefined) continue
+      const animationMs = request.base ? 0 : cue.animationMs
+      const settledMs = ceilToCentisecond(animationMs) + 10 + residue
+      let backMs: number
+      let durationMs: number
+      if (!request.base && cue.intro) {
+        backMs = cue.offsetMs
+        durationMs = cue.outro ? cue.offsetMs + cue.remainingMs : ceilToCentisecond(cue.offsetMs + animationMs + 200)
+      } else if (!request.base && cue.outro) {
+        backMs = settledMs
+        durationMs = settledMs + cue.remainingMs
+      } else {
+        backMs = settledMs
+        durationMs = ceilToCentisecond(settledMs + animationMs + 200)
+      }
+      events.push({ clip: cue.clip, layer: cues[index]?.layer ?? 0, index, backMs, durationMs })
     }
-    const background = spec.backgroundOpacity > 0 ? renderEvent(`Cue${index}Background`, x, y, layer) : undefined
-    const shadow = hasVisibleColor(spec.shadowColor)
-      ? renderEvent(`Cue${index}Shadow`, x + Math.round(spec.shadowOffsetXPx), y + Math.round(spec.shadowOffsetYPx), layer + (background ? 1 : 0), true)
-      : undefined
-    const main = renderEvent(`Cue${index}`, x, y, layer + (shadow ? 1 : 0) + (background ? 1 : 0))
-    return [background, shadow, main].filter((event): event is string => event !== undefined)
+    return { residue, events }
   })
-  return `${[...header, ...events].join('\n')}\n`
+  const maxBack = Math.max(0, ...slots.flatMap((slot) => slot.events.map((event) => event.backMs)))
+  const maxAhead = Math.max(0, ...slots.flatMap((slot) => slot.events.map((event) => event.durationMs - event.backMs)))
+  const origin = ceilToCentisecond(maxBack) + 10
+  const stride = ceilToCentisecond(maxBack + maxAhead + 30)
+  const presentationMs = slots.map((slot, slotIndex) => origin + slotIndex * stride + slot.residue)
+  const dialogue = slots.flatMap((slot, slotIndex) => slot.events.flatMap((event) => {
+    const startMs = (presentationMs[slotIndex] ?? 0) - event.backMs
+    return cueDialogueLines(project, event.clip, event.layer, event.index, startMs, startMs + event.durationMs, requests[slotIndex]?.base === true)
+  }))
+  const used = new Set(slots.flatMap((slot) => slot.events.map((event) => event.index)))
+  return { ass: `${[...assHeader(project, cues, used), ...dialogue].join('\n')}\n`, presentationMs }
 }
 
 const normalizeSrtText = (value: string): string => value.replace(/\r\n|\r/gu, '\n').trim()

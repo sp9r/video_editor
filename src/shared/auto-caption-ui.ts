@@ -1,4 +1,6 @@
 import type { AutoCaptionProgress, AutoCaptionProgressMode, AutoCaptionResult } from './auto-caption-contract.js'
+import { subtitleLineCapacity, subtitleMaxWidthPercent } from './subtitle-layout.js'
+import type { SubtitleStyle } from './types.js'
 
 export type AutoCaptionUiStage = 'preparing' | 'transcribing' | 'silence' | 'segmenting' | 'applying' | 'failed'
 
@@ -95,3 +97,50 @@ export const describeAutoCaptionBackend = (result: AutoCaptionResult): string =>
 }
 
 export const formatDurationUs = (durationUs: number): string => `${(durationUs / 1_000_000).toFixed(2)}秒`
+
+export interface CaptionLayoutLimitInput {
+  /** User-facing 最大文字数 (per caption block). */
+  maxChars: number
+  /** User-facing 最大行数. */
+  maxLines: number
+  style: Pick<SubtitleStyle, 'fontSize' | 'letterSpacing' | 'maxWidthPercent'>
+  /** Line box width override in percent of the video width; defaults to style.maxWidthPercent. */
+  maxWidthPercent?: number
+  sequenceWidth: number
+}
+
+export interface CaptionLayoutLimits {
+  lineCapacity: number
+  maxLines: number
+  /** lineCapacity x maxLines: the most characters that can wrap into maxLines lines. */
+  blockCapacity: number
+  /** What is sent to the worker as maxChars: min(user maxChars, blockCapacity), within the worker's 8..80 range. */
+  effectiveMaxChars: number
+  /** True when the width/line limit (not the typed 最大文字数) is the binding limit. */
+  layoutIsBinding: boolean
+  widthPercent: number
+}
+
+const WORKER_MIN_MAX_CHARS = 8
+const WORKER_MAX_MAX_CHARS = 80
+
+export const resolveCaptionLayoutLimits = (input: CaptionLayoutLimitInput): CaptionLayoutLimits => {
+  const widthPercent = input.maxWidthPercent ?? subtitleMaxWidthPercent(input.style)
+  const lineCapacity = subtitleLineCapacity({ ...input.style, maxWidthPercent: widthPercent }, input.sequenceWidth)
+  const maxLines = Math.max(1, Math.floor(input.maxLines))
+  const blockCapacity = lineCapacity * maxLines
+  const effectiveMaxChars = Math.max(WORKER_MIN_MAX_CHARS, Math.min(WORKER_MAX_MAX_CHARS, input.maxChars, blockCapacity))
+  return { lineCapacity, maxLines, blockCapacity, effectiveMaxChars, layoutIsBinding: blockCapacity < input.maxChars, widthPercent }
+}
+
+/** Live hint under the caption layout fields, e.g. 「この設定では1行に約12文字、2行で約24文字まで」. */
+export const captionLayoutHint = (input: CaptionLayoutLimitInput): string => {
+  const limits = resolveCaptionLayoutLimits(input)
+  const base = `この設定では1行に約${limits.lineCapacity}文字、${limits.maxLines}行で約${limits.blockCapacity}文字まで`
+  if (limits.layoutIsBinding) return `${base}（最大文字数${input.maxChars}より幅と行数の制限が優先され、1字幕は最大${limits.effectiveMaxChars}文字になります）`
+  return `${base}（1字幕は最大文字数の${limits.effectiveMaxChars}文字までです）`
+}
+
+/** Copy of the template style with the chosen line box width. */
+export const withCaptionWidth = (style: SubtitleStyle, maxWidthPercent: number | undefined): SubtitleStyle =>
+  maxWidthPercent === undefined ? style : { ...style, maxWidthPercent }

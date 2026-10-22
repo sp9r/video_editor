@@ -1,28 +1,36 @@
-import { frameIndexForTime, timeUsForFrameIndex } from '../../shared/frame-time'
+import { clipFirstFrame, FRAME_TIE_BAND_US } from '../../shared/clip-frames'
+import { frameIndexForTime } from '../../shared/frame-time'
 import type { VisualLayout } from '../../shared/visual-layout'
 import type { Rational } from '../../shared/types'
 
 /**
- * Just under the half-frame tie. FFmpeg's fps filter rounds each source frame
- * to the nearest output slot (ties go to the later slot), so the source frame
- * Final shows for timeline frame n is the last one at or before n + 0.5 frames.
- * Chromium presents the last frame at or before the seek target, hence
- * target = (n + 0.5) frames - epsilon. Seeking to exactly n/fps picks the
- * previous frame about a third of the time because of float error.
+ * Half a microsecond: frame timestamps are whole microseconds, so a seek target
+ * half a microsecond below a whole-microsecond threshold selects exactly the
+ * frames strictly before it without float error.
  */
-export const PREVIEW_SEEK_EPSILON_SECONDS = 0.0005
+export const PREVIEW_SEEK_MARGIN_US = 0.5
 
 const frameSeconds = (fps: Rational): number => Math.max(1, Math.round(fps.denominator)) / Math.max(1, Math.round(fps.numerator))
 
-/** Source time the paused video element is parked at to show timeline frame `frameIndex`. */
+/**
+ * Source time the paused video element is parked at to show timeline frame
+ * `frameIndex`. Final puts clip frame k, counted from the clip's first frame
+ * (a clip starting between two frames starts on the next one), on the last
+ * source frame at or before source-in + (k + 0.5) frames.
+ */
 export const previewSeekSeconds = (
   clip: { startUs: number; sourceInUs: number },
   frameIndex: number,
   fps: Rational
 ): number => {
-  const frameTimeUs = timeUsForFrameIndex(frameIndex, fps)
-  const sourceSeconds = (clip.sourceInUs + Math.max(0, frameTimeUs - clip.startUs)) / 1_000_000
-  return Math.max(0, sourceSeconds + frameSeconds(fps) / 2 - PREVIEW_SEEK_EPSILON_SECONDS)
+  const numerator = Math.max(1, Math.round(fps.numerator))
+  const denominator = Math.max(1, Math.round(fps.denominator))
+  const clipFrame = Math.max(0, frameIndex - clipFirstFrame(clip.startUs, fps))
+  // FFmpeg's fps filter rounds a frame's timestamp (whole microseconds) to the nearest slot, ties to
+  // the later one: slot k holds the last frame whose timestamp, plus the tie band, is strictly below
+  // source-in + (k + 0.5) frames. Chromium shows the last frame at or before the seek time.
+  const thresholdUs = Math.round(clip.sourceInUs) + ((2 * clipFrame + 1) * 1_000_000 * denominator) / (2 * numerator) - FRAME_TIE_BAND_US
+  return Math.max(0, (Math.ceil(thresholdUs - 1e-6) - PREVIEW_SEEK_MARGIN_US) / 1_000_000)
 }
 
 /** Timeline frame whose picture is the presented source frame at `mediaTimeSeconds`. */
@@ -31,9 +39,9 @@ export const timelineFrameForPresentedMedia = (
   mediaTimeSeconds: number,
   fps: Rational
 ): number => {
-  const timelineSeconds = (clip.startUs - clip.sourceInUs) / 1_000_000 + mediaTimeSeconds
-  const slot = Math.floor(timelineSeconds / frameSeconds(fps) + 0.5 + 1e-9)
-  return Math.max(0, slot)
+  // Slot k holds frames with a timestamp below (k + 0.5) frames, so a frame exactly on the tie belongs to k + 1.
+  const slot = Math.floor((mediaTimeSeconds - clip.sourceInUs / 1_000_000) / frameSeconds(fps) + 0.5 + 1e-9)
+  return clipFirstFrame(clip.startUs, fps) + Math.max(0, slot)
 }
 
 /**

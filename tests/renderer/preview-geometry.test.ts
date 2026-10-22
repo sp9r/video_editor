@@ -12,17 +12,26 @@ const layer = (id: string, patch: Record<string, unknown> = {}) => ({
 })
 
 describe('preview seek mapping', () => {
-  it('parks half a frame ahead so the source frame matches Final', () => {
+  it('parks half a frame ahead (minus the tie band) so the source frame matches Final', () => {
     const clip = { startUs: 0, sourceInUs: 0 }
-    // frame 3 at 30 fps: 0.1 s + half frame (0.01667 s) - epsilon
-    expect(previewSeekSeconds(clip, 3, fps30)).toBeCloseTo(0.1 + 1 / 60 - 0.0005, 6)
+    // frame 3 at 30 fps: 116 666.67 us (3.5 frames) - 50 us tie band, rounded up to 116 617 us, minus half a microsecond.
+    expect(previewSeekSeconds(clip, 3, fps30)).toBeCloseTo(0.1166165, 7)
     expect(previewSeekSeconds(clip, 0, fps30)).toBeGreaterThan(0)
     expect(previewSeekSeconds(clip, 0, fps30)).toBeLessThan(1 / 60)
   })
 
   it('offsets by clip start and source in-point', () => {
     const clip = { startUs: 1_000_000, sourceInUs: 2_000_000 }
-    expect(previewSeekSeconds(clip, 45, fps30)).toBeCloseTo(2.5 + 1 / 60 - 0.0005, 6)
+    expect(previewSeekSeconds(clip, 45, fps30)).toBeCloseTo(2 + 15.5 / 30 - 0.00005, 6)
+  })
+
+  it('counts frames from the clip first frame when the clip starts between two frames', () => {
+    // 3_301_877 us = frame 99.06: Final shows the clip from frame 100 on, so frame 100 is clip frame 0.
+    const clip = { startUs: 3_301_877, sourceInUs: 5_930_000 }
+    expect(previewSeekSeconds(clip, 100, fps30)).toBeCloseTo(5.93 + 0.5 / 30 - 0.00005, 6)
+    expect(previewSeekSeconds(clip, 101, fps30)).toBeCloseTo(5.93 + 1.5 / 30 - 0.00005, 6)
+    expect(timelineFrameForPresentedMedia(clip, 5.93 + 0.001, fps30)).toBe(100)
+    expect(timelineFrameForPresentedMedia(clip, 5.93 + 1 / 30 + 0.001, fps30)).toBe(101)
   })
 
   it('never lands on a 60 fps tie frame for a 30 fps timeline', () => {

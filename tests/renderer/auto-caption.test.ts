@@ -100,7 +100,7 @@ describe('automatic caption insertion', () => {
     useEditorStore.getState().selectClip(captions[0]!.id)
     expect(await useEditorStore.getState().startFullCorrection()).toBe(true)
     expect(startFullCorrectionSession).toHaveBeenCalledWith(after, generatedTrack.id)
-    expect(startAutoCaption).toHaveBeenCalledWith(expect.anything(), ['auto-caption-video'], { language: 'ja', maxChars: 40, maxLines: 3, segmentationMode: 'rule', subtitleTemplate: template.id })
+    expect(startAutoCaption).toHaveBeenCalledWith(expect.anything(), ['auto-caption-video'], { language: 'ja', maxChars: 40, maxLines: 3, lineCapacity: 17, maxWidthPercent: 80, segmentationMode: 'rule', subtitleTemplate: template.id })
   })
 
   it('reconciles a completed result from main-process status when the push event was missed', async () => {

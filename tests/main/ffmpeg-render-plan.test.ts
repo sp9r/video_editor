@@ -22,7 +22,7 @@ describe('FFmpeg render planning', () => {
     expect(plan.inputs).toHaveLength(2)
     expect(plan.inputArgs).toEqual([
       '-loop', '1', '-framerate', '30/1', '-t', '3.000000', '-i', project.media[1]?.path,
-      '-ss', '0.998000', '-t', '5.000000', '-i', project.media[0]?.path
+      '-ss', '0.964666', '-t', '5.068667', '-i', project.media[0]?.path
     ])
     // Layout is composed at the sequence size and resized to the export size at the end.
     expect(plan.compositionWidth).toBe(1920)
@@ -51,8 +51,8 @@ describe('FFmpeg render planning', () => {
 
     expect(cpu).toContain("ass=filename='captions.ass'")
     expect(plan.subtitleCueCount).toBe(1)
-    expect(cpu).toMatch(/\]scale=out_color_matrix=bt709:out_range=tv:flags=bicubic,format=yuv420p\[vout\]$/u)
-    expect(vaapi).toMatch(/\]scale=out_color_matrix=bt709:out_range=tv:flags=bicubic,format=nv12,hwupload\[vout\]$/u)
+    expect(cpu).toMatch(/\]scale=out_color_matrix=bt709:out_range=tv:flags=bicubic\+accurate_rnd\+full_chroma_int,format=yuv420p\[vout\]$/u)
+    expect(vaapi).toMatch(/\]scale=out_color_matrix=bt709:out_range=tv:flags=bicubic\+accurate_rnd\+full_chroma_int,format=nv12,hwupload\[vout\]$/u)
     expect(cpu).not.toContain(project.media[0]?.path ?? 'missing')
     expect(cpu).not.toContain(project.media[1]?.path ?? 'missing')
   })
@@ -68,11 +68,35 @@ describe('FFmpeg render planning', () => {
     const asset = project.media[0]
     if (asset) Object.assign(asset, { colorSpace: 'bt470bg', colorRange: 'pc' })
     const plan = createRenderPlan(project, makeExportSettings(join(process.cwd(), 'out.mp4')))
-    expect(plan.graphStatements.join(';')).toContain('scale=w=1920:h=1080:flags=bicubic:in_color_matrix=bt601:in_range=pc')
+    expect(plan.graphStatements.join(';')).toContain('scale=w=1920:h=1080:flags=bicubic+accurate_rnd+full_chroma_int:in_color_matrix=bt601:in_range=pc')
     const args = buildRenderCommandArgs(plan, {
       filterGraphPath: 'g.ffgraph', outputPath: 'o.mp4', encoderId: 'libx264', videoBitrate: 8_000_000, audioBitrate: 192_000
     })
     expect(args.join(' ')).toContain('-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv')
+  })
+
+  it('anchors a video clip at its source-in and uses exact colour conversion', () => {
+    const project = makeProject()
+    const plan = createRenderPlan(project, makeExportSettings(join(process.cwd(), 'out.mp4')))
+    const graph = plan.graphStatements.join(';')
+    // Pre-roll of one 30 fps source frame plus 2 ms is read and shifted away, so timestamp 0 is the source-in.
+    expect(plan.inputs[1]?.preRollUs).toBe(35_334)
+    expect(graph).toContain('settb=AVTB,setpts=PTS-35334+50,scale=w=1920:h=1080:flags=bicubic+accurate_rnd+full_chroma_int:in_color_matrix=bt709:in_range=tv')
+    // Clip frame k holds the last source frame before k + 0.5 frames; frames on negative slots are dropped.
+    expect(graph).toContain('fps=30/1,trim=start=0:end=4.983333333,format=rgba')
+    // The video clip's audio skips the pre-roll.
+    expect(graph).toContain('atrim=start=0.035334:duration=5.000000')
+  })
+
+  it('ends an off-grid clip on the last timeline frame it covers and starts it on the next frame', () => {
+    const project = makeProject()
+    const clip = project.tracks[1]?.clips[0]
+    if (clip?.kind !== 'video') throw new Error('fixture')
+    // 288_687 us is frame 8.66: the clip is shown from frame 9. It ends at 1_793_247 us (frame 53.8): last frame 53.
+    Object.assign(clip, { startUs: 288_687, durationUs: 1_504_560, sourceInUs: 1_310_000 })
+    const graph = createRenderPlan(project, makeExportSettings(join(process.cwd(), 'out.mp4'))).graphStatements.join(';')
+    expect(graph).toContain('trim=start=0:end=1.483333333')
+    expect(graph).toContain('setpts=PTS+ceil(0.288687/TB-0.0001)')
   })
 
   it('lays rotated and cropped clips out in sequence pixels from the shared layout', () => {

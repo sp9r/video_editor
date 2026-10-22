@@ -15,6 +15,7 @@ import {
   type H264EncoderId
 } from './encoders.js'
 import { collectSubtitleCues, generateAss, generateSrt } from './subtitles.js'
+import { clipFirstFrame, FRAME_TIE_BAND_US } from '../../shared/clip-frames.js'
 import { visualLayerOrder } from '../../shared/render-order.js'
 import { computeVisualLayout, type VisualLayout } from '../../shared/visual-layout.js'
 
@@ -26,6 +27,8 @@ export interface RenderInput {
   inputArgs: string[]
   useVideo: boolean
   useAudio: boolean
+  /** Pre-roll read before the source-in of a video clip; its audio skips it. */
+  preRollUs?: number
 }
 
 export interface RenderPlan {
@@ -86,7 +89,13 @@ const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(maximum, Math.max(minimum, Number.isFinite(value) ? value : minimum))
 
 const even = (value: number): number => Math.max(16, Math.floor(value / 2) * 2)
-const TO_VIDEO_RANGE = 'scale=out_color_matrix=bt709:out_range=tv:flags=bicubic'
+/**
+ * swscale's default RGB<->YUV conversion truncates instead of rounding and
+ * interpolates 4:2:0 chroma coarsely, which darkens every channel by 1-2 levels
+ * per conversion. Chromium and players convert exactly, so Final must too.
+ */
+const EXACT_CONVERSION = 'bicubic+accurate_rnd+full_chroma_int'
+const TO_VIDEO_RANGE = `scale=out_color_matrix=bt709:out_range=tv:flags=${EXACT_CONVERSION}`
 const SEEK_GUARD_US = 2_000
 const seconds = (timeUs: number): string => (Math.max(0, timeUs) / 1_000_000).toFixed(6)
 const fpsText = (numerator: number, denominator: number): string => `${numerator}/${denominator}`
@@ -157,28 +166,47 @@ const visualFilter = (
   layout: VisualLayout,
   asset: MediaAsset,
   fps: string,
-  label: string
+  label: string,
+  fpsParts: { numerator: number; denominator: number }
 ): string => {
-  const colorArgs = clip.kind === 'video'
-    ? `:in_color_matrix=${inputColorMatrix(asset)}:in_range=${asset.colorRange ?? 'tv'}`
-    : ''
-  const filters = [
-    `trim=duration=${seconds(clip.durationUs)}`,
-    'settb=AVTB',
-    'setpts=PTS-STARTPTS',
-    `scale=w=${layout.boxWidth}:h=${layout.boxHeight}:flags=bicubic${colorArgs}`,
-    'setsar=1',
-    `fps=${fps}`,
+  const tail = [
     'format=rgba',
     ...cropFilters(layout)
   ]
   if (layout.rotationRadians !== 0) {
-    filters.push(`rotate=${safeNumber(layout.rotationRadians)}:ow=${layout.rotatedWidth}:oh=${layout.rotatedHeight}:c=black@0`)
+    tail.push(`rotate=${safeNumber(layout.rotationRadians)}:ow=${layout.rotatedWidth}:oh=${layout.rotatedHeight}:c=black@0`)
   }
-  filters.push(
-    `colorchannelmixer=aa=${safeNumber(layout.opacity)}`,
-    `setpts=PTS-STARTPTS+${startOffsetExpression(seconds(clip.startUs))}`
-  )
+  tail.push(`colorchannelmixer=aa=${safeNumber(layout.opacity)}`)
+  if (clip.kind === 'image') {
+    const filters = [
+      `trim=duration=${seconds(clip.durationUs)}`,
+      'settb=AVTB',
+      'setpts=PTS-STARTPTS',
+      `scale=w=${layout.boxWidth}:h=${layout.boxHeight}:flags=bicubic`,
+      'setsar=1',
+      `fps=${fps}`,
+      ...tail,
+      `setpts=PTS-STARTPTS+${startOffsetExpression(seconds(clip.startUs))}`
+    ]
+    return `[${input.index}:v:0]${filters.join(',')}[${label}]`
+  }
+  // Timestamp 0 is exactly the source-in. The fps filter then puts clip frame k
+  // on the last source frame at or before (k + 0.5) frames, the same rule
+  // Preview uses to park its video element. Frames before the source-in only
+  // matter for slot 0 and are dropped once they land on a negative slot.
+  const first = clipFirstFrame(clip.startUs, fpsParts)
+  const end = clipFirstFrame(clip.startUs + clip.durationUs, fpsParts)
+  const frames = Math.max(1, end - first)
+  const filters = [
+    'settb=AVTB',
+    `setpts=PTS-${input.preRollUs ?? 0}+${FRAME_TIE_BAND_US}`,
+    `scale=w=${layout.boxWidth}:h=${layout.boxHeight}:flags=${EXACT_CONVERSION}:in_color_matrix=${inputColorMatrix(asset)}:in_range=${asset.colorRange ?? 'tv'}`,
+    'setsar=1',
+    `fps=${fps}`,
+    `trim=start=0:end=${safeNumber((frames - 0.5) * fpsParts.denominator / fpsParts.numerator, 9)}`,
+    ...tail,
+    `setpts=PTS+${startOffsetExpression(seconds(clip.startUs))}`
+  ]
   return `[${input.index}:v:0]${filters.join(',')}[${label}]`
 }
 
@@ -196,7 +224,7 @@ const audioFilter = (
   const fadeInUs = clamp(settings.fadeInUs, 0, clip.durationUs)
   const fadeOutUs = clamp(settings.fadeOutUs, 0, clip.durationUs)
   const filters = [
-    `atrim=duration=${seconds(clip.durationUs)}`,
+    `atrim=${input.preRollUs ? `start=${seconds(input.preRollUs)}:` : ''}duration=${seconds(clip.durationUs)}`,
     'asetpts=PTS-STARTPTS',
     `aresample=${sampleRate}`,
     'aformat=sample_fmts=fltp:channel_layouts=stereo',
@@ -230,18 +258,38 @@ const getAsset = (assets: Map<string, MediaAsset>, clip: TimelineClip): MediaAss
   return asset
 }
 
+/**
+ * Seek a video clip a little before its source-in: the frame Final shows first
+ * can be the one just before the source-in, and container timestamps are
+ * rounded (Matroska uses milliseconds). The guard covers one source frame.
+ * Timestamps are then shifted so that 0 is exactly the source-in, which makes
+ * the picture for timeline frame k independent of where the source frames fall.
+ */
+const videoSeek = (
+  clip: { sourceInUs: number },
+  asset: Pick<MediaAsset, 'frameRate'>
+): { seekUs: number; shiftUs: number } => {
+  const rate = asset.frameRate && asset.frameRate.denominator > 0 ? asset.frameRate.numerator / asset.frameRate.denominator : 0
+  const sourceFrameUs = rate >= 1 && rate <= 480 ? Math.ceil(1_000_000 / rate) : 41_667
+  const guardUs = SEEK_GUARD_US + sourceFrameUs
+  const seekUs = Math.max(0, Math.round(clip.sourceInUs - guardUs))
+  return { seekUs, shiftUs: Math.round(clip.sourceInUs) - seekUs }
+}
+
 const makeInputArgs = (
   clip: Extract<TimelineClip, { kind: 'video' | 'image' | 'audio' }>,
   asset: MediaAsset,
-  fps: string
+  fps: string,
+  frameUs: number
 ): string[] => {
   if (clip.kind === 'image') {
     return ['-loop', '1', '-framerate', fps, '-t', seconds(clip.durationUs), '-i', asset.path]
   }
-  // Container timestamps are rounded (Matroska uses milliseconds), so a frame
-  // exactly on the seek point can land just before it and be skipped.
-  const seekUs = clip.kind === 'video' && clip.sourceInUs > 0 ? Math.max(0, clip.sourceInUs - SEEK_GUARD_US) : clip.sourceInUs
-  return ['-ss', seconds(seekUs), '-t', seconds(clip.durationUs), '-i', asset.path]
+  if (clip.kind === 'audio') return ['-ss', seconds(clip.sourceInUs), '-t', seconds(clip.durationUs), '-i', asset.path]
+  // Read past the end by the pre-roll and one frame: the last frame Final shows
+  // is the last source frame at or before the end plus half a frame.
+  const { seekUs, shiftUs } = videoSeek(clip, asset)
+  return ['-ss', seconds(seekUs), '-t', seconds(clip.durationUs + shiftUs + frameUs), '-i', asset.path]
 }
 
 const validateAssFileName = (assFileName: string): void => {
@@ -290,7 +338,7 @@ export const buildRenderFilterGraph = (
 // Final stores 4:2:0 BT.709 limited-range video, and the MP4 is tagged to say
 // so. Passing the single Accurate Preview frame through the same conversion
 // shows the chroma softening the export will have.
-const CHROMA_ROUND_TRIP = `${TO_VIDEO_RANGE},format=yuv420p,scale=in_color_matrix=bt709:in_range=tv:flags=bicubic,format=rgba`
+const CHROMA_ROUND_TRIP = `${TO_VIDEO_RANGE},format=yuv420p,scale=in_color_matrix=bt709:in_range=tv:flags=${EXACT_CONVERSION},format=rgba`
 
 export const buildAccurateFrameFilterGraph = (
   plan: Omit<RenderPlan, 'filterGraph'> | RenderPlan,
@@ -373,9 +421,10 @@ export const createRenderPlan = (project: ProjectFile, settings: ExportSettings,
         clipId: timelineClip.id,
         assetId: asset.id,
         path: asset.path,
-        inputArgs: makeInputArgs(timelineClip, asset, fps),
+        inputArgs: makeInputArgs(timelineClip, asset, fps, exactFrameUs),
         useVideo,
-        useAudio
+        useAudio,
+        ...(timelineClip.kind === 'video' ? { preRollUs: videoSeek(timelineClip, asset).shiftUs } : {})
       }
       inputs.push(input)
       if (useVideo && (timelineClip.kind === 'video' || timelineClip.kind === 'image')) {
@@ -402,7 +451,7 @@ export const createRenderPlan = (project: ProjectFile, settings: ExportSettings,
     const nextLabel = `composite${index}`
     const asset = getAsset(assets, clip)
     const layout = computeVisualLayout(clip, asset, compositionWidth, compositionHeight)
-    statements.push(visualFilter(input, clip, layout, asset, fps, sourceLabel))
+    statements.push(visualFilter(input, clip, layout, asset, fps, sourceLabel, { numerator, denominator }))
     statements.push(
       `[${currentVideo}][${sourceLabel}]overlay=x=${layout.x}:y=${layout.y}:eof_action=pass:repeatlast=0:shortest=0:format=auto[${nextLabel}]`
     )

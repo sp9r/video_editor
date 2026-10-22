@@ -96,8 +96,9 @@ describe('Final export geometry and colour', () => {
         const output = join(root, `${variant.name}-out.mp4`)
         await exportProject(paths, root, project, softwareSettings(output, width, height), variant.name)
 
-        const reference = await decodeRgb(paths, root, source, width, height, `scale=in_color_matrix=${variant.matrix}:in_range=tv`, 0.5)
-        const exported = await decodeRgb(paths, root, output, width, height, 'null', 0.5)
+        const reference = await decodeRgb(paths, root, source, width, height, `scale=in_color_matrix=${variant.matrix}:in_range=tv:flags=bicubic+accurate_rnd+full_chroma_int`, 0.5)
+        // Like a player: exact conversion, matrix taken from the file's tags.
+        const exported = await decodeRgb(paths, root, output, width, height, 'scale=flags=bicubic+accurate_rnd+full_chroma_int', 0.5)
         const diff = meanAbsDiff(reference, exported)
         console.log(`colour ${variant.name} mean abs diff R/G/B`, diff.map((value) => value.toFixed(2)).join(' '))
         for (const value of diff) expect(value).toBeLessThan(1.5)
@@ -253,7 +254,7 @@ describe('Accurate Preview window parity', () => {
         const scores: number[] = []
         for (const n of [accurate.frameIndex - 1, accurate.frameIndex, accurate.frameIndex + 1]) {
           const framePath = join(root, `final-${n}.png`)
-          await ffmpeg(paths, ['-i', output, '-vf', `select='eq(n,${n})',scale=in_color_matrix=bt709:in_range=tv,format=rgb24`, '-frames:v', '1', framePath])
+          await ffmpeg(paths, ['-i', output, '-vf', `select='eq(n,${n})',scale=in_color_matrix=bt709:in_range=tv:flags=bicubic+accurate_rnd+full_chroma_int,format=rgb24`, '-frames:v', '1', framePath])
           scores.push(await ssim(accurate.framePath, framePath))
         }
         console.log(`window parity t=${timeUs} frame=${accurate.frameIndex} ssim(n-1,n,n+1)=${scores.map((s) => s.toFixed(3)).join(' ')}`)

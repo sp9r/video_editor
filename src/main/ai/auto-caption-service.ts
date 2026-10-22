@@ -7,6 +7,9 @@ import {
   parseAutoCaptionProgress,
   parseAutoCaptionResult,
   parseAutoCaptionSilenceAnalysis,
+  parseResegmentRequest,
+  parseResegmentResult,
+  type ResegmentResult,
   type AutoCaptionSilenceAnalysis,
   type AutoCaptionProgress,
   type AutoCaptionResult,
@@ -131,6 +134,42 @@ export class AutoCaptionService {
     return { jobId, clipId: clip.id }
   }
 
+  /**
+   * Segmentation-only re-split of already transcribed words (no audio, no Whisper).
+   * Runs the same caption segmentation code as the full worker.
+   */
+  async resegment(requestInput: unknown): Promise<ResegmentResult> {
+    const request = parseResegmentRequest(requestInput)
+    const discovery = await this.discover({ appPath: this.options.appPath, userDataPath: this.options.userDataPath })
+    const scriptPath = path.join(path.dirname(discovery.scriptPath), 'spectra_caption_resegment.py')
+    try {
+      if (!(await stat(scriptPath)).isFile()) throw new Error('missing')
+    } catch {
+      throw new Error('字幕の再分割workerが見つかりません。clip_automationを更新してください。')
+    }
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'spectra-caption-resegment-'))
+    try {
+      const requestPath = path.join(workspace, 'request.json')
+      const resultPath = path.join(workspace, 'result.json')
+      await writeFile(requestPath, `${JSON.stringify(request)}
+`, 'utf8')
+      await this.executor.run({
+        command: discovery.command,
+        args: [scriptPath, '--request', requestPath, '--output', resultPath],
+        cwd: discovery.root,
+        signal: new AbortController().signal,
+        timeoutMs: 15 * 60 * 1000,
+        maxOutputBytes: MAX_PROGRESS_BYTES,
+        onStdout: () => undefined
+      })
+      const resultStat = await stat(resultPath)
+      if (!resultStat.isFile() || resultStat.size <= 0 || resultStat.size > MAX_RESULT_BYTES) throw new Error('invalid result size')
+      return parseResegmentResult(JSON.parse(await readFile(resultPath, 'utf8')), request)
+    } finally {
+      await rm(workspace, { recursive: true, force: true }).catch(() => undefined)
+    }
+  }
+
   cancel(jobId: string): boolean {
     const job = this.active.get(jobId)
     if (!job) return false
@@ -171,13 +210,22 @@ export class AutoCaptionService {
     let requestPath = ''
     let resultPath = ''
     let silencePath = ''
+    // maxWidthPercent is an editor-side layout setting (stored on the generated
+    // clips); the worker only needs the derived lineCapacity.
+    const { maxWidthPercent: _maxWidthPercent, ...workerSettings } = settings
+    // With a per-line capacity, a caption may hold at most capacity x maxLines
+    // characters (the worker accepts 8..80). The baseline keeps the user's maxChars.
+    const layoutMaxChars = workerSettings.lineCapacity === undefined
+      ? workerSettings.maxChars
+      : Math.max(8, Math.min(80, workerSettings.maxChars, workerSettings.lineCapacity * (workerSettings.maxLines ?? 2)))
     const request = {
       version: 'spectra.auto-caption.request.v1',
       jobId,
       mediaPath,
       sourceStartUs: clip.sourceInUs,
       sourceEndUs: clip.sourceInUs + clip.durationUs,
-      ...settings
+      ...workerSettings,
+      maxChars: layoutMaxChars
     }
     let progressBuffer = ''
     let progressBytes = 0

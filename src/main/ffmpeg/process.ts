@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { constants as osConstants, setPriority } from 'node:os'
 
 export interface CommandRequest {
   command: string
@@ -7,6 +8,10 @@ export interface CommandRequest {
   signal?: AbortSignal
   timeoutMs?: number
   maxOutputBytes?: number
+  /** 'high' jumps the shared FFmpeg queue (see QueuedProcessExecutor). */
+  priority?: 'high' | 'normal'
+  /** Run below the editor's UI thread: background thumbnails, waveforms and subtitle images. */
+  lowOsPriority?: boolean
   onStdout?: (chunk: string) => void
   onStdoutBytes?: (chunk: Buffer) => void
   onStderr?: (chunk: string) => void
@@ -87,6 +92,10 @@ export const executeProcess = async (request: CommandRequest): Promise<CommandRe
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe']
     })
+
+    if (request.lowOsPriority && child.pid !== undefined) {
+      try { setPriority(child.pid, osConstants.priority.PRIORITY_BELOW_NORMAL) } catch { /* best effort */ }
+    }
 
     timeout = request.timeoutMs
       ? setTimeout(() => {

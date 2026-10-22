@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { autoCaptionDisplayRatio, autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressMode, autoCaptionProgressStage, autoCaptionStageLabel, describeAutoCaptionBackend, formatClockDurationUs, formatDurationUs, formatElapsedMs, silenceCutProfileLabel } from '../../src/shared/auto-caption-ui'
+import { autoCaptionDisplayRatio, autoCaptionFailureStage, autoCaptionProgressMessage, autoCaptionProgressMode, autoCaptionProgressStage, autoCaptionStageLabel, describeAutoCaptionBackend, formatClockDurationUs, formatDurationUs, formatElapsedMs, silenceCutProfileLabel, captionLayoutHint, resolveCaptionLayoutLimits } from '../../src/shared/auto-caption-ui'
 import type { AutoCaptionProgress, AutoCaptionResult } from '../../src/shared/auto-caption-contract'
 
 const result = (diagnostics: AutoCaptionResult['diagnostics']): AutoCaptionResult => ({
@@ -44,5 +44,28 @@ describe('auto-caption product status helpers', () => {
     expect(autoCaptionDisplayRatio({ ratio: 0.70, stageRatio: 0.42 })).toBe(0.42)
     expect(formatElapsedMs(65_400)).toBe('1:05')
     expect(formatElapsedMs(3_665_000)).toBe('1:01:05')
+  })
+})
+
+describe('caption layout limits', () => {
+  const style = { fontSize: 120, letterSpacing: 0, maxWidthPercent: 80 }
+
+  it('limits maxChars to lineCapacity x maxLines and explains it', () => {
+    const limits = resolveCaptionLayoutLimits({ maxChars: 32, maxLines: 2, style, sequenceWidth: 1920 })
+    expect(limits).toMatchObject({ lineCapacity: 12, blockCapacity: 24, effectiveMaxChars: 24, layoutIsBinding: true, widthPercent: 80 })
+    const hint = captionLayoutHint({ maxChars: 32, maxLines: 2, style, sequenceWidth: 1920 })
+    expect(hint).toContain('1行に約12文字')
+    expect(hint).toContain('2行で約24文字まで')
+  })
+
+  it('keeps the typed maxChars when it is the tighter limit and honours a width override', () => {
+    expect(resolveCaptionLayoutLimits({ maxChars: 16, maxLines: 2, style, sequenceWidth: 1920 })).toMatchObject({ effectiveMaxChars: 16, layoutIsBinding: false })
+    const wide = resolveCaptionLayoutLimits({ maxChars: 40, maxLines: 2, style, maxWidthPercent: 100, sequenceWidth: 1920 })
+    expect(wide).toMatchObject({ lineCapacity: 16, effectiveMaxChars: 32, widthPercent: 100 })
+  })
+
+  it('stays inside the worker range 8..80', () => {
+    expect(resolveCaptionLayoutLimits({ maxChars: 200, maxLines: 4, style: { ...style, fontSize: 20 }, sequenceWidth: 1920 }).effectiveMaxChars).toBe(80)
+    expect(resolveCaptionLayoutLimits({ maxChars: 32, maxLines: 1, style: { ...style, fontSize: 400 }, sequenceWidth: 1920 }).effectiveMaxChars).toBe(8)
   })
 })

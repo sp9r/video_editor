@@ -35,8 +35,8 @@ describe('authoritative render graph', () => {
 
     expect(finalGraph.startsWith(shared)).toBe(true)
     expect(frameGraph.startsWith(shared)).toBe(true)
-    expect(finalGraph).toContain('[subtitled]scale=out_color_matrix=bt709:out_range=tv:flags=bicubic,format=yuv420p[vout]')
-    expect(frameGraph).toContain("[subtitled]select='eq(n\\,7)',setpts=PTS-STARTPTS,scale=out_color_matrix=bt709:out_range=tv:flags=bicubic,format=yuv420p,scale=in_color_matrix=bt709:in_range=tv:flags=bicubic,format=rgba[vout]")
+    expect(finalGraph).toContain('[subtitled]scale=out_color_matrix=bt709:out_range=tv:flags=bicubic+accurate_rnd+full_chroma_int,format=yuv420p[vout]')
+    expect(frameGraph).toContain("[subtitled]select='eq(n\\,7)',setpts=PTS-STARTPTS,scale=out_color_matrix=bt709:out_range=tv:flags=bicubic+accurate_rnd+full_chroma_int,format=yuv420p,scale=in_color_matrix=bt709:in_range=tv:flags=bicubic+accurate_rnd+full_chroma_int,format=rgba[vout]")
   })
 
   it('allows a unique safe ASS filename for concurrent frame requests', () => {

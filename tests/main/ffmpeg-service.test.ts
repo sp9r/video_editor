@@ -21,6 +21,14 @@ const success = (request: CommandRequest, stdout = '', stderr = ''): CommandResu
   stderr
 })
 
+/** Stand-in for the batched overlay renderer: one numbered PNG per requested slot. */
+const writeOverlayFrames = async (request: CommandRequest, content: string): Promise<void> => {
+  const pattern = request.args.at(-1)
+  const count = Number(request.args[request.args.indexOf('-frames:v') + 1])
+  if (!pattern?.includes('%05d') || !Number.isInteger(count)) throw new Error('Missing subtitle overlay output pattern')
+  for (let index = 1; index <= count; index += 1) await writeFile(pattern.replace('%05d', String(index).padStart(5, '0')), content)
+}
+
 const prepareProjectFiles = async (root: string) => {
   const project = makeProject()
   const videoPath = join(root, '映像 & テスト.mp4')
@@ -58,9 +66,7 @@ describe('FFmpeg export service', () => {
             const graphPath = request.args[request.args.indexOf('-filter_complex_script') + 1]
             if (!graphPath) throw new Error('Missing subtitle overlay graph')
             graphs.push(await readFile(graphPath, 'utf8'))
-            const outputPath = request.args.at(-1)
-            if (!outputPath) throw new Error('Missing subtitle overlay output')
-            await writeFile(outputPath, `overlay-${renderCalls}`)
+            await writeOverlayFrames(request, `overlay-${renderCalls}`)
           }
           return success(request)
         }
@@ -113,8 +119,7 @@ describe('FFmpeg export service', () => {
             const assFile = /ass=filename='([^']+)'/u.exec(graph)?.[1]
             if (assFile) ass = await readFile(join(dirname(graphPath), assFile), 'utf8').catch(() => '')
           }
-          const outputPath = request.args.at(-1)
-          if (outputPath) await writeFile(outputPath, 'overlay')
+          await writeOverlayFrames(request, 'overlay')
         }
         return success(request)
       } }
@@ -139,14 +144,12 @@ describe('FFmpeg export service', () => {
       const executor: ProcessExecutor = {
         async run(request) {
           if (request.args.includes('-filter_complex_script')) {
-            const outputPath = request.args.at(-1)
-            if (!outputPath) throw new Error('Missing subtitle overlay output')
-            await writeFile(outputPath, 'overlay')
+            await writeOverlayFrames(request, 'overlay')
           }
           return success(request)
         }
       }
-      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor, workspaceRoot: join(root, 'workspace') })
+      const service = new FfmpegService({ ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' }, { executor, workspaceRoot: join(root, 'workspace'), subtitleOverlayCacheLimits: { entries: 100 } })
       for (let index = 0; index < 250; index += 1) {
         const next = structuredClone(project)
         const clip = next.tracks.find((track) => track.kind === 'subtitle')?.clips[0]
@@ -154,7 +157,7 @@ describe('FFmpeg export service', () => {
         clip.style = { ...clip.style, positionX: 10 + index }
         await service.renderSubtitleOverlay(next, 500_000)
       }
-      expect(service.subtitleOverlayCacheSize).toBeLessThanOrEqual(240)
+      expect(service.subtitleOverlayCacheSize).toBeLessThanOrEqual(100)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -178,9 +181,7 @@ describe('FFmpeg export service', () => {
         async run(request) {
           if (request.args.includes('-filter_complex_script')) {
             renderCalls += 1
-            const outputPath = request.args.at(-1)
-            if (!outputPath) throw new Error('Missing subtitle overlay output')
-            await writeFile(outputPath, `overlay-${renderCalls}`)
+            await writeOverlayFrames(request, `overlay-${renderCalls}`)
           }
           return success(request)
         }

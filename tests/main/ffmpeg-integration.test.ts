@@ -286,7 +286,7 @@ describe('bundled FFmpeg integration', () => {
         command: paths.ffmpegPath,
         args: [
           '-hide_banner', '-loglevel', 'error', '-y', '-i', outputPath,
-          '-vf', `select=eq(n\\,${accurate.frameIndex}),scale=in_color_matrix=bt709:in_range=tv,format=rgb24`, '-frames:v', '1', finalFramePath
+          '-vf', `select=eq(n\\,${accurate.frameIndex}),scale=in_color_matrix=bt709:in_range=tv:flags=bicubic+accurate_rnd+full_chroma_int,format=rgb24`, '-frames:v', '1', finalFramePath
         ],
         timeoutMs: 30_000
       })

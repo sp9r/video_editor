@@ -1,4 +1,4 @@
-import type { AutoCaptionBaseline, AutoCaptionProgress, AutoCaptionSettings, AutoCaptionSilenceAnalysis } from './auto-caption-contract'
+import type { AutoCaptionBaseline, AutoCaptionProgress, AutoCaptionSettings, AutoCaptionSilenceAnalysis, ResegmentRequest, ResegmentResult } from './auto-caption-contract'
 import type { SubtitleTemplateDraft, SubtitleTemplateLoadResult, UserSubtitleTemplate } from './subtitle-templates'
 import type { AppSettings } from './app-settings'
 
@@ -168,6 +168,18 @@ export interface TimelineTrack {
   locked: boolean
   muted: boolean
   hidden: boolean
+  /** Subtitle tracks: the caption layout settings last applied, so the settings panel and later runs start from them. */
+  captionLayout?: SubtitleTrackLayoutSettings
+}
+
+export interface SubtitleTrackLayoutSettings {
+  maxChars: number
+  maxLines: number
+  /** Line box width in percent of the video width. */
+  maxWidthPercent: number
+  segmentationMode: 'auto' | 'rule' | 'llm'
+  /** Template the captions were last styled from, when known. */
+  templateId?: string
 }
 
 export const isMediaTrack = (track: Pick<TimelineTrack, 'kind'>): boolean =>
@@ -458,6 +470,8 @@ export interface DesktopApi {
   renderAccuratePreviewFrame(project: ProjectFile, timeUs: TimeUs): Promise<AccuratePreviewFrameResult>
   renderSubtitleOverlay(project: ProjectFile, timeUs: TimeUs, options?: SubtitleOverlayRequestOptions): Promise<SubtitleOverlayResult>
   renderSubtitleOverlaySequence(project: ProjectFile, startFrame: number, frameCount: number): Promise<SubtitleOverlaySequenceResult>
+  /** Exact libass images for arbitrary frames, cached by look; one FFmpeg process per batch. */
+  renderSubtitleFrames(project: ProjectFile, frameIndices: number[], options?: { urgent?: boolean }): Promise<SubtitleOverlaySequenceResult>
   startSilenceCutReapply(project: ProjectFile, selectedClipId: string, jobId: string, profile: import('./silence-cut').SilenceReapplyProfile, minSilenceUs?: number): Promise<{
     jobId: string
     analysis: AutoCaptionSilenceAnalysis
@@ -471,6 +485,8 @@ export interface DesktopApi {
   cancelAutoCaption(jobId: string): Promise<boolean>
   getAutoCaptionStatus(jobId: string): Promise<AutoCaptionJobStatus | null>
   loadAutoCaptionBaselines(): Promise<AutoCaptionBaselineLoadResult>
+  /** Segmentation-only re-split of existing caption words (no audio, no Whisper). */
+  resegmentCaptions(request: ResegmentRequest): Promise<ResegmentResult>
   loadSubtitleTemplates(): Promise<SubtitleTemplateLoadResult>
   setDefaultSubtitleTemplate(id: string): Promise<SubtitleTemplateLoadResult>
   createSubtitleTemplate(input: SubtitleTemplateDraft): Promise<UserSubtitleTemplate>

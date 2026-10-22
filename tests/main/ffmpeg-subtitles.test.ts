@@ -20,7 +20,7 @@ describe('subtitle serialization', () => {
     expect(ass).toContain('PlayResX: 1920')
     expect(ass).toContain('PlayResY: 1080')
     expect(ass).toContain('Style: Cue0,Noto Sans JP,54')
-    expect(ass).toContain('0:00:01.25,0:00:03.75,Cue0')
+    expect(ass).toContain('0:00:01.26,0:00:03.76,Cue0')
     expect(ass).toContain('\\pos(922,907)')
     expect(ass).toContain('\\fscx75\\fscy75\\t(0,180,\\fscx100\\fscy100)')
     expect(ass).toContain('日本語 \\{字幕\\}\\\\line\\N2行目')
