@@ -156,6 +156,11 @@ export interface SubtitleClip extends BaseClip {
   words?: SubtitleWord[]
   /** Internal .spectra edit units; never serialized into edit_project.v1. */
   editUnits?: SubtitleEditUnit[]
+  /**
+   * Text the AI caption writer produced when it corrected recognition errors.
+   * While text still equals it the caption is AI output (re-segmentable, worth a look), not a manual edit.
+   */
+  aiText?: string
 }
 
 export type TimelineClip = VideoClip | ImageClip | AudioClip | SubtitleClip

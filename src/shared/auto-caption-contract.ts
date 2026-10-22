@@ -12,7 +12,7 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const SEGMENTATION_MODES = ['auto', 'rule', 'llm'] as const
 const SILENCE_CUT_MODES = ['off', 'natural', 'strong', 'youtube'] as const
 const ACCELERATION_MODES = ['auto', 'gpu', 'cpu'] as const
-const TEXT_STATUSES = ['as_transcribed', 'display_normalized', 'ai_cleaned', 'manually_corrected'] as const
+const TEXT_STATUSES = ['as_transcribed', 'display_normalized', 'ai_cleaned', 'ai_corrected', 'manually_corrected'] as const
 const PROVENANCES = ['caption_algorithm', 'rule_fallback', 'llm', 'unknown'] as const
 const FORBIDDEN_KEYS = new Set([
   'absolutePath', 'accessToken', 'clientSecret', 'credential', 'credentials',

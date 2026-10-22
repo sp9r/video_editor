@@ -77,9 +77,11 @@ export const autoCaptionResultToTranscript = (
     const displayNormalizedWordTextMatch = caption.textStatus === 'display_normalized'
       && resolveCaptionDisplayMode(sourceWordText, caption.text) !== undefined
     const aiCleanedWordTextMatch = caption.textStatus === 'ai_cleaned' && isCaptionDeletionDerived(sourceWordText, caption.text)
+    // Corrected text no longer spells the words, but the words still time the caption.
+    const aiCorrected = caption.textStatus === 'ai_corrected'
     const wordTruth = words.length > 0
       && derivedWords.every((word) => word.endUs >= word.startUs)
-      && (exactWordTextMatch || displayNormalizedWordTextMatch || aiCleanedWordTextMatch)
+      && (exactWordTextMatch || displayNormalizedWordTextMatch || aiCleanedWordTextMatch || aiCorrected)
     return {
       startUs: mappedStartUs,
       endUs: mappedEndUs,
@@ -221,7 +223,8 @@ export const applyAutoCaptionResultToProject = (
     sourceCaptionId: result.captions[index]?.id,
     sourceJobId: result.jobId,
     sourceWordIds: result.captions[index]?.sourceWordIds ? [...result.captions[index]!.sourceWordIds] : [],
-    ...(segment.words?.length && result.captions[index]?.textStatus === 'ai_cleaned' && segment.words.map((word) => word.text).join('') !== segment.text
+    ...(result.captions[index]?.textStatus === 'ai_corrected' ? { aiText: segment.text } : {}),
+    ...(segment.words?.length && (result.captions[index]?.textStatus === 'ai_cleaned' || result.captions[index]?.textStatus === 'ai_corrected') && segment.words.map((word) => word.text).join('') !== segment.text
       ? { words: segment.words.map((word) => ({ ...word })) }
       : segment.words?.length
       ? {

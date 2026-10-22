@@ -344,6 +344,9 @@ function SubtitleEditor({ clip }: { clip: SubtitleClip }): React.JSX.Element {
             })}
           />
         </Field>
+        {clip.aiText !== undefined && clip.aiText === clip.text && clip.words?.length ? (
+          <p className="field-hint" data-testid="subtitle-ai-corrected">AIが聞き間違いを直した字幕です。元の認識: {clip.words.map((word) => word.text).join('')}</p>
+        ) : null}
         <p className={`field-hint ${lineLayout.diagnostics.length ? 'warning' : ''}`} role={lineLayout.diagnostics.length ? 'alert' : undefined} data-testid="subtitle-line-count">
           {lineLayout.lineCount} / {lineLayout.maxLines}行（1行に約{lineLimits.lineCapacity}文字、字幕幅{lineLimits.widthPercent}%）
           {lineLayout.diagnostics.length > 0 && ` ${lineLayout.lineCount}行になり最大${lineLayout.maxLines}行を超えています。字幕幅を広げるか、文字を減らすか、字幕を分けてください。`}

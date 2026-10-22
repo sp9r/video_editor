@@ -53,15 +53,15 @@ export interface SubtitleTemplateSettings {
   layoutConstraints: SubtitleTemplateCaptionGeneration['layoutConstraints']
 }
 
-const template = (id: SubtitleTemplateId, label: string, style: Partial<SubtitleStyle>, segmentationMode: SegmentationMode = 'auto'): SubtitleTemplateOption => {
+const template = (id: SubtitleTemplateId, label: string, style: Partial<SubtitleStyle>, segmentationMode: SegmentationMode = 'auto', generation: { maxChars: number; maxLines: number } = { maxChars: 32, maxLines: 2 }): SubtitleTemplateOption => {
   const resolvedStyle = { ...structuredClone(DEFAULT_SUBTITLE_STYLE), ...style }
   return {
   id,
   label,
   style: resolvedStyle,
   captionGeneration: {
-    maxChars: 32,
-    maxLines: 2,
+    maxChars: generation.maxChars,
+    maxLines: generation.maxLines,
     segmentationMode,
     layoutConstraints: { maxWidthPercent: resolvedStyle.maxWidthPercent }
   }
@@ -69,7 +69,20 @@ const template = (id: SubtitleTemplateId, label: string, style: Partial<Subtitle
 }
 
 export const SUBTITLE_TEMPLATES: readonly SubtitleTemplateOption[] = Object.freeze([
-  template('default', '標準', {}),
+  // The look of the user's posted clips (Vrew, 57 projects, 2022-2023): yellow text with a black
+  // outline and a soft shadow, about 130 px at 1080p, one short line at the bottom. Their font
+  // (けいふぉんと) is not installed here, so the verified Noto Sans JP bold stands in for it.
+  template('default', '標準（切り抜き）', {
+    fontSize: 130,
+    color: '#fff800',
+    outlineColor: '#000000',
+    outlineWidth: 7,
+    shadowColor: '#00000080',
+    shadowBlur: 4,
+    bold: true,
+    positionY: 93,
+    maxWidthPercent: 96
+  }, 'auto', { maxChars: 14, maxLines: 1 }),
   template('high-contrast', '白文字・黒縁', { color: '#ffffff', outlineColor: '#000000', outlineWidth: 5, shadowColor: '#00000000', shadowBlur: 0, bold: true }),
   template('minimal', '大きめ強調', { fontSize: 72, outlineColor: '#111318', outlineWidth: 4, shadowBlur: 4, bold: true })
 ].map((candidate) => Object.freeze({

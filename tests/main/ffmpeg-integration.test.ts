@@ -631,6 +631,8 @@ describe('bundled FFmpeg integration', () => {
         })
         const raw = await readFile(rawPath)
         let visible = 0
+        // Glyph fill: pixels close to the template's text colour (white, or the yellow of 標準).
+        const fill = [1, 3, 5].map((index) => Number.parseInt(template.style.color.slice(index, index + 2), 16))
         let white = 0
         let minY = 1080
         let maxY = -1
@@ -641,7 +643,7 @@ describe('bundled FFmpeg integration', () => {
           const alpha = raw[offset + 3] ?? 0
           if (alpha < 32) continue
           visible += 1
-          if (red > 190 && green > 190 && blue > 190) {
+          if (Math.abs(red - fill[0]!) < 60 && Math.abs(green - fill[1]!) < 60 && Math.abs(blue - fill[2]!) < 60) {
             white += 1
             const y = Math.floor(offset / 4 / 1920)
             minY = Math.min(minY, y)
@@ -652,7 +654,7 @@ describe('bundled FFmpeg integration', () => {
         expect(white, `${template.id} white glyph pixels`).toBeGreaterThan(100)
         whiteBounds.push(maxY - minY + 1)
       }
-      expect(whiteBounds[2]).toBeGreaterThan(whiteBounds[0] ?? 0)
+      expect(whiteBounds[2]).toBeGreaterThan(whiteBounds[1] ?? 0)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

@@ -176,4 +176,17 @@ describe('LLM caption writer text (ai_cleaned)', () => {
     expect(isCaptionResegmentable(clip('今日は') as never)).toBe(true)
     expect(isCaptionResegmentable(clip('明日は') as never)).toBe(false)
   })
+
+  it('keeps untouched ai_corrected text resegmentable, but not after a manual edit', async () => {
+    const { isCaptionResegmentable } = await import('../../src/shared/caption-resegment')
+    const clip = (text: string, aiText?: string) => ({
+      id: 'c', name: 'c', kind: 'subtitle' as const, text, startUs: 0, durationUs: 1_000_000, sourceInUs: 0, enabled: true,
+      style: {} as never,
+      ...(aiText === undefined ? {} : { aiText }),
+      words: [{ id: 'w1', text: '監視', startUs: 0, endUs: 300_000 }, { id: 'w2', text: 'は', startUs: 300_000, endUs: 1_000_000 }]
+    })
+    expect(isCaptionResegmentable(clip('看守は', '看守は') as never)).toBe(true)
+    expect(isCaptionResegmentable(clip('看守がね', '看守は') as never)).toBe(false)
+    expect(isCaptionResegmentable(clip('看守は') as never)).toBe(false)
+  })
 })

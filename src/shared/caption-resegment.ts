@@ -32,6 +32,8 @@ export const isCaptionResegmentable = (clip: SubtitleClip): boolean => {
   if (!words?.length) return false
   if (words.some((word) => !ID_PATTERN.test(word.id) || word.text.length === 0 || word.text.length > 400)) return false
   const joined = words.map((word) => word.text).join('')
+  // Untouched AI-corrected text is AI output, not a manual edit.
+  if (clip.aiText !== undefined && clip.aiText === clip.text) return true
   if (joined === clip.text || resolveCaptionDisplayMode(joined, clip.text) !== undefined) return true
   // The LLM caption writer only deletes fillers and punctuation; that is not a manual edit.
   if (isCaptionDeletionDerived(joined, clip.text)) return true
@@ -239,6 +241,12 @@ export const applyCaptionResegmentResults = (
       // Writer text with fillers removed keeps its word timing but has no edit units
       // (units must spell the displayed text exactly).
       const aiCleaned = caption.textStatus === 'ai_cleaned' && isCaptionDeletionDerived(joined, caption.text)
+      if (caption.textStatus === 'ai_corrected' && !exact) {
+        clip.aiText = caption.text
+        delete clip.editUnits
+        if (!wordsInside) delete clip.words
+        return
+      }
       if (wordsInside && aiCleaned && !exact && !normalized) {
         delete clip.editUnits
         return
