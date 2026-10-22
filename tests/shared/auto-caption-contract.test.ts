@@ -155,3 +155,25 @@ describe('hidePunctuation option', () => {
     expect(captionSplitSettingsChanged(base, { ...base, hidePunctuation: false })).toBe(true)
   })
 })
+
+describe('LLM caption writer text (ai_cleaned)', () => {
+  it('treats deletion-only text as derived from its words, but not added or changed text', async () => {
+    const { isCaptionDeletionDerived, isCaptionDisplayDerived } = await import('../../src/shared/caption-display-text')
+    expect(isCaptionDeletionDerived('え、今日はえーと、フォートナイトを', '今日はフォートナイトを')).toBe(true)
+    expect(isCaptionDisplayDerived('え、今日はえーと、フォートナイトを', '今日はフォートナイトを')).toBe(true)
+    expect(isCaptionDeletionDerived('今日は晴れ', '今日は雨')).toBe(false)
+    expect(isCaptionDeletionDerived('これはすごい', 'これはすごいね')).toBe(false)
+    expect(isCaptionDeletionDerived('これ', '')).toBe(false)
+  })
+
+  it('keeps an ai_cleaned caption resegmentable while a rewritten one is not', async () => {
+    const { isCaptionResegmentable } = await import('../../src/shared/caption-resegment')
+    const clip = (text: string) => ({
+      id: 'c', name: 'c', kind: 'subtitle' as const, text, startUs: 0, durationUs: 1_000_000, sourceInUs: 0, enabled: true,
+      style: {} as never,
+      words: [{ id: 'w1', text: 'えーと、', startUs: 0, endUs: 300_000 }, { id: 'w2', text: '今日は', startUs: 300_000, endUs: 1_000_000 }]
+    })
+    expect(isCaptionResegmentable(clip('今日は') as never)).toBe(true)
+    expect(isCaptionResegmentable(clip('明日は') as never)).toBe(false)
+  })
+})

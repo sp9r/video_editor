@@ -2,7 +2,7 @@ import { mapAutoCaptionSourceTimeToTimelineUs, type AutoCaptionResult } from './
 import { AUTOMATION_SCHEMA_VERSION, validateAutomationProposal, type AutomationProposal, type TranscriptAiOutput } from './automation.js'
 import { createTrack, makeId, validateProject } from './project.js'
 import { deriveSubtitleEditUnits } from './editing/edit-units.js'
-import { normalizeCaptionDisplayText, resolveCaptionDisplayMode } from './caption-display-text.js'
+import { isCaptionDeletionDerived, normalizeCaptionDisplayText, resolveCaptionDisplayMode } from './caption-display-text.js'
 import { type ProjectFile, type SubtitleClip, type SubtitleTrackLayoutSettings, type TimelineClip } from './types.js'
 import { validateSubtitleMaxLines } from './subtitle-layout.js'
 import type { SourceTimeMapper } from './silence-cut.js'
@@ -76,9 +76,10 @@ export const autoCaptionResultToTranscript = (
     const exactWordTextMatch = sourceWordText === caption.text
     const displayNormalizedWordTextMatch = caption.textStatus === 'display_normalized'
       && resolveCaptionDisplayMode(sourceWordText, caption.text) !== undefined
+    const aiCleanedWordTextMatch = caption.textStatus === 'ai_cleaned' && isCaptionDeletionDerived(sourceWordText, caption.text)
     const wordTruth = words.length > 0
       && derivedWords.every((word) => word.endUs >= word.startUs)
-      && (exactWordTextMatch || displayNormalizedWordTextMatch)
+      && (exactWordTextMatch || displayNormalizedWordTextMatch || aiCleanedWordTextMatch)
     return {
       startUs: mappedStartUs,
       endUs: mappedEndUs,
@@ -220,7 +221,9 @@ export const applyAutoCaptionResultToProject = (
     sourceCaptionId: result.captions[index]?.id,
     sourceJobId: result.jobId,
     sourceWordIds: result.captions[index]?.sourceWordIds ? [...result.captions[index]!.sourceWordIds] : [],
-    ...(segment.words?.length
+    ...(segment.words?.length && result.captions[index]?.textStatus === 'ai_cleaned' && segment.words.map((word) => word.text).join('') !== segment.text
+      ? { words: segment.words.map((word) => ({ ...word })) }
+      : segment.words?.length
       ? {
           words: segment.words.map((word) => ({ ...word })),
           editUnits: deriveSubtitleEditUnits(segment.words.map((word) => ({

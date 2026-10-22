@@ -25,6 +25,22 @@ export const resolveCaptionDisplayMode = (source: string, display: string): Capt
   return undefined
 }
 
+/**
+ * True when `display` can be made from `source` by deleting characters only.
+ * The LLM caption writer removes fillers (えー, あのー…) and punctuation this way
+ * (textStatus 'ai_cleaned'); such text is still derived from the words.
+ */
+export const isCaptionDeletionDerived = (source: string, display: string): boolean => {
+  if (!display) return false
+  let cursor = 0
+  for (const character of display) {
+    cursor = source.indexOf(character, cursor)
+    if (cursor < 0) return false
+    cursor += character.length
+  }
+  return true
+}
+
 /** True when `display` is `source` itself or a known display normalisation of it (never a manual edit). */
 export const isCaptionDisplayDerived = (source: string, display: string): boolean =>
-  source === display || resolveCaptionDisplayMode(source, display) !== undefined
+  source === display || resolveCaptionDisplayMode(source, display) !== undefined || isCaptionDeletionDerived(source, display)

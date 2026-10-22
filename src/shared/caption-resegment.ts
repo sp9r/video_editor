@@ -6,7 +6,7 @@ import {
   type ResegmentWord
 } from './auto-caption-contract.js'
 import { resolveCaptionLayoutLimits } from './auto-caption-ui.js'
-import { normalizeCaptionDisplayText, resolveCaptionDisplayMode } from './caption-display-text.js'
+import { isCaptionDeletionDerived, normalizeCaptionDisplayText, resolveCaptionDisplayMode } from './caption-display-text.js'
 import { deriveSubtitleEditUnits } from './editing/edit-units.js'
 import { makeId, validateProject } from './project.js'
 import type { ProjectFile, SubtitleClip, SubtitleStyle, SubtitleTrackLayoutSettings, SubtitleWord, TimelineTrack } from './types.js'
@@ -33,6 +33,8 @@ export const isCaptionResegmentable = (clip: SubtitleClip): boolean => {
   if (words.some((word) => !ID_PATTERN.test(word.id) || word.text.length === 0 || word.text.length > 400)) return false
   const joined = words.map((word) => word.text).join('')
   if (joined === clip.text || resolveCaptionDisplayMode(joined, clip.text) !== undefined) return true
+  // The LLM caption writer only deletes fillers and punctuation; that is not a manual edit.
+  if (isCaptionDeletionDerived(joined, clip.text)) return true
   // Text that differs from the words only by display punctuation is still not a manual edit.
   return normalizeCaptionDisplayText(joined, 'hide') === normalizeCaptionDisplayText(clip.text, 'hide')
     || normalizeCaptionDisplayText(joined, 'legacy') === normalizeCaptionDisplayText(clip.text, 'legacy')
@@ -234,6 +236,13 @@ export const applyCaptionResegmentResults = (
       const exact = joined === caption.text
       const displayMode = caption.textStatus === 'display_normalized' ? resolveCaptionDisplayMode(joined, caption.text) : undefined
       const normalized = displayMode !== undefined
+      // Writer text with fillers removed keeps its word timing but has no edit units
+      // (units must spell the displayed text exactly).
+      const aiCleaned = caption.textStatus === 'ai_cleaned' && isCaptionDeletionDerived(joined, caption.text)
+      if (wordsInside && aiCleaned && !exact && !normalized) {
+        delete clip.editUnits
+        return
+      }
       if (!wordsInside || (!exact && !normalized)) {
         delete clip.words
         return
