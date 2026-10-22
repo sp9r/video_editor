@@ -35,6 +35,8 @@ export interface AutoCaptionSettings {
   lineCapacity?: number
   /** Line box width as a percentage of the video width the generated captions are laid out for (stored on the clips' style). */
   maxWidthPercent?: number
+  /** 「句読点を表示しない」: drop 、。 from displayed caption text (the worker defaults to true). */
+  hidePunctuation?: boolean
   segmentationMode: SegmentationMode
   silenceCut?: SilenceCutMode
   accelerationMode?: AccelerationMode
@@ -92,6 +94,7 @@ export interface AutoCaptionRequest {
   maxChars: number
   maxLines?: number
   lineCapacity?: number
+  hidePunctuation?: boolean
   segmentationMode: SegmentationMode
   silenceCut?: SilenceCutMode
   accelerationMode?: AccelerationMode
@@ -343,11 +346,18 @@ const parseSourceClip = (value: unknown, label: string): AutoCaptionSourceClipId
   }
 }
 
+const optionalBoolean = (value: unknown, label: string): boolean | undefined => {
+  if (value === undefined) return undefined
+  if (typeof value !== 'boolean') throw new Error(`${label} must be a boolean`)
+  return value
+}
+
 const parseSettings = (value: unknown): AutoCaptionBaseline['settings'] => {
   if (!isRecord(value)) throw new Error('settings must be an object')
-  assertKeys(value, ['language', 'maxChars', 'maxLines', 'lineCapacity', 'maxWidthPercent', 'segmentationMode', 'silenceCut', 'silenceMinUs', 'accelerationMode', 'subtitleTemplate'], 'settings')
+  assertKeys(value, ['language', 'maxChars', 'maxLines', 'lineCapacity', 'hidePunctuation', 'maxWidthPercent', 'segmentationMode', 'silenceCut', 'silenceMinUs', 'accelerationMode', 'subtitleTemplate'], 'settings')
   const maxLines = value.maxLines === undefined ? undefined : boundedCount(value.maxLines, 'settings.maxLines', 1, 16)
   const lineCapacity = value.lineCapacity === undefined ? undefined : boundedCount(value.lineCapacity, 'settings.lineCapacity', 1, 200)
+  const hidePunctuation = optionalBoolean(value.hidePunctuation, 'settings.hidePunctuation')
   const maxWidthPercent = value.maxWidthPercent === undefined ? undefined : value.maxWidthPercent
   if (maxWidthPercent !== undefined && (typeof maxWidthPercent !== 'number' || !Number.isFinite(maxWidthPercent) || maxWidthPercent < 1 || maxWidthPercent > 1000)) throw new Error('settings.maxWidthPercent is invalid')
   const segmentationMode = requiredString(own(value, 'segmentationMode'), 'settings.segmentationMode', 16) as SegmentationMode
@@ -363,6 +373,7 @@ const parseSettings = (value: unknown): AutoCaptionBaseline['settings'] => {
     maxChars: boundedCount(own(value, 'maxChars'), 'settings.maxChars', 1, 10_000),
     ...(maxLines === undefined ? {} : { maxLines }),
     ...(lineCapacity === undefined ? {} : { lineCapacity }),
+    ...(hidePunctuation === undefined ? {} : { hidePunctuation }),
     ...(maxWidthPercent === undefined ? {} : { maxWidthPercent }),
     segmentationMode,
     ...(silenceCut === undefined ? {} : { silenceCut }),
@@ -376,7 +387,7 @@ export const parseAutoCaptionSettings = (value: unknown): AutoCaptionSettings =>
 
 export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
   if (!isRecord(input)) throw new Error('auto-caption request must be an object')
-  assertKeys(input, ['version', 'jobId', 'mediaPath', 'sourceStartUs', 'sourceEndUs', 'language', 'maxChars', 'maxLines', 'lineCapacity', 'segmentationMode', 'silenceCut', 'silenceMinUs', 'accelerationMode', 'subtitleTemplate'], 'auto-caption request')
+  assertKeys(input, ['version', 'jobId', 'mediaPath', 'sourceStartUs', 'sourceEndUs', 'language', 'maxChars', 'maxLines', 'lineCapacity', 'hidePunctuation', 'segmentationMode', 'silenceCut', 'silenceMinUs', 'accelerationMode', 'subtitleTemplate'], 'auto-caption request')
   if (own(input, 'version') !== AUTO_CAPTION_REQUEST_VERSION) throw new Error('unsupported auto-caption request version')
   const sourceStartUs = integerUs(own(input, 'sourceStartUs'), 'sourceStartUs')
   const sourceEndUs = integerUs(own(input, 'sourceEndUs'), 'sourceEndUs', false)
@@ -385,6 +396,7 @@ export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
   if (!SEGMENTATION_MODES.includes(segmentationMode)) throw new Error('unsupported segmentationMode')
   const maxLines = input.maxLines === undefined ? undefined : boundedCount(input.maxLines, 'maxLines', 1, 16)
   const lineCapacity = input.lineCapacity === undefined ? undefined : boundedCount(input.lineCapacity, 'lineCapacity', 1, 200)
+  const hidePunctuation = optionalBoolean(input.hidePunctuation, 'hidePunctuation')
   const silenceCut = input.silenceCut === undefined ? undefined : requiredString(input.silenceCut, 'silenceCut', 16) as SilenceCutMode
   if (silenceCut !== undefined && !SILENCE_CUT_MODES.includes(silenceCut)) throw new Error('unsupported silenceCut')
   const silenceMinUs = input.silenceMinUs === undefined ? undefined : boundedCount(input.silenceMinUs, 'silenceMinUs', 0, 2_000_000)
@@ -401,6 +413,7 @@ export const parseAutoCaptionRequest = (input: unknown): AutoCaptionRequest => {
     maxChars: boundedCount(own(input, 'maxChars'), 'maxChars', 1, 10_000),
     ...(maxLines === undefined ? {} : { maxLines }),
     ...(lineCapacity === undefined ? {} : { lineCapacity }),
+    ...(hidePunctuation === undefined ? {} : { hidePunctuation }),
     segmentationMode,
     ...(silenceCut === undefined ? {} : { silenceCut }),
     ...(silenceMinUs === undefined ? {} : { silenceMinUs }),
@@ -582,6 +595,7 @@ export interface ResegmentRequest {
   maxChars: number
   maxLines: number
   lineCapacity?: number
+  hidePunctuation?: boolean
   segmentationMode: SegmentationMode
   words: ResegmentWord[]
 }
@@ -604,7 +618,7 @@ export interface ResegmentResult {
 
 export const parseResegmentRequest = (input: unknown): ResegmentRequest => {
   if (!isRecord(input)) throw new Error('resegment request must be an object')
-  assertKeys(input, ['version', 'jobId', 'language', 'maxChars', 'maxLines', 'lineCapacity', 'segmentationMode', 'words'], 'resegment request')
+  assertKeys(input, ['version', 'jobId', 'language', 'maxChars', 'maxLines', 'lineCapacity', 'hidePunctuation', 'segmentationMode', 'words'], 'resegment request')
   if (own(input, 'version') !== RESEGMENT_REQUEST_VERSION) throw new Error('unsupported resegment request version')
   const segmentationMode = requiredString(own(input, 'segmentationMode'), 'segmentationMode', 16) as SegmentationMode
   if (!SEGMENTATION_MODES.includes(segmentationMode)) throw new Error('unsupported segmentationMode')
@@ -623,6 +637,7 @@ export const parseResegmentRequest = (input: unknown): ResegmentRequest => {
     return { id, text: requiredString(own(item, 'text'), `words[${index}].text`, 400), startUs, endUs }
   })
   const lineCapacity = input.lineCapacity === undefined ? undefined : boundedCount(input.lineCapacity, 'lineCapacity', 1, 200)
+  const hidePunctuation = optionalBoolean(input.hidePunctuation, 'hidePunctuation')
   return {
     version: RESEGMENT_REQUEST_VERSION,
     jobId: identifier(own(input, 'jobId'), 'jobId'),
@@ -630,6 +645,7 @@ export const parseResegmentRequest = (input: unknown): ResegmentRequest => {
     maxChars: boundedCount(own(input, 'maxChars'), 'maxChars', 1, 10_000),
     maxLines: boundedCount(own(input, 'maxLines'), 'maxLines', 1, 16),
     ...(lineCapacity === undefined ? {} : { lineCapacity }),
+    ...(hidePunctuation === undefined ? {} : { hidePunctuation }),
     segmentationMode,
     words
   }

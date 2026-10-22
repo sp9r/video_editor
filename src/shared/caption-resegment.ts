@@ -6,6 +6,7 @@ import {
   type ResegmentWord
 } from './auto-caption-contract.js'
 import { resolveCaptionLayoutLimits } from './auto-caption-ui.js'
+import { normalizeCaptionDisplayText, resolveCaptionDisplayMode } from './caption-display-text.js'
 import { deriveSubtitleEditUnits } from './editing/edit-units.js'
 import { makeId, validateProject } from './project.js'
 import type { ProjectFile, SubtitleClip, SubtitleStyle, SubtitleTrackLayoutSettings, SubtitleWord, TimelineTrack } from './types.js'
@@ -20,8 +21,6 @@ import type { ProjectFile, SubtitleClip, SubtitleStyle, SubtitleTrackLayoutSetti
  */
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
-const DISPLAY_PUNCTUATION = /[、。！？!?…・〜～]+/gu
-const stripDisplayPunctuation = (text: string): string => text.replace(DISPLAY_PUNCTUATION, '')
 
 /**
  * A caption can be re-split only while its text is still exactly what its
@@ -33,7 +32,10 @@ export const isCaptionResegmentable = (clip: SubtitleClip): boolean => {
   if (!words?.length) return false
   if (words.some((word) => !ID_PATTERN.test(word.id) || word.text.length === 0 || word.text.length > 400)) return false
   const joined = words.map((word) => word.text).join('')
-  return joined === clip.text || stripDisplayPunctuation(joined) === stripDisplayPunctuation(clip.text)
+  if (joined === clip.text || resolveCaptionDisplayMode(joined, clip.text) !== undefined) return true
+  // Text that differs from the words only by display punctuation is still not a manual edit.
+  return normalizeCaptionDisplayText(joined, 'hide') === normalizeCaptionDisplayText(clip.text, 'hide')
+    || normalizeCaptionDisplayText(joined, 'legacy') === normalizeCaptionDisplayText(clip.text, 'legacy')
 }
 
 export interface CaptionResegmentRun {
@@ -93,7 +95,7 @@ export const planCaptionResegment = (project: ProjectFile, trackId: string, scop
 
 export const buildResegmentRequests = (
   plan: CaptionResegmentPlan,
-  options: { jobPrefix: string; language: string; maxChars: number; maxLines: number; lineCapacity: number; segmentationMode: SubtitleTrackLayoutSettings['segmentationMode'] }
+  options: { jobPrefix: string; language: string; maxChars: number; maxLines: number; lineCapacity: number; hidePunctuation: boolean; segmentationMode: SubtitleTrackLayoutSettings['segmentationMode'] }
 ): ResegmentRequest[] =>
   plan.runs.map((run, index) => ({
     version: RESEGMENT_REQUEST_VERSION,
@@ -102,6 +104,7 @@ export const buildResegmentRequests = (
     maxChars: options.maxChars,
     maxLines: options.maxLines,
     lineCapacity: options.lineCapacity,
+    hidePunctuation: options.hidePunctuation,
     segmentationMode: options.segmentationMode,
     words: run.words
   }))
@@ -121,10 +124,11 @@ export const resegmentLimits = (
  * Colours, position, animation... never do; size/width/lines/chars/mode do.
  */
 export const captionSplitSettingsChanged = (
-  previous: { maxChars: number; maxLines: number; segmentationMode: string; lineCapacity: number },
-  next: { maxChars: number; maxLines: number; segmentationMode: string; lineCapacity: number }
+  previous: { maxChars: number; maxLines: number; segmentationMode: string; lineCapacity: number; hidePunctuation?: boolean },
+  next: { maxChars: number; maxLines: number; segmentationMode: string; lineCapacity: number; hidePunctuation?: boolean }
 ): boolean =>
-  previous.maxChars !== next.maxChars
+  (previous.hidePunctuation ?? true) !== (next.hidePunctuation ?? true)
+  || previous.maxChars !== next.maxChars
   || previous.maxLines !== next.maxLines
   || previous.segmentationMode !== next.segmentationMode
   || previous.lineCapacity !== next.lineCapacity
@@ -228,13 +232,14 @@ export const applyCaptionResegmentResults = (
       const wordsInside = rawWords.every((word) => word.startUs >= clip.startUs && word.endUs <= clipEndUs)
       const joined = rawWords.map((word) => word.text).join('')
       const exact = joined === caption.text
-      const normalized = caption.textStatus === 'display_normalized' && stripDisplayPunctuation(joined) === caption.text
+      const displayMode = caption.textStatus === 'display_normalized' ? resolveCaptionDisplayMode(joined, caption.text) : undefined
+      const normalized = displayMode !== undefined
       if (!wordsInside || (!exact && !normalized)) {
         delete clip.words
         return
       }
       const unitWords = normalized
-        ? rawWords.map((word) => ({ ...word, text: stripDisplayPunctuation(word.text) })).filter((word) => word.text.length > 0)
+        ? rawWords.map((word) => ({ ...word, text: normalizeCaptionDisplayText(word.text, displayMode) })).filter((word) => word.text.length > 0)
         : rawWords
       const units = deriveSubtitleEditUnits(unitWords)
       if (units && units.map((unit) => unit.text).join('') === clip.text) clip.editUnits = units

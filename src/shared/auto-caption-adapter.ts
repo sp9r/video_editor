@@ -2,6 +2,7 @@ import { mapAutoCaptionSourceTimeToTimelineUs, type AutoCaptionResult } from './
 import { AUTOMATION_SCHEMA_VERSION, validateAutomationProposal, type AutomationProposal, type TranscriptAiOutput } from './automation.js'
 import { createTrack, makeId, validateProject } from './project.js'
 import { deriveSubtitleEditUnits } from './editing/edit-units.js'
+import { normalizeCaptionDisplayText, resolveCaptionDisplayMode } from './caption-display-text.js'
 import { type ProjectFile, type SubtitleClip, type SubtitleTrackLayoutSettings, type TimelineClip } from './types.js'
 import { validateSubtitleMaxLines } from './subtitle-layout.js'
 import type { SourceTimeMapper } from './silence-cut.js'
@@ -17,10 +18,7 @@ const findSubtitleTrack = (project: ProjectFile, requestedTrackId?: string) => {
   return track
 }
 
-/** Keep the adapter's ownership check aligned with clip_automation's display policy. */
-const DISPLAY_PUNCTUATION = /[、。！？!?…・〜～]+/gu
-
-const normalizeCaptionOwnershipText = (text: string): string => text.replace(DISPLAY_PUNCTUATION, '')
+/** Keep the adapter's ownership check aligned with clip_automation's display policy (caption_text.py). */
 
 /**
  * Keep derived timeline word timing inside its owning caption.
@@ -77,7 +75,7 @@ export const autoCaptionResultToTranscript = (
     const sourceWordText = derivedWords.map((word) => word.text).join('')
     const exactWordTextMatch = sourceWordText === caption.text
     const displayNormalizedWordTextMatch = caption.textStatus === 'display_normalized'
-      && normalizeCaptionOwnershipText(sourceWordText) === caption.text
+      && resolveCaptionDisplayMode(sourceWordText, caption.text) !== undefined
     const wordTruth = words.length > 0
       && derivedWords.every((word) => word.endUs >= word.startUs)
       && (exactWordTextMatch || displayNormalizedWordTextMatch)
@@ -228,7 +226,7 @@ export const applyAutoCaptionResultToProject = (
           editUnits: deriveSubtitleEditUnits(segment.words.map((word) => ({
             ...word,
             text: result.captions[index]?.textStatus === 'display_normalized'
-              ? normalizeCaptionOwnershipText(word.text)
+              ? normalizeCaptionDisplayText(word.text, resolveCaptionDisplayMode(segment.words!.map((item) => item.text).join(''), segment.text) ?? 'legacy')
               : word.text
           })).filter((word) => word.text.length > 0))
         }

@@ -1,6 +1,7 @@
 import type { AutoCaptionBaseline } from './auto-caption-contract'
 import type { EncoderReport, ExportSettings, ProjectFile, TimeUs, TimelineClip } from './types'
 import { canRestoreSilenceCut } from './silence-cut'
+import { isCaptionDisplayDerived } from './caption-display-text'
 
 export type ProjectQaSeverity = 'error' | 'warning' | 'info'
 
@@ -169,7 +170,7 @@ export const runProjectQa = (project: ProjectFile, options: ProjectQaOptions = {
           previousEnd = word.endUs
         }
         if (malformed) addIssue(issues, 'error', 'SUBTITLE_WORD_TIMING_INVALID', '字幕の単語タイミングが不正です。', clip.id, undefined, clip.startUs)
-        if (clip.words.map((word) => word.text).join('') !== clip.text) addIssue(issues, 'warning', 'SUBTITLE_WORD_TEXT_MISMATCH', '字幕本文と単語ownershipの連結結果が一致しません。', clip.id, undefined, clip.startUs)
+        if (!isCaptionDisplayDerived(clip.words.map((word) => word.text).join(''), clip.text)) addIssue(issues, 'warning', 'SUBTITLE_WORD_TEXT_MISMATCH', '字幕本文と単語ownershipの連結結果が一致しません。', clip.id, undefined, clip.startUs)
       }
       if (clip.sourceJobId && options.autoCaptionBaselines) {
         const baseline = baselines.get(clip.sourceJobId)

@@ -49,6 +49,7 @@ function CaptionSettingsForm({ trackId }: { trackId: string }): React.JSX.Elemen
   const [maxWidthPercent, setMaxWidthPercent] = useState(stored?.maxWidthPercent ?? reference?.style.maxWidthPercent ?? 80)
   const [maxLines, setMaxLines] = useState(stored?.maxLines ?? normalizeSubtitleMaxLines(reference?.maxLines))
   const [mode, setMode] = useState<SubtitleTrackLayoutSettings['segmentationMode']>(stored?.segmentationMode ?? defaults?.segmentationMode ?? seed.segmentationMode)
+  const [hidePunctuation, setHidePunctuation] = useState(stored?.hidePunctuation ?? defaults?.hidePunctuation ?? true)
   const [templateId, setTemplateId] = useState('')
   const baseStyle: SubtitleStyle | undefined = templateId ? getSubtitleTemplateStyleForId(templateId, userTemplates) : reference?.style
   const [styleEdits, setStyleEdits] = useState<Partial<Pick<SubtitleStyle, StyleKey>>>({})
@@ -77,7 +78,7 @@ function CaptionSettingsForm({ trackId }: { trackId: string }): React.JSX.Elemen
       trackId,
       scope,
       language: 'ja',
-      settings: { maxChars, maxLines, maxWidthPercent, segmentationMode: mode, ...(templateId ? { templateId } : track.captionLayout?.templateId ? { templateId: track.captionLayout.templateId } : {}) },
+      settings: { maxChars, maxLines, maxWidthPercent, segmentationMode: mode, hidePunctuation, ...(templateId ? { templateId } : track.captionLayout?.templateId ? { templateId: track.captionLayout.templateId } : {}) },
       ...(templateId ? { templateStyle: getSubtitleTemplateStyleForId(templateId, userTemplates) } : {}),
       stylePatch: styleEdits
     })
@@ -105,6 +106,7 @@ function CaptionSettingsForm({ trackId }: { trackId: string }): React.JSX.Elemen
           <label className="field"><span className="field-label">横幅の上限（%）</span><span className="number-input"><input disabled={busy} type="number" min={10} max={300} value={maxWidthPercent} onChange={(event) => setMaxWidthPercent(Math.max(10, Math.min(300, Number(event.target.value) || 80)))} aria-label="字幕の横幅の上限（動画幅に対する%）" /><span>%</span></span></label>
           <label className="field"><span className="field-label">最大行数</span><span className="number-input"><input disabled={busy} type="number" min={1} max={MAX_SUBTITLE_MAX_LINES} value={maxLines} onChange={(event) => setMaxLines(Math.max(1, Math.min(MAX_SUBTITLE_MAX_LINES, Number(event.target.value) || 2)))} /><span>行</span></span></label>
           <small className="field-hint caption-layout-hint" data-testid="caption-settings-hint">{hint}</small>
+          <label className="check-field"><input disabled={busy} type="checkbox" checked={hidePunctuation} onChange={(event) => setHidePunctuation(event.target.checked)} />句読点（、。）を表示しない</label>
           <label className="field"><span className="field-label">区切り方式</span>
             <select disabled={busy} value={mode} onChange={(event) => setMode(event.target.value as SubtitleTrackLayoutSettings['segmentationMode'])}>
               {MODES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}

@@ -139,3 +139,19 @@ describe('segmentation-only (resegment) contract', () => {
     expect(() => parseResegmentResult(result([caption('c1', ['w0'], 0, 500_000)]), request)).toThrow()
   })
 })
+
+describe('hidePunctuation option', () => {
+  it('is accepted as a boolean on requests and rejected otherwise', async () => {
+    const { parseAutoCaptionSettings } = await import('../../src/shared/auto-caption-contract')
+    expect(parseAutoCaptionSettings({ language: 'ja', maxChars: 32, segmentationMode: 'auto', hidePunctuation: false }).hidePunctuation).toBe(false)
+    expect(parseAutoCaptionSettings({ language: 'ja', maxChars: 32, segmentationMode: 'auto' }).hidePunctuation).toBeUndefined()
+    expect(() => parseAutoCaptionSettings({ language: 'ja', maxChars: 32, segmentationMode: 'auto', hidePunctuation: 'yes' })).toThrow(/boolean/u)
+  })
+
+  it('counts a punctuation toggle as a re-segmenting change (absent means on)', async () => {
+    const { captionSplitSettingsChanged } = await import('../../src/shared/caption-resegment')
+    const base = { maxChars: 12, maxLines: 1, segmentationMode: 'auto', lineCapacity: 12 }
+    expect(captionSplitSettingsChanged(base, { ...base, hidePunctuation: true })).toBe(false)
+    expect(captionSplitSettingsChanged(base, { ...base, hidePunctuation: false })).toBe(true)
+  })
+})

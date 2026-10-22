@@ -847,8 +847,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     )
     const nextLimits = resegmentLimits({ maxChars: settings.maxChars, maxLines, maxWidthPercent: settings.maxWidthPercent }, styleFor(first), sequenceWidth)
     const needsResegment = captionSplitSettingsChanged(
-      { ...previousLimits, maxLines: normalizeSubtitleMaxLines(first.maxLines), segmentationMode: previousLayout?.segmentationMode ?? settings.segmentationMode },
-      { ...nextLimits, maxLines, segmentationMode: settings.segmentationMode }
+      { ...previousLimits, maxLines: normalizeSubtitleMaxLines(first.maxLines), segmentationMode: previousLayout?.segmentationMode ?? settings.segmentationMode, hidePunctuation: previousLayout?.hidePunctuation },
+      { ...nextLimits, maxLines, segmentationMode: settings.segmentationMode, hidePunctuation: settings.hidePunctuation }
     )
     const layout: SubtitleTrackLayoutSettings = { ...settings, maxLines }
     set({ captionLayoutDefaults: { ...layout } })
@@ -873,6 +873,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         maxChars: nextLimits.maxChars,
         maxLines,
         lineCapacity: nextLimits.lineCapacity,
+        hidePunctuation: settings.hidePunctuation ?? true,
         segmentationMode: settings.segmentationMode
       })
       const results = await Promise.all(requests.map((request) => window.spectra!.resegmentCaptions(request)))

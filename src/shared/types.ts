@@ -178,6 +178,8 @@ export interface SubtitleTrackLayoutSettings {
   /** Line box width in percent of the video width. */
   maxWidthPercent: number
   segmentationMode: 'auto' | 'rule' | 'llm'
+  /** 「句読点を表示しない」 (absent = on, matching the worker default). */
+  hidePunctuation?: boolean
   /** Template the captions were last styled from, when known. */
   templateId?: string
 }
