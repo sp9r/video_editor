@@ -2,6 +2,17 @@
 
 一般的なYouTube動画を、素材の読み込み、タイムライン編集、字幕・画像・音声の合成、H.264/AAC書き出しまで一つのデスクトップアプリで制作するための、クロスプラットフォーム動画編集ソフトです。
 
+
+## アーキテクチャ概要
+
+```mermaid
+flowchart LR
+  Media["入力動画・音声"] --> Probe["FFprobe / 波形・無音解析"]
+  Probe --> Timeline["Electron + TypeScript タイムラインUI<br/>（マルチトラック・字幕スタイル・Undo/Redo）"]
+  Timeline --> Sub["字幕レイアウト・自動無音カット生成"]
+  Sub --> Render["FFmpeg レンダリングパイプライン<br/>（MP4 / 字幕焼き込み・書き出し）"]
+```
+
 > [!IMPORTANT]
 > 現在は **0.1.0 実用アルファの開発途中** です。編集UI、非破壊プロジェクト、FFmpeg書き出し、GPU自動検査、CPUフォールバック、AI拡張基盤まで実装されていますが、Premiere Pro / DaVinci Resolve / Final Cut Proと全機能・全性能が同等の完成版ではありません。現在地点と未完了項目は [HANDOFF.md](./HANDOFF.md) を確認してください。
 
