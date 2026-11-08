@@ -1,0 +1,68 @@
+# Subtitle Editing Foundation
+
+## 目的
+
+Step 3.3では、`video_editor`の通常編集画面に字幕の手動修正基盤を追加する。人手レビュー専用の別アプリや`clip_automation`内の編集機能は作らない。
+
+データフローは次のとおり。
+
+```text
+edit_project.v1 captions
+        ↓ import
+video_editor Project Model (.spectra)
+        ↓ Inspector / Timelineで編集
+同じProject Modelを保存
+        ↓
+既存Preview / FFmpeg / headless render
+```
+
+`edit_project.v1`のcaption dataは通常編集の入力・出力の正本であり、`caption_review.v1`を内部Project Modelの代わりにはしない。
+
+## 実装範囲
+
+- Timelineの字幕クリップをクリックして選択
+- Inspectorで本文、開始、終了、長さを編集
+- 前後の字幕の文脈表示
+- 前の字幕／次の字幕との隣接結合
+- Project Modelの通常historyを使ったUndo / Redo
+- 既存のPreviewとFinal renderへの即時反映
+- `.spectra`保存・再読込による編集内容の保持
+
+## 単語境界分割
+
+SubtitleClipには、利用可能な場合だけ`.spectra`内部拡張として`words`を持たせる。各要素は`id`、`text`、字幕タイムライン上の絶対`startUs` / `endUs`を持つ。
+
+`edit_project.v1`のcaptionには、optionalな`words` editor metadataを追加できる。`words[].timeline`は最終sequence timeline上の秒であり、readerが絶対`startUs` / `endUs`へ変換する。単語タイミングがなければInspectorは「単語タイミング情報なし」と表示し、単語境界分割を無効にする。単語情報がある場合は、Inspectorのトークン間の「分割」ボタンだけが分割操作を開始する。wordsはrender必須ではなく、既存のwordsなしcontractは従来どおり読み込める。
+
+`edit_project.v1` wordsのreader validationは、serialized numberの`Number.toString()`表現から構成する内部Decimal value semantics（coefficient/scale）でcaption・wordの範囲を比較する。JSONの値は補正せず、quantizeやepsilon toleranceも使わないため、真のsub-microsecond overlapも拒否する。Project Modelへの変換は従来どおりmicrosecondsへ行う。
+
+clip_automationのwriterは`transcript_words.json`の決定的な`word_id`を`source-word:<word_id>`へ変換し、既存のcaption runと`map_timeline_interval_to_sequence()`でsequence timingを生成する。削除境界を跨ぐwordは従来どおりerrorとし、本文とword textの連結が一致する場合だけwordsを付与する。不一致時はcaptionをrender可能なままwordsをomitし、warning diagnosticを残す。source/original timeはこのbridgeで推測せず、`source_word_ids`の既存first/last range semanticsも維持する。
+
+分割時の規則:
+
+- 左本文は左側単語の連結、右本文は右側単語の連結
+- 左の開始は元の開始、左の終了は左端単語の終了
+- 右の開始は右端単語の開始、右の終了は元の終了
+- word IDと順序を各側へ保持
+- 既存IDを再利用せず、右クリップIDは元ID・境界時刻から決定的に生成
+- 本文と単語の連結結果が一致しない場合は分割しない
+
+単語タイミング付き字幕を再生位置の任意位置で`Ctrl+K`分割することは、単語メタデータを壊すため禁止している。Inspectorの単語境界操作を使用する。
+
+## word metadata integrity
+
+`words.startUs` / `words.endUs`はsequence timeline上の絶対時刻である。字幕全体のmove、ripple、copy/pasteではclipの実移動deltaをwordsにも適用する。別subtitle trackへの移動で時刻deltaが0ならwordsも変更しない。
+
+trimはword metadataを自動削除しない。字幕開始はfirst word以前、終了はlast word以後に限り変更でき、単語の内側へ縮める操作は「単語タイミングより内側には字幕を縮められません。」として拒否する。将来のword単位trimは別機能とする。
+
+本文を編集して`clip.text`とword本文の連結が一致しなくなった場合、wordsは削除せず、単語境界分割だけを無効化する。分割操作層でも同じ不一致を拒否する。両字幕に一致するword metadataがある場合のみ結合後へ順序を保って統合し、片方だけ、または本文不一致の場合はmerged wordsを`undefined`にする。
+
+word IDは現行`.spectra`内部では字幕clip内で一意であることを検証する。copy/pasteでは既存IDを維持し、clip IDだけを新しくする。将来global unique semanticsへ変更する場合は別途仕様化する。
+
+## 結合
+
+結合対象は同一字幕トラック上の直前または直後の字幕だけである。結合後は本文を時間順に連結し、開始・終了を外側へ広げ、両方にword metadataがある場合はIDと順序を連結する。非隣接クリップは結合しない。
+
+## 将来のレビューUIとの関係
+
+将来の人手レビューUIは、ここで追加した字幕選択・本文編集・word boundary split・adjacent merge・通常Undo/Redoを再利用できる。レビュー評価や`caption_review.v1`固有のstatus/ratingは、この編集基盤へ混ぜない。

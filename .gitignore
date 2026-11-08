@@ -1,0 +1,9 @@
+node_modules/
+out/
+src/renderer/dist/
+release/
+fixtures/generated/
+*.tsbuildinfo
+coverage/
+.vite/
+*.log
